@@ -124,14 +124,15 @@ func newVerifyCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "verify [openclaw|claude-code|cline|codex|gemini|antigravity|copilot|cursor|policy]",
-		Short: "Actively verify that agent safety boundaries really block",
-		Long: `Run non-destructive behavioral canaries against the live Rampart policy path.
+		Short: "Check configuration and policy decisions with safe canaries",
+		Long: `Run non-destructive checks of configuration, policy decisions, and supported
+adapter boundaries. The canaries do not execute represented actions or invoke
+models. Verification reads local configuration; native adapter checks may write
+isolated local audit records. Service preflight checks skip normal audit.
 
-The canaries never execute commands, read files, send messages, or contact an
-external network. They use Rampart's policy endpoint and a decoy path/domain
-to prove the decisions the installed integration would receive. OpenClaw
-verification also runs fixed canaries through the live before_tool_call
-implementation.`,
+OpenClaw also runs fixed preflight canaries through its loaded plugin mapping.
+These checks do not prove tool dispatch, native approval resume, or the running
+service build identity.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if all {
@@ -216,16 +217,40 @@ implementation.`,
 	cmd.Flags().BoolVar(&all, "all", false, "Verify policy and every behaviorally verifiable configured integration without invoking a model")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output a machine-readable verification report")
 	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Rampart service URL override (default: auto-discover)")
-	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Second, "Timeout for each active verification check")
+	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Second, "Timeout per active policy request or host observation (not a total command deadline)")
 	return cmd
 }
 
-func configuredVerificationTargets(home string) []string {
+func configuredVerificationTargets(ctx context.Context, home string, timeout time.Duration) []string {
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
 	targets := []string{"policy"}
 	seen := map[string]struct{}{"policy": {}}
 	for _, driver := range supportedIntegrationDrivers() {
-		if !integrationDriverSupportsPlatform(driver, runtime.GOOS) || !integrationDriverConfigured(driver, home) ||
+		if !integrationDriverSupportsPlatform(driver, runtime.GOOS) ||
 			strings.TrimSpace(driver.VerifyTarget) == "" || driver.VerifyChecks == nil {
+			continue
+		}
+		var configured bool
+		if driver.OpenClaw {
+			if bin, err := findOpenClawBinary(); err == nil {
+				stateDir, configPath, observationErr := observeOpenClawStateDir(ctx, bin, timeout)
+				if observationErr != nil {
+					// A detected host with unavailable state is an unverified
+					// target, not evidence that there is nothing to verify.
+					configured = true
+				} else {
+					state := getOpenClawPluginStateAt(stateDir, configPath)
+					configured = state.configErr != nil || (state.Installed && state.Enabled && state.Allowed)
+				}
+			} else {
+				configured = integrationDriverConfigured(driver, home)
+			}
+		} else {
+			configured = integrationDriverConfigured(driver, home)
+		}
+		if !configured {
 			continue
 		}
 		target := strings.TrimSpace(driver.VerifyTarget)
@@ -250,7 +275,7 @@ func runAllBehavioralVerifications(ctx context.Context, serveURL string, timeout
 		return report, fmt.Errorf("verify all: resolve home: %w", err)
 	}
 	var receiptErrors []error
-	for _, target := range configuredVerificationTargets(home) {
+	for _, target := range configuredVerificationTargets(ctx, home, timeout) {
 		result := runBehavioralVerification(ctx, target, serveURL, timeout)
 		report.Results = append(report.Results, result)
 		report.Summary.Targets++
@@ -1089,7 +1114,29 @@ func verifyOpenClawPluginLive(ctx context.Context, timeout time.Duration) verifi
 		ID: "openclaw-plugin-self-test", Name: "OpenClaw plugin policy self-test",
 		Expected: "all plugin canaries pass", Actual: "unverified",
 	}
-	state := getOpenClawPluginState()
+	bin, err := findOpenClawBinary()
+	if err != nil {
+		check.Status = verificationUnverified
+		check.Actual = "OpenClaw CLI unavailable"
+		check.Message = "The OpenClaw CLI could not be used to observe the active installation"
+		return check
+	}
+	stateDir, configPath, err := observeOpenClawStateDir(ctx, bin, timeout)
+	if err != nil {
+		check.Status = verificationUnverified
+		check.Actual = "configuration observation unavailable"
+		check.Message = err.Error()
+		check.Hint = "Check OpenClaw CLI availability and rerun verification; an observation failure does not establish configuration drift"
+		return check
+	}
+	state := getOpenClawPluginStateAt(stateDir, configPath)
+	if state.configErr != nil {
+		check.Status = verificationUnverified
+		check.Actual = "configuration observation unavailable"
+		check.Message = "The active OpenClaw plugin configuration could not be read or parsed"
+		check.Hint = "Check the active configuration and file access, then rerun verification"
+		return check
+	}
 	if !state.Installed || !state.Enabled || !state.Allowed {
 		check.Status = verificationFail
 		check.Actual = "not configured"
@@ -1105,26 +1152,25 @@ func verifyOpenClawPluginLive(ctx context.Context, timeout time.Duration) verifi
 		return check
 	}
 
-	bin, err := findOpenClawBinary()
-	if err != nil {
-		check.Status = verificationUnverified
-		check.Actual = "OpenClaw CLI unavailable"
-		check.Message = "Plugin files exist, but the OpenClaw CLI could not be used for a live probe"
-		return check
-	}
-	configCtx, cancelConfig := context.WithTimeout(ctx, timeout)
-	if err := verifyOpenClawManagedConfig(configCtx, bin); err != nil {
-		cancelConfig()
+	if err := verifyOpenClawManagedConfig(ctx, bin, configPath, timeout); err != nil {
+		var unavailable *openClawObservationError
+		if errors.As(err, &unavailable) {
+			check.Status = verificationUnverified
+			check.Actual = "configuration observation unavailable"
+			check.Message = unavailable.Error()
+			check.Hint = "Check OpenClaw CLI availability and rerun verification; an observation failure does not establish configuration drift"
+			return check
+		}
 		check.Status = verificationFail
 		check.Actual = "managed configuration drift"
 		check.Message = "OpenClaw will not enforce the complete Rampart-managed approval boundary: " + err.Error()
 		check.Hint = "Run `rampart protect openclaw`, restart the gateway, and rerun verification"
 		return check
 	}
-	cancelConfig()
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := osexec.CommandContext(probeCtx, bin, "gateway", "call", "rampart.verify", "--json", "--timeout", fmt.Sprintf("%d", timeout.Milliseconds()))
+	cmd.WaitDelay = time.Second
 	cmd.Env = append(os.Environ(), "OPENCLAW_HIDE_BANNER=1", "OPENCLAW_SUPPRESS_NOTES=1")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1161,21 +1207,43 @@ func verifyOpenClawPluginLive(ctx context.Context, timeout time.Duration) verifi
 	}
 
 	check.Status = verificationPass
-	check.Actual = "complete and current"
-	check.Message = "The current bundled plugin reached Rampart through its policy mapping path and returned every expected canary decision"
+	check.Actual = "expected mapping decisions observed"
+	check.Message = "Installed plugin files match this binary, and the loaded plugin returned the expected preflight mapping decisions; loaded build identity, tool execution, and approval resume were not established"
 	return check
 }
 
-func verifyOpenClawManagedConfig(ctx context.Context, openclawBin string) error {
-	_, configPath, err := resolveOpenClawStateDir(openclawBin)
-	if err != nil {
-		return fmt.Errorf("resolve active OpenClaw config: %w", err)
+// openClawObservationError separates an unavailable observation from an observed
+// configuration that violates the managed contract. Neither permits verification.
+type openClawObservationError struct{ err error }
+
+func (e *openClawObservationError) Error() string { return e.err.Error() }
+func (e *openClawObservationError) Unwrap() error { return e.err }
+
+func observeOpenClawStateDir(ctx context.Context, openclawBin string, timeout time.Duration) (string, string, error) {
+	if strings.TrimSpace(os.Getenv("OPENCLAW_STATE_DIR")) != "" || strings.TrimSpace(os.Getenv("OPENCLAW_CONFIG_PATH")) != "" {
+		stateDir, path, err := resolveOpenClawStateDir("")
+		if err != nil {
+			return "", "", &openClawObservationError{fmt.Errorf("resolve OpenClaw configuration: %w", err)}
+		}
+		return stateDir, path, nil
 	}
+	output, err := observeOpenClawConfig(ctx, openclawBin, timeout, "file")
+	if err != nil {
+		return "", "", err
+	}
+	path, err := parseOpenClawConfigPath(output)
+	if err != nil {
+		return "", "", &openClawObservationError{fmt.Errorf("OpenClaw config file returned an unreadable path")}
+	}
+	return filepath.Dir(path), path, nil
+}
+
+func verifyOpenClawManagedConfig(ctx context.Context, openclawBin, configPath string, timeout time.Duration) error {
 	localExec, err := readVerifiedOpenClawExecConfigAt(configPath)
 	if err != nil {
 		return err
 	}
-	hostExec, err := readOpenClawConfigJSON(ctx, openclawBin, "tools.exec")
+	hostExec, err := readOpenClawConfigJSON(ctx, openclawBin, "tools.exec", timeout)
 	if err != nil {
 		return fmt.Errorf("read active tools.exec: %w", err)
 	}
@@ -1187,7 +1255,7 @@ func verifyOpenClawManagedConfig(ctx context.Context, openclawBin string) error 
 		return fmt.Errorf("active tools.exec policy differs from the resolved OpenClaw config file")
 	}
 
-	configValue, err := readOpenClawConfigJSON(ctx, openclawBin, "plugins.entries.rampart.config")
+	configValue, err := readOpenClawConfigJSON(ctx, openclawBin, "plugins.entries.rampart.config", timeout)
 	if err != nil {
 		return fmt.Errorf("read Rampart plugin config: %w", err)
 	}
@@ -1218,7 +1286,7 @@ func verifyOpenClawManagedConfig(ctx context.Context, openclawBin string) error 
 func readVerifiedOpenClawExecConfigAt(configPath string) (map[string]any, error) {
 	doc, err := loadOpenClawToolsConfigDocument(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("read OpenClaw exec configuration: %w", err)
+		return nil, &openClawObservationError{fmt.Errorf("read OpenClaw exec configuration: %w", err)}
 	}
 	if doc.tools == nil {
 		return nil, fmt.Errorf("tools.exec is not configured")
@@ -1276,15 +1344,33 @@ func openClawExecPolicyIdentity(execCfg map[string]any) string {
 	return "legacy:" + security + ":" + ask
 }
 
-func readOpenClawConfigJSON(ctx context.Context, openclawBin, key string) (any, error) {
-	cmd := osexec.CommandContext(ctx, openclawBin, "config", "get", key, "--json")
+// Each host launch gets its own bounded budget. The parent context still bounds
+// the whole request; serial CLI startup costs must not exhaust a sibling read.
+func observeOpenClawConfig(ctx context.Context, openclawBin string, timeout time.Duration, args ...string) ([]byte, error) {
+	operationCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := osexec.CommandContext(operationCtx, openclawBin, append([]string{"config"}, args...)...)
+	cmd.Env = append(os.Environ(), "OPENCLAW_HIDE_BANNER=1", "OPENCLAW_SUPPRESS_NOTES=1")
+	// Do not wait indefinitely for a descendant retaining a child output pipe.
+	cmd.WaitDelay = time.Second
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("openclaw config get %s: %w", key, err)
+		if operationCtx.Err() != nil {
+			err = operationCtx.Err()
+		}
+		return nil, &openClawObservationError{fmt.Errorf("OpenClaw config %s observation unavailable: %w", args[0], err)}
+	}
+	return output, nil
+}
+
+func readOpenClawConfigJSON(ctx context.Context, openclawBin, key string, timeout time.Duration) (any, error) {
+	output, err := observeOpenClawConfig(ctx, openclawBin, timeout, "get", key, "--json")
+	if err != nil {
+		return nil, err
 	}
 	var value any
 	if err := decodeOpenClawConfigJSON(output, &value); err != nil {
-		return nil, err
+		return nil, &openClawObservationError{fmt.Errorf("OpenClaw config get %s returned unreadable JSON", key)}
 	}
 	return value, nil
 }
@@ -1372,17 +1458,19 @@ func summarizeVerification(report verificationReport) verificationReport {
 }
 
 func printVerificationReport(w io.Writer, report verificationReport) {
-	fmt.Fprintf(w, "Rampart behavioral verification — %s\n\n", report.Target)
-	fmt.Fprintln(w, "Safe canaries only: no commands, file reads, messages, or external network requests are executed.")
-	fmt.Fprintln(w, "Verification uses the local admin path and does not add events to Rampart's audit log.")
+	fmt.Fprintf(w, "Rampart boundary verification — %s\n\n", report.Target)
+	fmt.Fprintln(w, "Safe canaries only: represented actions are not executed and models are not invoked.")
+	fmt.Fprintln(w, "Verification reads local configuration. Service preflight skips normal audit; native checks may write isolated local audit records.")
+	fmt.Fprintln(w, "Service observations do not establish the running service build identity.")
 	fmt.Fprintln(w)
 	printVerificationResult(w, report)
 }
 
 func printVerificationBatchReport(w io.Writer, report verificationBatchReport) {
-	fmt.Fprintf(w, "Rampart behavioral verification — configured integrations with safe verifiers (%d targets)\n\n", report.Summary.Targets)
-	fmt.Fprintln(w, "Safe canaries only: no models, commands, file reads, messages, or external network requests are invoked.")
-	fmt.Fprintln(w, "Verification uses the local admin path and does not add events to Rampart's audit log.")
+	fmt.Fprintf(w, "Rampart boundary verification — configured integrations with safe verifiers (%d targets)\n\n", report.Summary.Targets)
+	fmt.Fprintln(w, "Safe canaries only: represented actions are not executed and models are not invoked.")
+	fmt.Fprintln(w, "Verification reads local configuration. Service preflight skips normal audit; native checks may write isolated local audit records.")
+	fmt.Fprintln(w, "Service observations do not establish the running service build identity.")
 	fmt.Fprintln(w, "Static-only integrations are not included; use `rampart doctor` for their installation status.")
 	for index, result := range report.Results {
 		if index > 0 {

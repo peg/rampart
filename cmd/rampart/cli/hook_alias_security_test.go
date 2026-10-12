@@ -21,6 +21,10 @@ func parseHookAliasTestPayload(adapter, payload string) (*hookParseResult, error
 		return parseAntigravityInput(reader)
 	case "gemini":
 		return parseGeminiInput(reader)
+	case "cline":
+		return parseClineInput(reader, testLogger())
+	case "cursor":
+		return parseCursorInput(reader)
 	default:
 		panic("unknown test adapter: " + adapter)
 	}
@@ -129,7 +133,7 @@ func TestNativeHookAdaptersRejectAmbiguousSecurityAliases(t *testing.T) {
 	}
 }
 
-func TestNativeHookAdaptersCanonicalizeEquivalentAliasesWithoutDroppingMetadata(t *testing.T) {
+func TestNativeHookAdaptersPreserveIdenticalAliasesWithoutDroppingMetadata(t *testing.T) {
 	tests := []struct {
 		name      string
 		adapter   string
@@ -140,37 +144,37 @@ func TestNativeHookAdaptersCanonicalizeEquivalentAliasesWithoutDroppingMetadata(
 		{
 			name:      "Claude",
 			adapter:   "claude-code",
-			payload:   `{"hook_event_name":"PreToolUse","tool_name":"LSP","tool_input":{"path":" /project/source.go ","filePath":"/project/source.go","trace":"keep"}}`,
+			payload:   `{"hook_event_name":"PreToolUse","tool_name":"LSP","tool_input":{"path":" /project/source.go ","filePath":" /project/source.go ","trace":"keep"}}`,
 			canonical: "path",
-			want:      "/project/source.go",
+			want:      " /project/source.go ",
 		},
 		{
 			name:      "Codex",
 			adapter:   "codex",
-			payload:   `{"session_id":"s","hook_event_name":"PreToolUse","tool_name":"shell","tool_use_id":"call-1","tool_input":{"command":" echo safe ","script":"echo safe","trace":"keep"}}`,
+			payload:   `{"session_id":"s","hook_event_name":"PreToolUse","tool_name":"shell","tool_use_id":"call-1","tool_input":{"command":" echo safe ","script":" echo safe ","trace":"keep"}}`,
 			canonical: "command",
-			want:      "echo safe",
+			want:      " echo safe ",
 		},
 		{
 			name:      "Copilot",
 			adapter:   "copilot",
-			payload:   `{"session_id":"s","hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"path":" /project/source.go ","filePath":"/project/source.go","trace":"keep"}}`,
+			payload:   `{"session_id":"s","hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"path":" /project/source.go ","filePath":" /project/source.go ","trace":"keep"}}`,
 			canonical: "path",
-			want:      "/project/source.go",
+			want:      " /project/source.go ",
 		},
 		{
 			name:      "Antigravity",
 			adapter:   "antigravity",
-			payload:   `{"toolCall":{"name":"view_file","args":{"path":" /project/source.go ","AbsolutePath":"/project/source.go","trace":"keep"}},"conversationId":"s"}`,
+			payload:   `{"toolCall":{"name":"view_file","args":{"path":" /project/source.go ","AbsolutePath":" /project/source.go ","trace":"keep"}},"conversationId":"s"}`,
 			canonical: "path",
-			want:      "/project/source.go",
+			want:      " /project/source.go ",
 		},
 		{
 			name:      "Gemini",
 			adapter:   "gemini",
-			payload:   `{"session_id":"s","hook_event_name":"BeforeTool","tool_name":"read_file","tool_input":{"path":" /project/source.go ","file_path":"/project/source.go","trace":"keep"}}`,
+			payload:   `{"session_id":"s","hook_event_name":"BeforeTool","tool_name":"read_file","tool_input":{"path":" /project/source.go ","file_path":" /project/source.go ","trace":"keep"}}`,
 			canonical: "path",
-			want:      "/project/source.go",
+			want:      " /project/source.go ",
 		},
 	}
 

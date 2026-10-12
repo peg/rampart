@@ -424,18 +424,27 @@ assert(
 assert(ask.result.requireApproval.timeoutReason.includes('denied'), 'approval should explain timeout denial');
 scenarios.push('write-tool-hosted-approval');
 
-const authError = await withPlugin({
-  name: 'auth-error-fail-closed',
-  fetchImpl: async () => ({ ok: false, status: 401, text: async () => '{"error":"invalid token"}' }),
-  invoke: async ({ handlers }) => {
-    const before = handlers.before_tool_call;
-    assert(typeof before === 'function', 'before_tool_call handler missing');
-    return await before({ toolName: 'exec', params: { command: 'sudo id' } }, ctx);
-  },
-});
-assert(authError?.block === true, '401 auth error should block sensitive tool calls');
-assert(authError.blockReason.includes('HTTP 401'), `auth block reason should mention HTTP 401: ${authError.blockReason}`);
-scenarios.push('auth-error-fail-closed');
+for (const [status, rejection, name] of [
+  [401, 'authentication rejected', 'auth-error-fail-closed'],
+  [403, 'request rejected', 'forbidden-response-fail-closed'],
+]) {
+  let drained = false;
+  const rejected = await withPlugin({
+    name,
+    fetchImpl: async () => ({ ok: false, status, text: async () => {
+      drained = true;
+      return '{"error":"synthetic-private-response"}';
+    } }),
+    invoke: async ({ handlers }) => {
+      const before = handlers.before_tool_call;
+      assert(typeof before === 'function', 'before_tool_call handler missing');
+      return await before({ toolName: 'exec', params: { command: 'sudo id' } }, ctx);
+    },
+  });
+  assert(rejected?.block === true && drained, `${status} rejection should drain and block`);
+  assert(rejected.blockReason === `rampart: Rampart ${rejection} (HTTP ${status})`, 'HTTP rejection was misclassified or reflected its body');
+  scenarios.push(name);
+}
 
 const liveVerification = await withPlugin({
   name: 'live-behavioral-verification',

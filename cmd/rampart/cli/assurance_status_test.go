@@ -109,7 +109,7 @@ func TestOpenClawReceiptInvalidatesOwnedConfigurationDrift(t *testing.T) {
 				t.Fatal(err)
 			}
 			status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(now, true), "openclaw")
-			if !ok || status.AssuranceLevel != assuranceHostVerified {
+			if !ok || status.AssuranceLevel != assuranceConfigured || status.StaleReason != "cached verification lacks current service runtime identity" {
 				t.Fatalf("initial assurance = %#v, found=%t", status, ok)
 			}
 			path := filepath.Join(stateDir, tc.file)
@@ -184,7 +184,7 @@ func TestOpenClawReceiptIgnoresUnrelatedConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	status, ok := findAssuranceStatus(collectIntegrationAssuranceStatuses(now.Add(time.Minute), true), "openclaw")
-	if !ok || status.AssuranceLevel != assuranceHostVerified || status.StaleReason != "" {
+	if !ok || status.AssuranceLevel != assuranceConfigured || status.StaleReason != "cached verification lacks current service runtime identity" {
 		t.Fatalf("unrelated configuration invalidated assurance: %#v, found=%t", status, ok)
 	}
 	receiptPath, err := verificationReceiptPath("openclaw")

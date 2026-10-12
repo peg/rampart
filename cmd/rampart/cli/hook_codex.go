@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/peg/rampart/internal/engine"
 	"github.com/spf13/cobra"
@@ -34,6 +35,8 @@ type codexHookInput struct {
 }
 
 const maxCodexPatchPaths = 100
+
+const codexApprovalScopeNotice = "Approval here satisfies Rampart policy for this invocation. Codex may still require a separate sandbox or permission approval."
 
 func parseCodexInput(reader io.Reader) (*hookParseResult, error) {
 	var input codexHookInput
@@ -79,7 +82,7 @@ func parseCodexInput(reader io.Reader) (*hookParseResult, error) {
 	result := &hookParseResult{
 		Tool:          mappedTool,
 		Params:        params,
-		WorkDir:       strings.TrimSpace(input.CWD),
+		WorkDir:       input.CWD,
 		Agent:         "codex",
 		RunID:         deriveRunID(input.SessionID),
 		HookEventName: input.HookEventName,
@@ -88,7 +91,7 @@ func parseCodexInput(reader io.Reader) (*hookParseResult, error) {
 	}
 	if input.HookEventName == "PreToolUse" && strings.EqualFold(strings.TrimSpace(input.ToolName), "apply_patch") {
 		command, _ := params["command"].(string)
-		result.PolicyPaths, err = extractCodexPatchPaths(command)
+		result.PolicyPaths, err = extractPatchPaths(command, codexPatchSyntax)
 		if err != nil {
 			return nil, err
 		}
@@ -134,10 +137,17 @@ func validateCodexActionParams(toolName, mappedTool string, params map[string]an
 	return nil
 }
 
-// extractCodexPatchPaths returns every file target in Codex's apply_patch
+type patchSyntax uint8
+
+const (
+	codexPatchSyntax patchSyntax = iota
+	clinePatchSyntax
+)
+
+// extractPatchPaths returns every file target in the host's apply_patch
 // envelope. Evaluating all targets independently prevents a protected file
 // later in a multi-file patch from hiding behind an allowed first target.
-func extractCodexPatchPaths(patch string) ([]string, error) {
+func extractPatchPaths(patch string, syntax patchSyntax) ([]string, error) {
 	prefixes := []string{
 		"*** Add File:",
 		"*** Update File:",
@@ -146,15 +156,43 @@ func extractCodexPatchPaths(patch string) ([]string, error) {
 	}
 	seen := make(map[string]struct{})
 	var paths []string
+	inUpdateHunk := false
 	for _, line := range strings.Split(patch, "\n") {
-		line = strings.TrimSuffix(line, "\r")
+		switch syntax {
+		case codexPatchSyntax:
+			// Codex retains filename-leading whitespace after the marker's
+			// single separator. It trims header endings and accepts indentation
+			// outside updates. Update context keeps its leading spaces.
+			line = strings.TrimRightFunc(line, unicode.IsSpace)
+			if !inUpdateHunk {
+				line = strings.TrimLeftFunc(line, unicode.IsSpace)
+			}
+		case clinePatchSyntax:
+			line = strings.TrimSuffix(line, "\r")
+		default:
+			return nil, fmt.Errorf("hook: unsupported apply_patch syntax")
+		}
 		for _, prefix := range prefixes {
 			if !strings.HasPrefix(line, prefix) {
 				continue
 			}
-			path := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+			target := strings.TrimPrefix(line, prefix)
+			if !strings.HasPrefix(target, " ") {
+				return nil, fmt.Errorf("hook: Codex apply_patch contains an invalid file target")
+			}
+			path := strings.TrimPrefix(target, " ")
+			if syntax == clinePatchSyntax {
+				// Cline uses JavaScript trim() on each extracted target. Its
+				// whitespace set includes BOM but excludes Unicode NEXT LINE.
+				path = strings.TrimFunc(path, func(r rune) bool {
+					return r == '\uFEFF' || (r != '\u0085' && unicode.IsSpace(r))
+				})
+			}
 			if path == "" || strings.IndexByte(path, 0) >= 0 {
 				return nil, fmt.Errorf("hook: Codex apply_patch contains an invalid file target")
+			}
+			if prefix != "*** Move to:" {
+				inUpdateHunk = prefix == "*** Update File:"
 			}
 			if _, exists := seen[path]; !exists {
 				seen[path] = struct{}{}
@@ -331,10 +369,14 @@ func resolveExternalHookApproval(
 		// this call waits in Rampart's approval queue.
 		errWriter: io.Discard,
 	}
+	approvalMessage := reason
+	if format == "codex" {
+		approvalMessage += "\n\n" + codexApprovalScopeNotice
+	}
 	result := client.requestApprovalCtx(
 		cmd.Context(),
 		call,
-		reason,
+		approvalMessage,
 		5*time.Minute,
 	)
 	if result == hookAsk {

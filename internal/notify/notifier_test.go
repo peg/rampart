@@ -60,6 +60,25 @@ func TestSanitizeCommandShortCredentialForms(t *testing.T) {
 	}
 }
 
+func TestSanitizeSuggestionsPreservesOnlyUnchangedGuidance(t *testing.T) {
+	suggestions := []string{
+		`rampart allow "echo marker"`,
+		`rampart allow "echo token=synthetic-value"`,
+		`rampart allow "echo token=[REDACTED]"`,
+	}
+	got := SanitizeSuggestions(suggestions)
+	if len(got) != 1 || got[0] != suggestions[0] {
+		t.Fatalf("expected only the unchanged allowance, got %q", got)
+	}
+	got[0] = "changed display copy"
+	if suggestions[0] != `rampart allow "echo marker"` || !strings.Contains(suggestions[1], "synthetic-value") {
+		t.Fatal("presentation filtering changed the source suggestions")
+	}
+	if SanitizeSuggestions(nil) != nil {
+		t.Fatal("nil suggestions should remain nil")
+	}
+}
+
 func TestNotificationTransportErrorOmitsCredentialBearingURL(t *testing.T) {
 	err := notificationTransportError("post webhook", &url.Error{
 		Op:  "Post",

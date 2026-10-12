@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/peg/rampart/internal/notify"
 )
 
 // isExtremelyDangerous returns true if the command is so dangerous that
@@ -297,6 +299,13 @@ func generalizeCommand(cmd string) string {
 //   - rampart allow "<wildcard path>" --tool <tool>  (when safe and not write)
 func GenerateSuggestions(call ToolCall) []string {
 	var suggestions []string
+	// A redacted allowance represents a different action. Omit all guidance,
+	// including generalized variants, when the original action cannot be shown.
+	for _, value := range []string{call.Command(), call.Path(), call.Tool} {
+		if notify.SanitizeCommand(value) != value || strings.Contains(value, "[REDACTED]") {
+			return nil
+		}
+	}
 
 	cmd := call.Command()
 	if cmd != "" && call.Tool == "exec" {

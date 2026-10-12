@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestMatchGlob(t *testing.T) {
@@ -1479,4 +1481,20 @@ func TestExplainConditionForActionMatchesGrantCaseSemantics(t *testing.T) {
 	if matched, _ := ExplainConditionForAction(cond, call, ActionDeny); !matched {
 		t.Fatal("deny explanation did not use conservative host case matching")
 	}
+}
+
+func TestCleanPathsAtPreservesDirectoryAndFilenameBytes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not retain trailing spaces in filesystem names")
+	}
+	workDir := filepath.Join(t.TempDir(), " workspace ")
+	require.NoError(t, os.Mkdir(workDir, 0o700))
+	filename := " notes.txt "
+	want := filepath.Join(workDir, filename)
+	require.NoError(t, os.WriteFile(want, []byte("harmless note"), 0o600))
+	cleaned, resolved := cleanPathsAt(filename, workDir)
+	require.Equal(t, want, cleaned)
+	canonical, err := filepath.EvalSymlinks(want)
+	require.NoError(t, err)
+	require.Equal(t, canonical, resolved)
 }

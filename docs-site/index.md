@@ -214,11 +214,12 @@ policy decisions, not proof of execution or independent audit witnessing.
 
 ## Current release
 
-Rampart v1.9.1 improves path evaluation, complete action approvals, diagnostic
-redaction and audit recovery. Status now distinguishes the running service's
-mode from the policy's default action, and setup examples are corrected.
-Read the [upgrade guidance](getting-started/upgrade.md) for approval-state backups
-and native OpenClaw review limits. See the [release
+Rampart v1.9.2 preserves the original path and working-directory identity of
+native actions, redacts denial guidance and diagnostic output, and links HTTP
+approval resolutions to the policy event that was persisted. The alpha Python
+SDK 0.2.0 now fails closed by default. Read the
+[upgrade guidance](getting-started/upgrade.md) before upgrading a custom
+background service or relying on native OpenClaw approval review. See the [release
 notes](https://github.com/peg/rampart/releases/latest) for the concise upgrade
 summary or the repository
 [changelog](https://github.com/peg/rampart/blob/main/CHANGELOG.md) for history.

@@ -31,6 +31,10 @@ func TestSetupCodexInstallsNativeHooksWithoutCodexOrPreload(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Open `/hooks`") {
 		t.Fatalf("setup output must explain Codex hook trust:\n%s", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "Rampart approvals do not replace Codex sandbox or permission approvals") ||
+		!strings.Contains(stdout.String(), "https://docs.rampart.sh/integrations/codex-cli/#decisions-and-approvals") {
+		t.Fatalf("setup output must explain separate native approval and link to guidance:\n%s", stdout.String())
+	}
 	if _, err := os.Stat(filepath.Join(home, ".local", "bin", "codex")); !os.IsNotExist(err) {
 		t.Fatalf("native setup must not create a codex wrapper: %v", err)
 	}
