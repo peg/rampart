@@ -69,6 +69,8 @@ URL_CHILD_ENV_KEYS = (
 
 HERMES_RELEASE_API = "https://api.github.com/repos/NousResearch/hermes-agent/releases/latest"
 HERMES_RELEASE_TAG = re.compile(r"^v[0-9]{4}\.[0-9]{1,2}\.[0-9]{1,2}(?:\.[0-9]+)?$")
+# Hermes switched from calendar tags to plain SemVer tags with v0.21.6.
+HERMES_SEMVER_TAG = re.compile(r"^v([0-9]+\.[0-9]+\.[0-9]+)$")
 HERMES_RELEASE_NAME = re.compile(r"^Hermes Agent v([0-9]+\.[0-9]+\.[0-9]+)(?:\s|$)")
 
 
@@ -384,11 +386,16 @@ def github_latest_release(env: dict[str, str]) -> tuple[str, str, str]:
         raise RuntimeError("Hermes latest release API returned a draft or prerelease")
     tag = str(payload.get("tag_name", ""))
     name = str(payload.get("name", ""))
-    if not HERMES_RELEASE_TAG.fullmatch(tag):
-        raise RuntimeError(f"Hermes latest release returned an invalid tag: {tag!r}")
     version_match = HERMES_RELEASE_NAME.match(name)
     if not version_match:
         raise RuntimeError(f"Hermes latest release returned an invalid name: {name!r}")
+    # A SemVer tag is trusted only when it is exactly the version the release
+    # announces; calendar tags keep their existing shape check.
+    semver_tag = HERMES_SEMVER_TAG.fullmatch(tag)
+    if not HERMES_RELEASE_TAG.fullmatch(tag) and not (
+        semver_tag and semver_tag.group(1) == version_match.group(1)
+    ):
+        raise RuntimeError(f"Hermes latest release returned an invalid tag: {tag!r}")
     source = (
         "git+https://github.com/NousResearch/hermes-agent.git@"
         + urllib.parse.quote(tag, safe="")

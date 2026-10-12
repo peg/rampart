@@ -109,11 +109,38 @@ class CompatEnvironmentTests(unittest.TestCase):
             "git+https://github.com/NousResearch/hermes-agent.git@v2026.8.3#egg=hermes-agent",
         )
 
+    def test_official_release_accepts_semver_tag_matching_release_name(self) -> None:
+        payload = {
+            "tag_name": "v0.21.7",
+            "name": "Hermes Agent v0.21.7",
+            "draft": False,
+            "prerelease": False,
+        }
+        response = mock.MagicMock()
+        response.__enter__.return_value = io.BytesIO(json.dumps(payload).encode())
+        opener = mock.Mock()
+        opener.open.return_value = response
+        with mock.patch.object(MODULE, "url_opener", return_value=opener):
+            tag, version, source = MODULE.github_latest_release({})
+
+        self.assertEqual(tag, "v0.21.7")
+        self.assertEqual(version, "0.21.7")
+        self.assertEqual(
+            source,
+            "git+https://github.com/NousResearch/hermes-agent.git@v0.21.7#egg=hermes-agent",
+        )
+
     def test_official_release_rejects_untrusted_metadata(self) -> None:
         for payload in (
             {"tag_name": "../../main", "name": "Hermes Agent v0.20.0", "draft": False, "prerelease": False},
             {"tag_name": "v2026.8.3", "name": "Hermes 0.20.0", "draft": False, "prerelease": False},
             {"tag_name": "v2026.8.3", "name": "Hermes Agent v0.20.0", "draft": False, "prerelease": True},
+            # A SemVer tag must be exactly the version the release announces.
+            {"tag_name": "v0.21.7", "name": "Hermes Agent v0.21.6", "draft": False, "prerelease": False},
+            {"tag_name": "v0.21.7.1", "name": "Hermes Agent v0.21.7", "draft": False, "prerelease": False},
+            {"tag_name": "v0.21.7-rc1", "name": "Hermes Agent v0.21.7", "draft": False, "prerelease": False},
+            {"tag_name": "0.21.7", "name": "Hermes Agent v0.21.7", "draft": False, "prerelease": False},
+            {"tag_name": "v0.21.7/../main", "name": "Hermes Agent v0.21.7", "draft": False, "prerelease": False},
         ):
             with self.subTest(payload=payload):
                 response = mock.MagicMock()
