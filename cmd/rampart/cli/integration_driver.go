@@ -123,6 +123,18 @@ func supportedIntegrationDrivers() []integrationDriver {
 			},
 		},
 		{
+			ID: "opencode", DisplayName: "OpenCode", Boundary: "experimental native plugin",
+			VerificationCommand: "rampart doctor", Executables: []string{"opencode"},
+			AutoProtect: false, ServiceRequired: false, Platforms: []string{"linux", "darwin"},
+			Installed: func(_ string) bool {
+				_, err := execLookPath("opencode")
+				return err == nil
+			},
+			SetupCommand:    func(_ *rootOptions) *cobra.Command { return newSetupOpenCodeCmd() },
+			Configured:      openCodePluginConfiguredForHome,
+			ProtectionLabel: "OpenCode (experimental plugin configured; host loading unverified)",
+		},
+		{
 			ID: "antigravity", Aliases: []string{"agy"}, DisplayName: "Antigravity CLI / IDE", Boundary: "native plugin hook", VerifyTarget: "antigravity",
 			ProofLevel: assuranceAdapterVerified, Executables: []string{"agy"},
 			AutoProtect: true, Platforms: []string{"linux", "darwin", "windows"},
