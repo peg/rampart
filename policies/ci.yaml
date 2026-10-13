@@ -220,8 +220,10 @@ policies:
             - "wget ** | sh"
             - "curl ** | python*"
             - "curl ** | perl*"
-            - "curl -s ** | **"
-            - "wget -q ** | **"
+            # A fetcher piped into any other executing or unrecognized stage
+            # (zsh, sudo bash, ruby, node, ...) is detected by the engine, which
+            # emits the "<fetcher> <url> | sh" form above. Read-only filters such
+            # as head, jq and wc are not code execution and are not matched.
           command_contains:
             # Process substitution bypasses: bash <(curl ...) / source <(wget ...)
             # Glob can't match these because the URL's / breaks * matching.
