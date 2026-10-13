@@ -44,6 +44,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tools refuse execution. Static installation checks do not claim host loading
   or universal model compatibility.
 
+## [1.9.4] - 2026-10-12
+
+### Security
+
+- **Grouped fetches and executed substitutions are denied** — v1.9.3 followed a
+  fetcher through a pipeline but not into a group, so `(curl -s URL) | zsh` and
+  `{ curl -s URL; } | zsh`, which v1.9.2 denied, were allowed by v1.9.3. The
+  analysis now tracks subshells, brace groups and nesting, and also covers fetched
+  content that reaches a shell or interpreter without a pipe: `bash -c "$(curl
+  URL)"`, `eval "$(curl URL)"`, a here-string, a process substitution, or the
+  substitution used as the command itself, including under `sudo`. Fetched
+  output used as data (an assignment, `echo`, a filter, or an argument to a
+  script) is still allowed, and an inline `-c`/`-e` program is only flagged when
+  it is the fetched text.
+
 ## [1.9.3] - 2026-10-12
 
 ### Security
