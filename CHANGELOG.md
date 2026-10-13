@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   releases no longer turn scheduled CI red. Hermes releases after 0.21.5 are not
   claimed compatible until reviewed.
 
+### Fixed
+
+- Audit readers (the HTTP audit API and dashboard, `status`, `inventory`,
+  `init-from-audit`, and the compliance, HTML and export reports) no longer
+  return a blank zero-timestamp event for the chain-continuation header that
+  starts every rotated audit file. Each rotation previously added one phantom
+  record to counts and time ranges. Chain verification is unchanged.
+
 ## [1.10.0] - 2026-10-12
 
 ### Added
