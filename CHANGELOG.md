@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.3] - 2026-10-12
+
+### Security
+
+- **Fetched content piped into any non-filter stage is denied** — Download-and-pipe
+  detection covered only a fixed list of shells and interpreters, so equivalent
+  forms were not recognized (for example a download piped into `zsh`, a
+  privileged or `env`-launched shell, `ruby`, `node`, `php` or `lua`, and several
+  `wget` spellings). Rampart now analyzes the pipeline itself: a network fetcher
+  (`curl`, `wget`, `fetch`, HTTPie, `xh`) feeding a later stage that is not a
+  known read-only filter is denied. This includes subshells, command
+  substitutions, `if` conditions, `|&`, brace-expanded URLs and `sh -c`
+  payloads, and treats an unrecognized or non-literal executable as potentially
+  executing its input. Here-documents and quoted text remain data.
+
+### Changed
+
+- Read-only filters (`head`, `tail`, `jq`, `wc`, `grep`, `sort`, `cut`, `tr`,
+  `md5sum`, decompressors and similar) are no longer denied after `curl -s` or
+  `wget -q`. A download piped into a program Rampart does not recognize is now
+  denied whatever the fetcher's flags; add an explicit allow rule if you rely
+  on such a pipeline. Checksum tools whose names begin with `sh` remain denied by
+  a separate, pre-existing substring rule.
+
 ## [1.9.2] - 2026-10-12
 
 ### Security

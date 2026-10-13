@@ -960,7 +960,8 @@ func unwrapRestrictiveExecutor(tokens []string) []string {
 func visitCanonicalCommandAliases(command string, visit func(string) bool) bool {
 	canonical := mayNeedCanonicalCommandAliases(command)
 	download := strings.ContainsAny(command, ";&|\n") &&
-		(containsFold(command, "curl") || containsFold(command, "wget") || strings.ContainsAny(command, "'\"\\"))
+		(containsFold(command, "curl") || containsFold(command, "wget") || containsFold(command, "http") ||
+			containsFold(command, "fetch") || containsFold(command, "xh") || strings.ContainsAny(command, "'\"\\"))
 	production := strings.ContainsAny(command, "'\"\\") || containsFold(command, "terraform") ||
 		containsFold(command, "tofu") || containsFold(command, "pulumi") ||
 		containsFold(command, "prisma") || containsFold(command, "alembic") || containsFold(command, "kubectl")
@@ -982,6 +983,12 @@ func visitCanonicalCommandAliases(command string, visit func(string) bool) bool 
 			stopped = !emitAlias(alias)
 			return !stopped
 		})
+		if !stopped {
+			visitPipedDownloadExecutionAliases(command, func(alias string) bool {
+				stopped = !emitAlias(alias)
+				return !stopped
+			})
+		}
 	}
 	if !stopped && production {
 		visitProductionCommandAliases(command, func(alias string) bool {
