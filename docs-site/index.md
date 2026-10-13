@@ -214,10 +214,11 @@ policy decisions, not proof of execution or independent audit witnessing.
 
 ## Current release
 
-Rampart v1.9.3 closes gaps in download-and-pipe detection: a download piped
-into zsh, a privileged shell, ruby, node or any other executing or unrecognized
-stage is now denied, while read-only filters such as head, jq and wc are no
-longer blocked. It builds on v1.9.2, which preserves native action path and
+Rampart v1.9.4 completes the download-and-pipe detection added in v1.9.3:
+fetched content that reaches a shell, an interpreter, eval or an unrecognized
+program through a pipe, a subshell or brace group, or a command substitution is
+denied, while read-only filters such as head, jq and wc are not blocked. It
+builds on v1.9.2, which preserves native action path and
 working-directory identity, redacts diagnostics, and makes the alpha Python SDK
 fail closed by default. Read the
 [upgrade guidance](getting-started/upgrade.md) before upgrading a custom
