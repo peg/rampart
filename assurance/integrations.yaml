@@ -1,5 +1,5 @@
 schema_version: rampart.assurance.v2
-baseline_release: v1.9.4
+baseline_release: v1.10.0
 reviewed_at: "2026-08-17"
 
 # Version 2 uses the canonical Rampart command target as each integration id
@@ -84,9 +84,11 @@ integrations:
       subagents: partial
     degraded:
       policy_unavailable: local
-      adapter_error: host_defined
-      # A command-hook timeout supplies no veto; Claude's own permissions still apply.
-      timeout: allow
+      # Mixed: Claude Code lets a failing or timed-out hook proceed through its own
+      # permissions unless the hook sets onFailure "block" (Claude Code 2.1.295+).
+      # Rampart sets it on PreToolUse for new installs there and offers it to others.
+      adapter_error: mixed
+      timeout: mixed
     approval: native
     verification:
       level: active
@@ -109,12 +111,16 @@ integrations:
       - path: cmd/rampart/cli/verify_test.go
         kind: integration
         proves: Verification checks installed hook configuration and directly invokes the adapter with a non-executing denial canary; it does not launch Claude.
+      - path: cmd/rampart/cli/setup_claude_failure_test.go
+        kind: unit
+        proves: Setup writes onFailure "block" only on Rampart's PreToolUse hook, only for a new install on a detected Claude Code 2.1.295 or newer, never for an older or undetected host, never silently on an existing install, and preserves other hooks and user settings; verify reports the active mode.
     limitations:
       - No rolling latest-Claude compatibility job currently exercises the installed host.
       - rampart verify claude-code proves installed configuration and adapter behavior but does not prove Claude loaded or invoked the hook.
       - Documented hook-visible tools are mapped, and in enforce mode future unknown PreToolUse tools deny until Rampart is updated.
       - Host-owned or server-side actions that do not emit lifecycle hooks are outside this boundary; Claude's EndConversation tool is a documented benign example.
-      - Claude's documented command-hook timeout and launch-failure behavior does not block PreToolUse; adapter failures without a blocking exit or valid denial also permit normal host permission processing.
+      - Unless PreToolUse sets onFailure "block", Claude's documented command-hook timeout and launch-failure behavior does not block, and adapter failures without a blocking exit or valid denial also permit normal host permission processing. Fail-closed needs Claude Code 2.1.295 or newer and is on by default only for new installs; existing installs opt in with --hook-failure=block.
+      - Rampart configures the documented onFailure host behavior but does not verify that a running Claude Code honors it, and with it enabled a Rampart crash or hang blocks tool calls until fixed or reverted.
       - Subagent and host-failure contracts have not been proven through authenticated live conformance tests.
 
   - id: cline
@@ -216,7 +222,7 @@ integrations:
     platforms: [linux, macos]
     auto_protect: false
     service_required: true
-    upstream_ci: rolling_latest
+    upstream_ci: pinned
     coverage:
       shell: tested
       file_read: tested
@@ -239,16 +245,68 @@ integrations:
         kind: unit
         proves: Tool normalization, redaction, allow, deny, native ask approval identity, malformed responses, unknown-tool fail-closed behavior, adapter exceptions, and service failure are tested.
       - path: scripts/compat-hermes-latest.py
-        kind: upstream_latest
-        proves: Hermes' official latest stable GitHub release is resolved independently of PyPI and must pass packaged discovery, native approval allow/deny resolution, dispatcher decisions, degraded mode, and multi-path deny-wins behavior in isolation.
+        kind: integration
+        proves: Hermes' last reviewed official release (v2026.9.24, Hermes 0.21.5) is installed in isolation as an editable checkout of that exact tag and must pass packaged discovery, native approval allow/deny resolution, dispatcher decisions, degraded mode, and multi-path deny-wins behavior. Newer releases are not exercised by scheduled CI.
     limitations:
       - Hermes v2026.9.24 source blocks pre_tool_call callback exceptions and configured timeouts; these host-owned failure paths are not all covered by installed evidence. Observer-hook failures may be skipped.
       - Native approval/resume requires a reviewed Hermes approval collector that retains rule identity and lets later denials win; unknown source structures and older incomplete releases block `ask`.
-      - A release that cannot load Hermes' packaged plugin manager fails the rolling compatibility gate and is not inferred compatible from its source tree.
+      - Compatibility is claimed only for the reviewed release, Hermes v2026.9.24 (0.21.5), which the scheduled gate pins. Later releases, including v0.21.6 and newer, are not claimed compatible until reviewed; they changed the release tag scheme and stopped stamping the package version, so the harness's latest-release mode needs maintainer updates before it can evaluate them. A release that cannot load Hermes' packaged plugin manager is not inferred compatible from its source tree.
       - Operators may explicitly weaken degraded behavior by configuring selected tools to fail open; the default denies every tool.
       - Hermes tools outside the plugin's typed map, including MCP and delegated-agent tools, fail closed but are not claimed as covered policy surfaces.
       - Other plugins that rewrite tool arguments share the trusted host boundary; re-evaluation of their rewrites and arbitrary plugin composition are not verified.
       - Delegated-agent and authenticated live-host E2E are not present.
+
+  - id: opencode
+    display_name: OpenCode
+    support_tier: experimental
+    setup_command: rampart setup opencode
+    boundary: native_plugin
+    platforms: [linux, macos]
+    auto_protect: false
+    service_required: false
+    upstream_ci: none
+    coverage:
+      shell: tested
+      file_read: tested
+      file_write: tested
+      network: partial
+      mcp: not_covered
+      subagents: not_covered
+    degraded:
+      policy_unavailable: deny
+      adapter_error: deny
+      timeout: deny
+    approval: none
+    verification:
+      level: static
+      command: rampart doctor
+      safe_canaries: false
+      host_boundary: false
+    evidence:
+      - path: cmd/rampart/cli/hook_opencode_test.go
+        kind: integration
+        proves: Native command, path, session, and call identity are preserved; unmapped tools refuse, every patch target participates in deny-wins evaluation, and approvals or failed audit persistence refuse execution.
+      - path: cmd/rampart/cli/setup_opencode_test.go
+        kind: unit
+        proves: Setup and removal preserve unrelated configuration, repair owned plugin drift, bind the Rampart executable, and refuse unowned or linked plugin files.
+      - path: internal/plugin/opencode/embed_test.go
+        kind: unit
+        proves: The bundled plugin binds an absolute executable without shell interpolation and recognizes only its complete ownership header.
+      - path: internal/plugin/opencode/runtime_test.go
+        kind: failure_injection
+        proves: The JavaScript bridge preserves direct subprocess arguments and dispatch identity, refuses missing or failing children and malformed replies, suppresses child diagnostics, and rejects changing or non-JSON arguments before freezing allowed original arguments.
+    limitations:
+      - The experimental contract targets OpenCode V1 model-dispatched tools; static doctor checks installed file integrity, not plugin loading or host dispatch, and there is no active installed-host verifier.
+      - OpenCode may continue after plugin load or initialization failure; OPENCODE_PURE skips external plugins entirely. The deny and timeout guarantees apply only after the managed callback loads.
+      - The loaded bridge refuses unavailable, failing, malformed, or timed-out Rampart child evaluations within a ten-second deadline; it does not claim every host-controlled crash or interruption fails closed.
+      - Only supported POSIX shells on Linux and macOS are covered; the native bash tool name also represents other upstream shells, which the bridge refuses.
+      - Unmapped tool names, including additional custom and MCP tools, plus glob, grep, delegated-agent, skill-loading, code-mode, LSP, and web-search tools refuse execution until an explicit mapping is added; directory searches need a sound contract for every inspected file.
+      - Ask and require_approval decisions refuse the call without creating an approval queue; starting rampart serve does not add approval or resume support.
+      - The bridge preserves native session and call identity, compares the original arguments after evaluation, and freezes allowed plain JSON arguments; arbitrary plugin composition and built-in tool overrides remain part of the trusted host boundary.
+      - Manual shell commands, PTYs, command-template shell interpolation, debug tool execution, attached-file and resource context ingestion, and experimental V2 execution are outside this hook.
+      - Host-added instruction reads and formatter or language-server side effects are outside the requested action evaluated by this plugin.
+      - This is a before-only integration; tool result scanning, execution-outcome reporting, and redaction of OpenCode's sessions, streamed metadata, or output files are not claimed.
+      - Local and remote model providers share the tool boundary, but individual provider and model combinations require separate validation.
 
   - id: gemini
     display_name: Gemini CLI

@@ -200,6 +200,14 @@ func removeManagedAgentIntegrations(cmd *cobra.Command, opts *rootOptions, home 
 			run:     func() error { return runSetupRemove(cmd, newSetupHermesCmd()) },
 		},
 		{
+			label: "OpenCode plugin",
+			present: func() bool {
+				_, err := os.Lstat(openCodePluginPath(home))
+				return err == nil
+			},
+			run: func() error { return runSetupRemove(cmd, newSetupOpenCodeCmd()) },
+		},
+		{
 			label:   "OpenClaw integration",
 			present: func() bool { return openClawRampartIntegrationPresent(home) },
 			run: func() error {

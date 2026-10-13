@@ -109,6 +109,54 @@ class CompatEnvironmentTests(unittest.TestCase):
             "git+https://github.com/NousResearch/hermes-agent.git@v2026.8.3#egg=hermes-agent",
         )
 
+    def _release_opener(self, payload: dict[str, object]) -> mock.Mock:
+        response = mock.MagicMock()
+        response.__enter__.return_value = io.BytesIO(json.dumps(payload).encode())
+        opener = mock.Mock()
+        opener.open.return_value = response
+        return opener
+
+    def test_reviewed_release_tag_resolves_from_the_tag_endpoint(self) -> None:
+        opener = self._release_opener(
+            {
+                "tag_name": "v2026.9.24",
+                "name": "Hermes Agent v0.21.5 (v2026.9.24)",
+                "draft": False,
+                "prerelease": False,
+            }
+        )
+        with mock.patch.object(MODULE, "url_opener", return_value=opener):
+            tag, version, source = MODULE.github_latest_release({}, "v2026.9.24")
+
+        requested = opener.open.call_args.args[0]
+        self.assertEqual(
+            requested.full_url,
+            "https://api.github.com/repos/NousResearch/hermes-agent/releases/tags/v2026.9.24",
+        )
+        self.assertEqual((tag, version), ("v2026.9.24", "0.21.5"))
+        self.assertTrue(source.endswith("@v2026.9.24#egg=hermes-agent"))
+
+    def test_reviewed_release_tag_rejects_malformed_or_mismatched_requests(self) -> None:
+        for requested in ("../../main", "main", "v0.21.7", "v2026.9.24/../x", ""):
+            with self.subTest(requested=requested):
+                opener = mock.Mock()
+                with mock.patch.object(MODULE, "url_opener", return_value=opener):
+                    with self.assertRaisesRegex(RuntimeError, "Requested Hermes release tag is invalid"):
+                        MODULE.github_latest_release({}, requested)
+                opener.open.assert_not_called()
+
+        mismatched = self._release_opener(
+            {
+                "tag_name": "v2026.9.21",
+                "name": "Hermes Agent v0.21.4 (v2026.9.21)",
+                "draft": False,
+                "prerelease": False,
+            }
+        )
+        with mock.patch.object(MODULE, "url_opener", return_value=mismatched):
+            with self.assertRaisesRegex(RuntimeError, "for requested tag"):
+                MODULE.github_latest_release({}, "v2026.9.24")
+
     def test_official_release_rejects_untrusted_metadata(self) -> None:
         for payload in (
             {"tag_name": "../../main", "name": "Hermes Agent v0.20.0", "draft": False, "prerelease": False},

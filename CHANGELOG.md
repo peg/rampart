@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `rampart setup claude-code --hook-failure=auto|block|continue` controls what
+  happens when the PreToolUse hook fails. Claude Code lets a hook that cannot
+  start, times out, or exits unexpectedly proceed by default, which silently
+  disables enforcement; Claude Code 2.1.295+ can block instead. A new
+  installation on a detected supported version now fails closed on PreToolUse
+  only. An existing installation is left unchanged and told how to opt in, and
+  an older or undetected Claude Code never receives the field. `verify` reports
+  the active mode. With it enabled, a Rampart crash or hang blocks tool calls
+  until fixed or reverted with `--hook-failure=continue`.
+
+### Changed
+
+- The experimental Hermes compatibility gate now tests the last reviewed release
+  (Hermes 0.21.5, `v2026.9.24`) instead of the rolling latest, so upstream
+  releases no longer turn scheduled CI red. Hermes releases after 0.21.5 are not
+  claimed compatible until reviewed.
+
+### Fixed
+
+- Audit readers (the HTTP audit API and dashboard, `status`, `inventory`,
+  `init-from-audit`, and the compliance, HTML and export reports) no longer
+  return a blank zero-timestamp event for the chain-continuation header that
+  starts every rotated audit file. Each rotation previously added one phantom
+  record to counts and time ranges. Chain verification is unchanged.
+
+## [1.10.0] - 2026-10-12
+
+### Added
+
+- Experimental OpenCode V1 pre-tool integration on Linux and macOS with a
+  supported POSIX shell. Explicit setup installs a local policy bridge for
+  supported shell, file, and web-fetch calls; approval-required and unsupported
+  tools refuse execution. Static installation checks do not claim host loading
+  or universal model compatibility.
+
 ## [1.9.4] - 2026-10-12
 
 ### Security
