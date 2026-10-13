@@ -959,7 +959,10 @@ func unwrapRestrictiveExecutor(tokens []string) []string {
 
 func visitCanonicalCommandAliases(command string, visit func(string) bool) bool {
 	canonical := mayNeedCanonicalCommandAliases(command)
-	download := strings.ContainsAny(command, ";&|\n") &&
+	// Substitutions ($(...), backticks, <(...)) fetch and run without any
+	// separator, so they also qualify; the file-download walker has its own
+	// separator check.
+	download := strings.ContainsAny(command, ";&|\n$`<") &&
 		(containsFold(command, "curl") || containsFold(command, "wget") || containsFold(command, "http") ||
 			containsFold(command, "fetch") || containsFold(command, "xh") || strings.ContainsAny(command, "'\"\\"))
 	production := strings.ContainsAny(command, "'\"\\") || containsFold(command, "terraform") ||
