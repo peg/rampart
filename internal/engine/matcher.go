@@ -167,6 +167,71 @@ func pathCandidates(call ToolCall) ([]string, bool) {
 	return candidates, path == "" || resolved != ""
 }
 
+// isContentSearch reports whether a read call searches beneath a root
+// directory (Grep, Glob and equivalent host tools) instead of naming one file.
+func (tc ToolCall) isContentSearch() bool {
+	return tc.Tool == "read" && tc.paramAlias("pattern", "Pattern", "regex", "query", "Query") != ""
+}
+
+// searchRootCandidates returns the spellings of a search call's root. Hosts
+// search their working directory when the call names no path.
+func searchRootCandidates(call ToolCall) []string {
+	if call.Path() != "" {
+		candidates, _ := pathCandidates(call)
+		return candidates
+	}
+	workDir := call.WorkingDirectory()
+	if strings.TrimSpace(workDir) == "" {
+		return nil
+	}
+	cleaned, resolved := cleanPathsAt(workDir, "")
+	if resolved == "" || resolved == cleaned {
+		return []string{cleaned}
+	}
+	return []string{cleaned, resolved}
+}
+
+// searchRootPrefixes returns the directory prefixes of a path pattern that end
+// in a literal segment, such as "**/.ssh" for "**/.ssh/id_*". A search rooted
+// at a matching directory can reach files the full pattern protects. Prefixes
+// ending in a wildcard are skipped so "**" alone never covers every root.
+func searchRootPrefixes(pattern string) []string {
+	segments := strings.Split(strings.ReplaceAll(pattern, "\\", "/"), "/")
+	prefixes := make([]string, 0, len(segments))
+	for i := 1; i < len(segments); i++ {
+		last := segments[i-1]
+		if last == "" || strings.ContainsAny(last, "*?[") {
+			continue
+		}
+		prefixes = append(prefixes, strings.Join(segments[:i], "/"))
+	}
+	return prefixes
+}
+
+// matchSearchScopeFirstForAction returns the restrictive pattern a search can
+// reach: the root itself, a file selected by the call's glob filter, or a file
+// beneath a root that sits inside the pattern's protected directory chain.
+func matchSearchScopeFirstForAction(patterns []string, call ToolCall, action Action) string {
+	workDir := call.WorkingDirectory()
+	filter := strings.ReplaceAll(call.paramAlias("glob", "include", "file_pattern"), "\\", "/")
+	for _, root := range searchRootCandidates(call) {
+		if matched := matchPathFirstForAction(patterns, root, workDir, action); matched != "" {
+			return matched
+		}
+		if filter != "" && !strings.HasPrefix(filter, "/") {
+			if matched := matchPathFirstForAction(patterns, strings.TrimRight(root, "/")+"/"+filter, workDir, action); matched != "" {
+				return matched
+			}
+		}
+		for _, pattern := range patterns {
+			if matchPathFirstForAction(searchRootPrefixes(pattern), root, workDir, action) != "" {
+				return pattern
+			}
+		}
+	}
+	return ""
+}
+
 // MatchGlob reports whether name matches the glob pattern.
 //
 // This extends filepath.Match with support for "**" (matches any path depth)
@@ -1504,6 +1569,13 @@ func matchPathFirstForAction(patterns []string, path, workDir string, action Act
 // granting rule must cover every spelling so a workspace symlink cannot grant
 // access to a target outside the allowed tree.
 func matchPathFieldForAction(patterns []string, call ToolCall, action Action, requireAll bool) (bool, string) {
+	// A search reads every file beneath its root, so restrictive rules also
+	// consider what the search can reach. Grants keep exact-path semantics.
+	if !requireAll && actionRestrictsExecution(action) && call.isContentSearch() {
+		if matched := matchSearchScopeFirstForAction(patterns, call, action); matched != "" {
+			return true, matched
+		}
+	}
 	candidates, resolved := pathCandidates(call)
 	if requireAll && !resolved {
 		return false, ""
