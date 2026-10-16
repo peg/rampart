@@ -214,10 +214,11 @@ policy decisions, not proof of execution or independent audit witnessing.
 
 ## Current release
 
-Rampart v1.9.5 stops file searches from reaching protected credential files:
-a Grep or Glob rooted in a directory such as `~/.ssh` is now denied like a direct
-read of the keys inside it. It also recognizes Claude Code's subagent hand-back
-tool so auto-mode subagents can return their reports. v1.9.4 completed the
+Rampart v1.9.6 makes rule exclusions excuse only the command they match, so a
+harmless excluded fragment can no longer clear a protected command beside it,
+and keeps download-and-execute analysis working across here-documents. v1.9.5
+stopped file searches from reaching protected credential files and recognizes
+Claude Code's subagent hand-back tool. v1.9.4 completed the
 download-and-pipe detection added in v1.9.3: fetched content that reaches a
 shell, an interpreter, eval or an unrecognized program is denied, while
 read-only filters such as head, jq and wc are not blocked. These build on

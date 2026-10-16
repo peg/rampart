@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.6] - 2026-10-16
+
+### Security
+
+- **Rule exclusions only excuse the command they match** — a `command_not_matches`
+  exclusion was satisfied by any command fragment, including a substitution or
+  a nested command, so appending a harmless excluded fragment could clear a
+  destructive, self-protection or credential-read rule for the real command.
+  Exclusions are now paired with the fragment that matched the rule, and a
+  multi-file reader such as `cat` is checked per file, so an excluded file such
+  as a public key no longer covers a protected one beside it.
+- **Here-documents no longer hide fetched execution** — download-and-execute
+  analysis stopped at the first here-document. It now skips only the
+  here-document body, treats a body as code when a shell or interpreter reads
+  it, and checks each line of a command that does not tokenize, since the shell
+  runs the lines before a syntax error.
+- **Multi-operand forms of protected commands are matched** — `chmod -R 777`
+  with `/` among several operands, and multi-file reads of protected credential
+  files, matched only in their single-operand form.
+
 ## [1.9.5] - 2026-10-16
 
 ### Security
