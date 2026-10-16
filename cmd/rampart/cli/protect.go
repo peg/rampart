@@ -141,9 +141,9 @@ type protectionPlanSummary struct {
 }
 
 // runProtectionPlan is the single managed setup-and-verification path used by
-// protect and compatibility onboarding commands. Global Guard installation is
-// performed once, while each integration retains ownership of its host-specific
-// transaction and verification semantics.
+// protect. Global Guard installation is performed once, while each integration
+// retains ownership of its host-specific transaction and verification
+// semantics.
 func runProtectionPlan(cmd *cobra.Command, rootOpts *rootOptions, drivers []integrationDriver, opts protectionPlanOptions) (protectionPlanSummary, error) {
 	summary := protectionPlanSummary{Attempted: len(drivers)}
 	if err := prepareManagedProtection(rootOpts); err != nil {
@@ -207,15 +207,6 @@ func runProtectionPlan(cmd *cobra.Command, rootOpts *rootOptions, drivers []inte
 			continue
 		}
 		summary.Succeeded++
-	}
-
-	// quickstart historically supports a policy-and-service-only mode through
-	// --agents none. Preserve that compatibility without inventing a second
-	// service startup path.
-	if len(ordered) == 0 {
-		if err := ensureServeRunningForURL(cmd.OutOrStdout(), cmd.ErrOrStderr(), resolvedURL); err != nil {
-			protectErrors = append(protectErrors, fmt.Errorf("start Rampart policy service: %w", err))
-		}
 	}
 	return summary, errors.Join(protectErrors...)
 }

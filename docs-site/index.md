@@ -208,7 +208,7 @@ policy decisions, not proof of execution or independent audit witnessing.
 | **Cursor** | Native local Agent hook; optional MCP proxy | `rampart setup cursor` |
 | **Claude Desktop** | MCP proxy | `rampart mcp --` |
 | **Any CLI agent** | Shell wrapper | `rampart wrap --` |
-| **Python agents** | HTTP API / SDK | `localhost:9090` |
+| **Custom agents** | HTTP API | `localhost:9090` |
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
 
@@ -219,8 +219,7 @@ fetched content that reaches a shell, an interpreter, eval or an unrecognized
 program through a pipe, a subshell or brace group, or a command substitution is
 denied, while read-only filters such as head, jq and wc are not blocked. It
 builds on v1.9.2, which preserves native action path and
-working-directory identity, redacts diagnostics, and makes the alpha Python SDK
-fail closed by default. Read the
+working-directory identity and redacts diagnostics. Read the
 [upgrade guidance](getting-started/upgrade.md) before upgrading a custom
 background service or relying on native OpenClaw approval review. See the [release
 notes](https://github.com/peg/rampart/releases/latest) for the concise upgrade
