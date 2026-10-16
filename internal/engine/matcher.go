@@ -663,7 +663,43 @@ func matchRestrictiveCommandCandidateFirst(patterns []string, command string, ac
 			return matched
 		}
 	}
-	return matchRestrictiveAlternateCommandFirst(patterns, command, action)
+	if matched := matchRestrictiveAlternateCommandFirst(patterns, command, action); matched != "" {
+		return matched
+	}
+	return matchPerOperandReaderFirst(patterns, command, action)
+}
+
+// perOperandReaders apply the same read to every operand, so a protected file
+// stays protected when other operands follow it.
+var perOperandReaders = map[string]bool{
+	"cat": true, "tac": true, "head": true, "tail": true, "less": true, "more": true, "nl": true,
+	"strings": true, "xxd": true, "od": true, "hexdump": true, "base64": true,
+}
+
+// matchPerOperandReaderFirst matches each operand of a multi-file reader as if
+// it were read alone, keeping the reader and its options.
+func matchPerOperandReaderFirst(patterns []string, command string, action Action) string {
+	variants, complete := restrictiveOperandVariants(command)
+	if !complete && len(patterns) > 0 {
+		return patterns[0] // An incomplete analysis must not weaken a restriction.
+	}
+	for _, variant := range variants {
+		if matched := matchCommandFirstForAction(patterns, variant, action); matched != "" {
+			return matched
+		}
+	}
+	return ""
+}
+
+// mayBePerOperandReader is a cheap pre-check for a reader, including one
+// behind a transparent executor such as sudo, env or nice.
+func mayBePerOperandReader(fields []string) bool {
+	for _, field := range fields {
+		if perOperandReaders[shellWrapperBasename(field)] {
+			return true
+		}
+	}
+	return false
 }
 
 // restrictivePOSIXBodyCandidates exposes commands behind ordinary POSIX shell
@@ -1319,7 +1355,10 @@ func matchRestrictiveCommandComponent(cond Condition, component string, action A
 	positive := false
 	if matched, substring := matchRestrictiveCommandContains(cond.CommandContains, component); matched {
 		positive = true
-		if len(cond.CommandMatches) > 0 || !restrictiveCommandComponentExcluded(cond.CommandNotMatches, component) {
+		if len(cond.CommandMatches) > 0 || unexcludedRestrictiveMatch(component, cond.CommandNotMatches, func(candidate string) bool {
+			ok, _ := matchRestrictiveCommandContains(cond.CommandContains, candidate)
+			return ok
+		}) {
 			return true, true, fmt.Sprintf("command_contains [%q]", substring)
 		}
 	}
@@ -1344,7 +1383,9 @@ func matchRestrictiveCommandComponent(cond Condition, component string, action A
 	}
 	if matched := matchRestrictiveCommandFirst(cond.CommandMatches, component, action); matched != "" {
 		positive = true
-		if !restrictiveCommandComponentExcluded(cond.CommandNotMatches, component) {
+		if unexcludedRestrictiveMatch(component, cond.CommandNotMatches, func(candidate string) bool {
+			return matchRestrictiveCommandCandidateFirst(cond.CommandMatches, candidate, action) != ""
+		}) {
 			return true, true, fmt.Sprintf("command_matches [%q] (restrictive command interpretation)", matched)
 		}
 	}
@@ -1373,24 +1414,103 @@ func matchRestrictiveCommandContains(substrings []string, command string) (bool,
 	return matchCommandContainsFold(substrings, normalized)
 }
 
-func restrictiveCommandComponentExcluded(patterns []string, component string) bool {
-	// Exclusions weaken a restrictive rule, so retain granting-action matching
-	// semantics: executable names may follow host case rules, but arguments keep
-	// their exact bytes.
+// unexcludedRestrictiveMatch reports whether a positively matched component
+// still matches after exclusions. Each exclusion is paired with the candidate
+// it is meant to excuse: the rule holds when any candidate that matches is not
+// itself excluded, so an excluded substitution, nested command or sibling
+// operand cannot clear a dangerous command elsewhere in the component.
+func unexcludedRestrictiveMatch(component string, exclusions []string, matches func(string) bool) bool {
+	if len(exclusions) == 0 {
+		return true
+	}
 	candidates, overflow := restrictiveCommandCandidates(component)
 	if overflow {
-		return false // An incomplete analysis cannot establish an exclusion.
+		return true // An incomplete analysis cannot establish an exclusion.
 	}
+	positive := false
 	for _, candidate := range candidates {
-		if matchCommandAnyForAction(patterns, candidate, ActionAllow) {
+		if !matches(candidate) {
+			continue
+		}
+		positive = true
+		if !restrictiveCandidateExcluded(exclusions, candidate) {
 			return true
 		}
-		if normalized := NormalizeCommand(candidate); normalized != candidate &&
-			matchCommandAnyForAction(patterns, normalized, ActionAllow) {
+		variants, complete := restrictiveOperandVariants(candidate)
+		if !complete {
 			return true
 		}
+		for _, variant := range variants {
+			if matches(variant) && !restrictiveCandidateExcluded(exclusions, variant) {
+				return true
+			}
+		}
+	}
+	// The component matched as a whole; failing to attribute that match to a
+	// candidate must not let an exclusion weaken it.
+	return !positive
+}
+
+// restrictiveCandidateExcluded reports whether one candidate is itself
+// excluded: its own spelling, its normalized form, or the same command without
+// transparent executors and leading assignments. Exclusions weaken a
+// restrictive rule, so retain granting-action matching semantics: executable
+// names may follow host case rules, but arguments keep their exact bytes.
+func restrictiveCandidateExcluded(patterns []string, candidate string) bool {
+	if matchCommandAnyForAction(patterns, candidate, ActionAllow) {
+		return true
+	}
+	if normalized := NormalizeCommand(candidate); normalized != candidate &&
+		matchCommandAnyForAction(patterns, normalized, ActionAllow) {
+		return true
+	}
+	tokens := unwrapRestrictiveExecutor(stripLeadingEnvAssignments(tokenizeForOS(candidate, "posix")))
+	if unwrapped := strings.Join(tokens, " "); unwrapped != "" && unwrapped != candidate {
+		return matchCommandAnyForAction(patterns, unwrapped, ActionAllow)
 	}
 	return false
+}
+
+const maxRestrictiveOperandVariants = 64
+
+// restrictiveOperandVariants splits a multi-file reader such as cat into one
+// command per operand, keeping the reader and its options, so an excluded
+// operand such as a public key cannot cover a protected sibling. Other
+// commands are left whole. The boolean is false when the operand count
+// exceeds the analysis bound.
+func restrictiveOperandVariants(candidate string) ([]string, bool) {
+	if fields := strings.Fields(candidate); len(fields) < 3 || !mayBePerOperandReader(fields) {
+		return nil, true
+	}
+	tokens := unwrapRestrictiveExecutor(stripLeadingEnvAssignments(tokenizeForOS(candidate, "posix")))
+	if len(tokens) < 3 || !perOperandReaders[shellWrapperBasename(tokens[0])] {
+		return nil, true
+	}
+	options := []string{shellWrapperBasename(tokens[0])}
+	var operands []string
+	endOfOptions := false
+	for _, token := range tokens[1:] {
+		switch {
+		case !endOfOptions && token == "--":
+			endOfOptions = true
+			options = append(options, token)
+		case !endOfOptions && strings.HasPrefix(token, "-") && token != "-":
+			options = append(options, token)
+		default:
+			operands = append(operands, token)
+		}
+	}
+	if len(operands) < 2 {
+		return nil, true
+	}
+	if len(operands) > maxRestrictiveOperandVariants {
+		return nil, false
+	}
+	variants := make([]string, 0, len(operands))
+	for _, operand := range operands {
+		variants = append(variants, strings.Join(append(append([]string(nil), options...), operand), " "))
+	}
+	return variants, true
 }
 
 // restrictiveCommandMatchAfterExclusions returns true when a restrictive rule
