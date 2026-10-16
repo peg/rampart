@@ -26,6 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   releases no longer turn scheduled CI red. Hermes releases after 0.21.5 are not
   claimed compatible until reviewed.
 
+### Removed
+
+- The alpha Python SDK (`sdks/python`) is removed. It was never published to
+  PyPI. Custom and Python agents should call the
+  [HTTP API](https://docs.rampart.sh/reference/api-reference/) directly.
+- `rampart quickstart` is removed. Use `rampart protect <agent>` (for example
+  `rampart protect claude-code`). The command still exists as a hidden stub that
+  prints this guidance and exits non-zero, so old scripts fail with an
+  explanation instead of an unknown-command error.
+
 ### Fixed
 
 - Audit readers (the HTTP audit API and dashboard, `status`, `inventory`,

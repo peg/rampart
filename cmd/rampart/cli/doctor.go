@@ -38,7 +38,7 @@ import (
 )
 
 // defaultServePort is the default port for rampart serve.
-// Referenced by doctor, hook, quickstart, and serve install.
+// Referenced by doctor, hook, and serve install.
 // Must match the --port flag default in newServeCmd.
 const defaultServePort = 9090
 

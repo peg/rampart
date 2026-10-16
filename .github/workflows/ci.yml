@@ -293,17 +293,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  python-sdk:
-    name: Python SDK (Python ${{ matrix.python-version }})
+  hermes-min-python:
+    name: Hermes plugin (Python 3.9)
     if: ${{ github.event_name != 'pull_request' || github.base_ref != 'staging' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.9', '3.12']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -311,53 +307,28 @@ jobs:
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: sdks/python/pyproject.toml
+          python-version: '3.9'
 
-      - name: Install SDK and test dependencies
-        working-directory: sdks/python
-        run: python -m pip install '.[dev]'
-
-      - name: Test SDK
-        working-directory: sdks/python
-        run: python -m pytest
-
-      - name: Check SDK quality
-        if: matrix.python-version == '3.9'
-        working-directory: sdks/python
-        run: |
-          python -m black --check rampart tests
-          python -m isort --check-only rampart tests
-          python -m flake8 rampart tests
-          python -m mypy rampart
-
-      - name: Test integrations on minimum Python
-        if: matrix.python-version == '3.9'
+      - name: Test Hermes integration on minimum Python
         run: |
           python -m unittest internal/plugin/hermes/test_hermes_plugin.py
           python -m unittest scripts/test_compat_hermes_env.py
-
-      - name: Build SDK wheel
-        if: matrix.python-version == '3.12'
-        working-directory: sdks/python
-        run: python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/rampart-sdk-dist" .
 
   ci-gate:
     name: CI gate
     if: ${{ always() && (github.event_name != 'pull_request' || github.base_ref != 'staging' || github.event.pull_request.draft == false) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [test, docker-smoke, release-dry-run, python-sdk]
+    needs: [test, docker-smoke, release-dry-run, hermes-min-python]
     steps:
       - name: Require every CI job
         env:
           TEST_RESULT: ${{ needs.test.result }}
           DOCKER_RESULT: ${{ needs.docker-smoke.result }}
           RELEASE_RESULT: ${{ needs.release-dry-run.result }}
-          PYTHON_SDK_RESULT: ${{ needs.python-sdk.result }}
+          HERMES_MIN_PYTHON_RESULT: ${{ needs.hermes-min-python.result }}
         run: |
-          for result in "$TEST_RESULT" "$DOCKER_RESULT" "$RELEASE_RESULT" "$PYTHON_SDK_RESULT"; do
+          for result in "$TEST_RESULT" "$DOCKER_RESULT" "$RELEASE_RESULT" "$HERMES_MIN_PYTHON_RESULT"; do
             if [ "$result" != success ]; then
               echo "Required CI job result: $result"
               exit 1

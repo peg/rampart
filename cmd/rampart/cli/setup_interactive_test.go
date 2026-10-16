@@ -18,9 +18,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/peg/rampart/internal/detect"
 	"github.com/spf13/cobra"
 )
 
@@ -87,6 +89,56 @@ func TestDetectAgents_ClineDetectedByVSCodeExtension(t *testing.T) {
 		}
 	}
 	t.Error("Cline agent not found in results")
+}
+
+func TestKnownAgentsUseCurrentNativeRegistry(t *testing.T) {
+	agents := knownAgents()
+	byKey := make(map[string]agentInfo, len(agents))
+	for _, agent := range agents {
+		byKey[agent.Key] = agent
+	}
+	for _, key := range []string{"claude-code", "codex", "cline", "openclaw", "copilot", "antigravity", "cursor"} {
+		agent, ok := byKey[key]
+		if !ok || !agent.HasSetup || agent.SetupCmd != key || agent.ManualCmd != "" {
+			t.Errorf("native agent entry %q = %+v, present=%v", key, agent, ok)
+		}
+	}
+	if _, ok := byKey["gemini"]; ok {
+		t.Fatal("experimental Gemini integration must not be auto-configured by interactive setup")
+	}
+}
+
+func TestDetectEnv_MultiAgentDetection(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PATH shim binaries in this test are Unix-only")
+	}
+
+	home := t.TempDir()
+	testSetHome(t, home)
+	t.Setenv("CLINE_ACTIVE", "1")
+	t.Setenv("OPENCLAW_SERVICE_MARKER", "openclaw")
+
+	if err := os.MkdirAll(filepath.Join(home, ".cursor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	binDir := t.TempDir()
+	writeTestExecutable(t, filepath.Join(binDir, "codex"))
+	t.Setenv("PATH", binDir)
+
+	got, err := detect.Environment()
+	if err != nil {
+		t.Fatalf("detect.Environment() error = %v", err)
+	}
+	if !got.ClaudeCode || !got.HasCodex || !got.HasCline || !got.HasOpenClaw || !got.HasCursor {
+		t.Fatalf("expected multi-agent detection, got %+v", got)
+	}
 }
 
 func TestBareSetupWarnsWhilePreservingForceCompatibility(t *testing.T) {

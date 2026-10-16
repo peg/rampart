@@ -125,7 +125,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	tokenCmd := newTokenShowCmd()
 	testCmd := newTestCmd(opts)
 	benchCmd := newBenchCmd(opts)
-	quickstartCmd := newQuickstartCmd(opts)
+	quickstartCmd := newQuickstartCmd()
 	protectCmd := newProtectCmd(opts)
 	verifyCmd := newVerifyCmd()
 	upgradeCmd := newUpgradeCmd(opts)
@@ -136,7 +136,6 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	// bridgeCmd removed — bridge is auto-started by rampart serve, no CLI needed
 
 	setupCmd.GroupID = groupSetup
-	quickstartCmd.GroupID = groupSetup
 	protectCmd.GroupID = groupSetup
 	verifyCmd.GroupID = groupSetup
 	upgradeCmd.GroupID = groupSetup

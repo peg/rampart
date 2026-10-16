@@ -53,7 +53,7 @@ architecture diagram.
    before requesting review.
 5. Open the pull request against `staging` as a draft while iterating. Drafts
    receive a fast Linux source check; marking the pull request ready starts the
-   complete cross-platform, packaging, container, and SDK matrix.
+   complete cross-platform, packaging, and container matrix.
 6. Explain the user-visible result, security impact, limitations, and
    validation performed before requesting review.
 

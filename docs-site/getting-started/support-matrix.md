@@ -161,7 +161,7 @@ static checks do not establish host interception.
       <td data-label="Support tier">Supported</td>
     </tr>
     <tr class="tier-supported">
-      <td data-label="Surface"><strong>Custom / Python / CI</strong></td>
+      <td data-label="Surface"><strong>Custom agents / CI</strong></td>
       <td data-label="Best path">HTTP API</td>
       <td data-label="Bare protect">No</td>
       <td data-label="rampart serve">Required</td>
