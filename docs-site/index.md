@@ -214,11 +214,14 @@ policy decisions, not proof of execution or independent audit witnessing.
 
 ## Current release
 
-Rampart v1.9.4 completes the download-and-pipe detection added in v1.9.3:
-fetched content that reaches a shell, an interpreter, eval or an unrecognized
-program through a pipe, a subshell or brace group, or a command substitution is
-denied, while read-only filters such as head, jq and wc are not blocked. It
-builds on v1.9.2, which preserves native action path and
+Rampart v1.9.5 stops file searches from reaching protected credential files:
+a Grep or Glob rooted in a directory such as `~/.ssh` is now denied like a direct
+read of the keys inside it. It also recognizes Claude Code's subagent hand-back
+tool so auto-mode subagents can return their reports. v1.9.4 completed the
+download-and-pipe detection added in v1.9.3: fetched content that reaches a
+shell, an interpreter, eval or an unrecognized program is denied, while
+read-only filters such as head, jq and wc are not blocked. These build on
+v1.9.2, which preserves native action path and
 working-directory identity, redacts diagnostics, and makes the alpha Python SDK
 fail closed by default. Read the
 [upgrade guidance](getting-started/upgrade.md) before upgrading a custom

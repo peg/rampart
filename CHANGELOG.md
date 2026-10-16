@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.5] - 2026-10-16
+
+### Security
+
+- **Searches cannot reach protected credential files** — a Claude Code Grep or
+  Glob call rooted in a protected directory such as `~/.ssh` or `~/.aws` was
+  allowed even though reading the files directly was denied, so a content search
+  could return private key material. Restrictive path rules now cover what a
+  search can reach: its root, a file selected by its glob filter, and files
+  beneath a root inside a protected directory. A search without a path is
+  checked against the host working directory. The same check applies to other
+  hosts' search tools that send a search pattern or query. Searches of ordinary
+  project directories are unaffected; a search rooted at a directory named
+  `etc` is now treated like a read of the system files the policy protects
+  there.
+
+### Fixed
+
+- **Claude Code `SubagentHandback`, `ListAgents` and `SendFeedback` are
+  recognized** — these documented tools were refused as unknown, so subagents in
+  auto mode could not deliver their final reports while Rampart was installed.
+
 ## [1.9.4] - 2026-10-12
 
 ### Security
