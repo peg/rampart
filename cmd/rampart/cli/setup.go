@@ -294,6 +294,18 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			rampartHook := map[string]any{
 				"type":    "command",
 				"command": hookCommand,
+				// Fail closed when the hook itself cannot run. Without this,
+				// Claude Code treats a hook that fails to start — binary
+				// missing, moved, renamed, or not executable — as a
+				// non-blocking error and carries out the tool call unchecked,
+				// so moving the binary silently disables enforcement.
+				// "block" makes that failure deny instead.
+				//
+				// Safe for Rampart because a verdict is always reported as
+				// JSON on exit 0, including a deny; only a genuine failure
+				// exits non-zero. Claude Code v2.1.295 and later honour the
+				// field, and older versions ignore it and behave as before.
+				"onFailure": claudeHookOnFailure,
 			}
 
 			// Use wildcard matcher to intercept ALL tools (Bash, Read, Write, Edit, Fetch, Task, etc.)
@@ -1364,6 +1376,10 @@ func toGitBashPath(windowsPath string) string {
 	return strings.ReplaceAll(windowsPath, "\\", "/")
 }
 
+// hasRampartHook reports whether any Rampart hook entry is present at all.
+// It deliberately does not check onFailure: uninstall must still recognise
+// installs written before Rampart set it. Use claudeHooksUseCommand for
+// "is this install current".
 func hasRampartHook(settings claudeSettings) bool {
 	hooks, ok := settings["hooks"].(map[string]any)
 	if !ok {
@@ -2201,6 +2217,10 @@ func removeRampartClaudeHookCommands(entries []any) ([]any, int) {
 	return kept, removed
 }
 
+// claudeHookOnFailure is the Claude Code hook option that makes a tool call
+// deny when the hook cannot run at all, instead of proceeding unchecked.
+const claudeHookOnFailure = "block"
+
 func claudeHooksUseCommand(settings claudeSettings, expected string) bool {
 	hooks, ok := settings["hooks"].(map[string]any)
 	if !ok {
@@ -2228,7 +2248,13 @@ func claudeHooksUseCommand(settings claudeSettings, expected string) bool {
 					continue
 				}
 				owned++
-				if command != expected || hook["type"] != "command" || matcher["matcher"] != ".*" {
+				// onFailure is part of what makes an install current: an
+				// entry written before Rampart set it still fails open.
+				// Reporting it as not-current here is what makes
+				// `setup claude-code` rewrite it and `verify` flag drift,
+				// reusing the existing upgrade path rather than adding one.
+				if command != expected || hook["type"] != "command" || matcher["matcher"] != ".*" ||
+					hook["onFailure"] != claudeHookOnFailure {
 					return false
 				}
 			}

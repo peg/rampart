@@ -57,6 +57,15 @@ future unknown `PreToolUse` tool names fail closed until Rampart is updated.
 Claude documents some host-owned tools that intentionally do not emit `PreToolUse`;
 `EndConversation` is one benign example and has no file or network effect.
 
+The installed hooks set Claude Code's `onFailure` option to `block`, so a hook
+that cannot run at all — the binary missing, moved, renamed, or not executable —
+denies the tool call. Without it, Claude Code treats a hook that fails to start
+as a non-blocking error and carries out the call unchecked, which would let a
+moved binary silently disable enforcement. Claude Code v2.1.295 and later
+honour the option; earlier versions ignore it and behave as they did before.
+An install made before Rampart set the option is reported as drift by
+`rampart verify claude-code`; re-run `rampart setup claude-code` to repair it.
+
 Rampart normalizes Claude's `LSP.filePath` and
 `NotebookEdit.notebook_path` fields before applying path rules. An
 `EnterWorktree` call must include the resolved `path`; a name-only call fails
@@ -165,7 +174,7 @@ cat ~/.claude/settings.json
 ```
 
 You should see Rampart entries for `PreToolUse`, `PostToolUse`, and
-`PostToolUseFailure`.
+`PostToolUseFailure`, each carrying `"onFailure": "block"`.
 
 ### Test a decision
 
