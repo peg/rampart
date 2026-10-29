@@ -78,7 +78,10 @@ Claude Code → PreToolUse  → Rampart policy → Allow/Deny/Ask
 When Claude Code wants to run a command, it sends the tool call to `rampart hook` via stdin. Rampart evaluates it against your policies and returns a JSON response:
 
 ```json
-// Allowed (explicit allow bypasses Claude Code permission system)
+// Allowed by policy (no decision: Claude Code's own permission rules and prompts still apply)
+{}
+
+// Approved by you through Rampart's approval queue
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}
 
 // Denied
@@ -87,6 +90,12 @@ When Claude Code wants to run a command, it sends the tool call to `rampart hook
 // Requires approval (waits for human decision)
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"Rampart: Manual approval required"}}
 ```
+
+**Allow behavior:** Rampart only narrows what Claude Code permits. A policy
+allow returns no decision, so Claude Code's permission mode, allow/ask/deny
+rules and prompts apply as if Rampart were not installed. Monitor and audit
+modes never return a decision. The explicit `allow` is reserved for a call you
+approved through Rampart's own approval queue, such as a `headless_only` ask.
 
 **Ask behavior:** When a policy action is `ask`, the hook returns `"permissionDecision":"ask"`. Claude Code shows its native permission prompt, so the user approves or denies directly in the Claude Code UI.
 

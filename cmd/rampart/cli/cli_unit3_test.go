@@ -235,27 +235,16 @@ default_action: allow
 	if err := root.Execute(); err != nil {
 		t.Fatalf("clean EOF returned an error: %v", err)
 	}
+	// Claude Code always sends a payload, so an empty one in enforce mode is a
+	// parse failure that must refuse the call rather than allow it.
 	var got hookOutput
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("decode clean EOF response: %v; output: %s", err, &out)
 	}
-	if got.Decision != "" || got.HookSpecificOutput == nil || got.HookSpecificOutput.HookEventName != "PreToolUse" || got.HookSpecificOutput.PermissionDecision != "allow" {
+	if got.HookSpecificOutput == nil || got.HookSpecificOutput.HookEventName != "PreToolUse" || got.HookSpecificOutput.PermissionDecision != "deny" {
 		t.Fatalf("unexpected clean EOF response: %+v", got)
 	}
 	if errBuf.Len() != 0 {
 		t.Fatalf("clean EOF wrote stderr: %s", &errBuf)
-	}
-	files, err := listAuditFiles(auditDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, file := range files {
-		events, err := readAuditEvents(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(events) != 0 {
-			t.Fatalf("clean EOF must not record a policy decision, got %d events", len(events))
-		}
 	}
 }
