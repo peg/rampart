@@ -18,9 +18,7 @@ func writeCurrentClaudeHookSettings(t *testing.T, home string, extra map[string]
 	for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure"} {
 		hooks[event] = []any{map[string]any{
 			"matcher": ".*",
-			// onFailure is part of a current install: without it Claude Code
-			// carries out the tool call when the hook cannot run.
-			"hooks": []any{map[string]any{"type": "command", "command": command, "onFailure": claudeHookOnFailure}},
+			"hooks":   []any{map[string]any{"type": "command", "command": command}},
 		}}
 	}
 	settings := map[string]any{"hooks": hooks}
