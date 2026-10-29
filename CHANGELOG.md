@@ -44,6 +44,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unparseable payload, consistently across every supported hook format. Monitor
   and audit modes still allow the call through so an observing agent is never
   blocked.
+- **A Claude Code hook that cannot run now blocks the tool call** — the hook
+  Rampart installs carried no failure policy, so when the hook could not be
+  started at all (binary missing, moved, renamed, or not executable) Claude
+  Code recorded a non-blocking error and carried out the tool call with no
+  policy check and no audit record. Setup now pins the hook's `onFailure`
+  option to `block`, so a hook that cannot run denies instead. An install
+  written without the option is treated as out of date:
+  `rampart setup claude-code` rewrites it in place and `rampart verify
+  claude-code` reports it as drift. Claude Code v2.1.295 and later honour the
+  option; earlier versions ignore it and behave as before.
 - **Release builds use Go 1.26.10** — The module baseline, container build, and
   source-build requirement now use the Go patch release that resolves the called
   standard-library vulnerability GO-2026-6809 in `crypto/x509`, reported against
