@@ -561,11 +561,11 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			if err != nil {
 				logger.Warn("hook: failed to parse input", "format", format, "error", err)
 
-				// Clean EOF is normal — hook process exits when the agent
-				// restarts or stdin closes.  Don't record an audit entry;
-				// it's not a real policy decision and just creates noise in
-				// `rampart log --deny`.
-				if errors.Is(err, io.EOF) || err.Error() == "EOF" {
+				// Clean EOF is normal for hosts that close stdin when the agent
+				// restarts; don't record an audit entry for it. Claude Code always
+				// sends a JSON payload, so in enforce mode an empty one is a parse
+				// failure Rampart cannot classify and must refuse.
+				if (errors.Is(err, io.EOF) || err.Error() == "EOF") && !(format == "claude-code" && mode == "enforce") {
 					logger.Debug("hook: clean EOF on stdin, skipping audit")
 					return outputHookResult(cmd, format, hookAllow, false, "parse failure: EOF", "")
 				}
@@ -904,7 +904,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			cmdStr := extractCommand(call)
 			reasonMsg := projectPolicyPrefix(decision.Message, decision.FromProjectPolicy)
 			if mode != "enforce" {
-				return outputHookResult(cmd, format, hookAllow, isPostToolUse, reasonMsg, cmdStr)
+				return outputHookResult(cmd, format, hookDefer, isPostToolUse, reasonMsg, cmdStr)
 			}
 
 			switch decision.Action {
@@ -1021,7 +1021,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				// Emit native ask prompt (Claude Code shows the 4-button dialog).
 				return outputHookResult(cmd, format, hookAsk, false, reasonMsg, cmdStr)
 			case engine.ActionAllow, engine.ActionWatch:
-				return outputHookResult(cmd, format, hookAllow, isPostToolUse, reasonMsg, cmdStr)
+				return outputHookResult(cmd, format, hookDefer, isPostToolUse, reasonMsg, cmdStr)
 			case engine.ActionWebhook:
 				// Defensive fallback: webhook is normalized to deny before audit.
 				return outputHookResult(cmd, format, hookDeny, isPostToolUse, "Rampart native hook cannot safely enforce webhook; refusing tool call", cmdStr)
@@ -1838,6 +1838,10 @@ const (
 	hookDeny
 	hookAsk   // ask (and require_approval alias) → Claude Code native prompt
 	hookBlock // PostToolUse: block response from being shown to agent
+	// hookDefer permits the call without a host decision, so the host's own
+	// permission rules and prompts still apply. Hosts without that distinction
+	// receive hookAllow.
+	hookDefer
 )
 
 // projectPolicyPrefix returns the message with a "[Project Policy] " prefix
@@ -1886,6 +1890,12 @@ func outputHookResultWithResponse(
 ) error {
 	reason = notify.SanitizeCommand(reason)
 	suggestions = notify.SanitizeSuggestions(suggestions)
+	if decision == hookDefer {
+		switch format {
+		case "gemini", "antigravity", "copilot", "cursor", "cline", "codex":
+			decision = hookAllow
+		}
+	}
 	// NOTE: Do NOT print to stderr for Claude Code hook decisions — Claude Code
 	// can interpret stderr as a hook failure. The structured JSON response carries
 	// deny/ask reasons. Keep Cline's historical stderr deny output for now.
@@ -1954,10 +1964,12 @@ func outputHookResultWithResponse(
 				PermissionDecision:       "ask",
 				PermissionDecisionReason: "Rampart: " + reason,
 			}
+		case hookDefer:
+			// A policy allow leaves Claude Code's own permission rules, modes and
+			// prompts in force, so Rampart only ever narrows what the user allows.
 		case hookAllow:
-			// PreToolUse: explicit permissionDecision bypasses Claude Code's
-			// permission system, which is the correct semantics after rampart
-			// has evaluated and approved the command.
+			// PreToolUse: an explicit allow skips Claude Code's prompt. It is used
+			// only after the user approved this exact call through Rampart.
 			// PostToolUse: empty JSON — PostToolUse only supports "block" or omission.
 			if !isPostToolUse {
 				out.HookSpecificOutput = &hookDecision{

@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Claude Code: a policy allow no longer answers `allow` on the user's behalf.
+  The hook now returns no decision, so Claude Code's own permission mode,
+  allow/ask/deny rules and prompts still apply and Rampart only narrows what
+  Claude Code permits. Monitor and audit modes never return a decision. A call
+  approved through Rampart's approval queue keeps an explicit allow, and an
+  empty hook payload in enforce mode is refused. If you relied on Rampart to
+  suppress Claude Code prompts, add Claude Code permission rules or choose a
+  permission mode instead.
 - The experimental Hermes compatibility gate now tests the last reviewed release
   (Hermes 0.21.5, `v2026.9.24`) instead of the rolling latest, so upstream
   releases no longer turn scheduled CI red. Hermes releases after 0.21.5 are not
