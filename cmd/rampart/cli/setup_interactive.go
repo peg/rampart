@@ -29,6 +29,7 @@ import (
 
 // agentInfo describes a detected AI agent and how to protect it.
 type agentInfo struct {
+	Key       string // detection key (e.g. "claude-code")
 	Name      string
 	Detected  bool
 	HasSetup  bool   // true if we can auto-configure via setup subcommand
@@ -36,25 +37,63 @@ type agentInfo struct {
 	ManualCmd string // fallback manual command for agents without native setup
 }
 
+// knownAgents lists the agents the interactive wizard offers, in display order.
+func knownAgents() []agentInfo {
+	drivers := make(map[string]integrationDriver)
+	for _, driver := range supportedIntegrationDrivers() {
+		if driver.AutoProtect {
+			drivers[driver.ID] = driver
+		}
+	}
+	agents := make([]agentInfo, 0, len(drivers)+2)
+	for _, id := range []string{"claude-code", "codex", "cline", "openclaw", "copilot", "antigravity", "cursor"} {
+		if driver, ok := drivers[id]; ok {
+			agents = append(agents, agentInfo{
+				Key: id, Name: driver.DisplayName, HasSetup: true, SetupCmd: id,
+			})
+		}
+	}
+	return append(agents,
+		agentInfo{Key: "aider", Name: "Aider", ManualCmd: "rampart wrap -- aider"},
+		agentInfo{Key: "windsurf", Name: "Windsurf", ManualCmd: "rampart wrap -- windsurf"},
+	)
+}
+
 // detectAgents checks PATH and common locations for known AI agents.
 func detectAgents() []agentInfo {
-	quickstart := quickstartAgents()
-	agents := make([]agentInfo, 0, len(quickstart))
-	for _, agent := range quickstart {
-		agents = append(agents, agentInfo{
-			Name:      agent.Name,
-			HasSetup:  agent.HasSetup,
-			SetupCmd:  agent.SetupCmd,
-			ManualCmd: agent.WrapCmd,
-		})
-	}
+	agents := knownAgents()
 	if env, err := detect.Environment(); err == nil && env != nil {
 		for i := range agents {
-			agents[i].Detected = isAgentDetected(env, quickstart[i].Key)
+			agents[i].Detected = isAgentDetected(env, agents[i].Key)
 		}
 	}
 
 	return agents
+}
+
+func isAgentDetected(result *detect.DetectResult, key string) bool {
+	switch key {
+	case "claude-code":
+		return result.ClaudeCode
+	case "codex":
+		return result.HasCodex
+	case "cline":
+		return result.HasCline
+	case "openclaw":
+		return result.HasOpenClaw
+	case "cursor":
+		return result.HasCursor
+	case "aider":
+		return result.HasAider
+	case "windsurf":
+		return result.HasWindsurf
+	case "copilot":
+		return result.HasCopilot
+	case "antigravity":
+		return result.HasAntigravity
+	default:
+		return false
+	}
 }
 
 // runInteractiveSetup launches the interactive setup wizard.

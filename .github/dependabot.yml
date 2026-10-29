@@ -36,10 +36,3 @@ updates:
     open-pull-requests-limit: 3
     labels:
       - documentation
-
-  - package-ecosystem: pip
-    directory: /sdks/python
-    target-branch: staging
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 3

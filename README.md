@@ -283,6 +283,7 @@ exec/spawn calls on Linux and non-SIP-protected macOS processes; static,
 setuid, direct-syscall, and SIP-protected paths remain outside that boundary.
 
 [MCP proxy →](https://docs.rampart.sh/features/mcp-proxy/) ·
+[HTTP API for custom agents →](https://docs.rampart.sh/reference/api-reference/) ·
 [Any CLI agent →](https://docs.rampart.sh/integrations/any-cli-agent/) ·
 [Threat model →](docs/THREAT-MODEL.md)
 

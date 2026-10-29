@@ -24,6 +24,35 @@ var osExecutable = os.Executable
 var detectOpenClawVersionForSetup = detectOpenClawVersion
 var runSetupOpenClawPluginForSetup = runSetupOpenClawPlugin
 
+// hasInstalledPolicy reports whether ~/.rampart/policies holds a complete base
+// profile. custom.yaml is an empty managed placeholder and guard.yaml is a
+// supplemental layer with no default_action, so a home containing only these
+// files still needs a base profile.
+func hasInstalledPolicy() bool {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return false
+	}
+	policyDir := filepath.Join(home, ".rampart", "policies")
+	entries, err := os.ReadDir(policyDir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := strings.ToLower(e.Name())
+		if name == "custom.yaml" || name == "guard.yaml" {
+			continue
+		}
+		if strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml") {
+			return true
+		}
+	}
+	return false
+}
+
 // resolveRampartHookBinary returns the executable that managed hook files
 // should invoke. A package-manager PATH entry is upgrade-stable, but is trusted
 // only when it currently resolves to the same file as this process. This avoids
