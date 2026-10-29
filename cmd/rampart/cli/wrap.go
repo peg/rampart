@@ -296,23 +296,31 @@ func resolveWrapPolicyPath(path string) (string, func(), error) {
 		return "", nil, fmt.Errorf("wrap: check policy config %s: %w", path, err)
 	}
 
+	return embeddedStandardPolicyFile()
+}
+
+// embeddedStandardPolicyFile materializes the embedded standard profile into a
+// temporary file and returns its path with a cleanup function. Callers that
+// have no operator-selected policy use it as their baseline so enforcement
+// always runs against the shipped standard rather than against nothing.
+func embeddedStandardPolicyFile() (string, func(), error) {
 	data, err := policies.Profile("standard")
 	if err != nil {
-		return "", nil, fmt.Errorf("wrap: load embedded standard policy: %w", err)
+		return "", nil, fmt.Errorf("load embedded standard policy: %w", err)
 	}
 
-	tmp, err := os.CreateTemp("", "rampart-wrap-policy-*.yaml")
+	tmp, err := os.CreateTemp("", "rampart-standard-policy-*.yaml")
 	if err != nil {
-		return "", nil, fmt.Errorf("wrap: create temporary policy file: %w", err)
+		return "", nil, fmt.Errorf("create temporary policy file: %w", err)
 	}
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmp.Name())
-		return "", nil, fmt.Errorf("wrap: write temporary policy file: %w", err)
+		return "", nil, fmt.Errorf("write temporary policy file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmp.Name())
-		return "", nil, fmt.Errorf("wrap: close temporary policy file: %w", err)
+		return "", nil, fmt.Errorf("close temporary policy file: %w", err)
 	}
 
 	return tmp.Name(), func() { _ = os.Remove(tmp.Name()) }, nil

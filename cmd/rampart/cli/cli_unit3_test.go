@@ -215,6 +215,17 @@ func TestNewPreloadCmd_NoArgs(t *testing.T) {
 
 // --- hook command missing stdin ---
 
+// TestNewHookCmd_NoStdin pins the fail-closed handling of an empty stdin read.
+//
+// This test previously asserted the opposite: an explicit "allow" and no audit
+// entry, on the rationale that a clean EOF meant the agent had restarted or
+// closed a long-lived stream. That rationale did not hold. A hook is a
+// one-shot process started for a single tool call, so an empty read means the
+// payload never arrived — and an explicit allow is not neutral, it tells the
+// host to skip its own permission prompt for a call Rampart never evaluated.
+// Empty input is now treated as the unparseable input it is: denied in enforce
+// mode and recorded, exactly like a truncated payload. The assertions were
+// flipped deliberately; do not restore the allow.
 func TestNewHookCmd_NoStdin(t *testing.T) {
 	dir := t.TempDir()
 	testSetHome(t, dir)
@@ -233,29 +244,36 @@ default_action: allow
 	root.SetIn(strings.NewReader(""))
 	root.SetArgs([]string{"hook", "--config", p, "--mode", "enforce", "--audit-dir", auditDir, "--serve-url", "http://127.0.0.1:1"})
 	if err := root.Execute(); err != nil {
-		t.Fatalf("clean EOF returned an error: %v", err)
+		t.Fatalf("empty stdin returned an error: %v", err)
 	}
 	var got hookOutput
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
-		t.Fatalf("decode clean EOF response: %v; output: %s", err, &out)
+		t.Fatalf("decode empty stdin response: %v; output: %s", err, &out)
 	}
-	if got.Decision != "" || got.HookSpecificOutput == nil || got.HookSpecificOutput.HookEventName != "PreToolUse" || got.HookSpecificOutput.PermissionDecision != "allow" {
-		t.Fatalf("unexpected clean EOF response: %+v", got)
+	if got.HookSpecificOutput == nil ||
+		got.HookSpecificOutput.HookEventName != "PreToolUse" ||
+		got.HookSpecificOutput.PermissionDecision != "deny" {
+		t.Fatalf("empty stdin must deny in enforce mode, got: %+v", got)
 	}
 	if errBuf.Len() != 0 {
-		t.Fatalf("clean EOF wrote stderr: %s", &errBuf)
+		t.Fatalf("empty stdin wrote stderr: %s", &errBuf)
 	}
+
+	// The decision must be auditable: a boundary that refuses a call without
+	// leaving a record is not reviewable after the fact.
 	files, err := listAuditFiles(auditDir)
 	if err != nil {
 		t.Fatal(err)
 	}
+	total := 0
 	for _, file := range files {
 		events, err := readAuditEvents(file)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(events) != 0 {
-			t.Fatalf("clean EOF must not record a policy decision, got %d events", len(events))
-		}
+		total += len(events)
+	}
+	if total == 0 {
+		t.Fatal("empty stdin must record the refusal in the audit trail, got 0 events")
 	}
 }
