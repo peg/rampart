@@ -268,6 +268,19 @@ the host's native decision schema to stdout.
 echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | rampart hook
 ```
 
+**Policy resolution.** A hook runs in whatever directory the agent is working
+in, so it does not take its baseline policy from that directory. The baseline
+is an explicit `--config` if you pass one, otherwise the policies in
+`~/.rampart/policies/`, otherwise the embedded standard profile. A
+`rampart.yaml` found in the working directory is layered on top as a project
+policy: it can add restrictions, and it cannot relax the baseline or change
+`default_action`.
+
+**Empty input.** A hook is a one-shot process, so an empty or whitespace-only
+stdin read means the tool call never arrived. In `--mode enforce` that is
+refused and recorded, the same as any other unparseable payload; in `--mode
+monitor` and `--mode audit` the call is allowed through.
+
 ### `rampart serve`
 
 Start the HTTP policy proxy.
