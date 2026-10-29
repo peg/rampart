@@ -42,6 +42,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   starts every rotated audit file. Each rotation previously added one phantom
   record to counts and time ranges. Chain verification is unchanged.
 
+## [1.9.6] - 2026-10-28
+
+### Security
+
+- **Rule exclusions only excuse the command they match** — a `command_not_matches`
+  exclusion was satisfied by any command fragment, including a substitution or
+  a nested command, so appending a harmless excluded fragment could clear a
+  destructive, self-protection or credential-read rule for the real command.
+  Exclusions are now paired with the fragment that matched the rule, and a
+  multi-file reader such as `cat` is checked per file, so an excluded file such
+  as a public key no longer covers a protected one beside it.
+- **Here-documents no longer hide fetched execution** — download-and-execute
+  analysis stopped at the first here-document. It now skips only the
+  here-document body, treats a body as code when a shell or interpreter reads
+  it, and checks each line of a command that does not tokenize, since the shell
+  runs the lines before a syntax error.
+- **Multi-operand forms of protected commands are matched** — `chmod -R 777`
+  with `/` among several operands, and multi-file reads of protected credential
+  files, matched only in their single-operand form.
+- **Release builds use Go 1.26.10** — The module baseline, container build, and
+  source-build requirement now use the Go patch release that resolves the called
+  standard-library vulnerability GO-2026-6809 in `crypto/x509`, reported against
+  Go 1.26.9.
+
+## [1.9.5] - 2026-10-16
+
+### Security
+
+- **Searches cannot reach protected credential files** — a Claude Code Grep or
+  Glob call rooted in a protected directory such as `~/.ssh` or `~/.aws` was
+  allowed even though reading the files directly was denied, so a content search
+  could return private key material. Restrictive path rules now cover what a
+  search can reach: its root, a file selected by its glob filter, and files
+  beneath a root inside a protected directory. A search without a path is
+  checked against the host working directory. The same check applies to other
+  hosts' search tools that send a search pattern or query. Searches of ordinary
+  project directories are unaffected; a search rooted at a directory named
+  `etc` is now treated like a read of the system files the policy protects
+  there.
+
+### Fixed
+
+- **Claude Code `SubagentHandback`, `ListAgents` and `SendFeedback` are
+  recognized** — these documented tools were refused as unknown, so subagents in
+  auto mode could not deliver their final reports while Rampart was installed.
+
 ## [1.9.4] - 2026-10-12
 
 ### Security

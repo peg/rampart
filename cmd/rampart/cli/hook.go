@@ -1749,7 +1749,7 @@ func mapClaudeCodeTool(toolName string) string {
 	case "code_execution":
 		return "exec"
 	case "ToolSearch", "tool_search", "ListMcpResourcesTool", "ReadMcpResourceTool", "WaitForMcpServers", "Skill",
-		"TaskGet", "TaskList", "TaskOutput":
+		"TaskGet", "TaskList", "TaskOutput", "ListAgents":
 		return "read"
 	case "Task", "Agent", "Workflow", "RemoteTrigger":
 		// Sub-agent spawn: the orchestrator is delegating a task to a new agent.
@@ -1760,7 +1760,8 @@ func mapClaudeCodeTool(toolName string) string {
 		return "process"
 	case "CronList":
 		return "read"
-	case "Artifact", "PushNotification", "SendMessage", "SendUserFile", "ShareOnboardingGuide":
+	case "Artifact", "PushNotification", "SendMessage", "SendUserFile", "ShareOnboardingGuide",
+		"SendFeedback", "SubagentHandback":
 		return "message"
 	case "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "ExitWorktree", "EndConversation", "ReportFindings":
 		return "interact"

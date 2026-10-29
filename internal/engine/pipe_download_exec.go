@@ -300,9 +300,10 @@ type pipelineFrame struct {
 // fetches, handed to eval, source, a shell or an interpreter, to a here-string,
 // or used as the command itself.
 //
-// It is a bounded lexical view, not a shell interpreter: here-documents are
-// data and are skipped, quoted text never splits a stage, and an unclear
-// executable is treated as potentially executing.
+// It is a bounded lexical view, not a shell interpreter: a here-document is
+// data when only a read-only filter reads it and code otherwise, quoted text
+// never splits a stage, and an unclear executable is treated as potentially
+// executing.
 func visitPipedDownloadExecutionAliases(command string, visit func(string) bool) {
 	if len(command) > maxGlobInputLen || !strings.ContainsAny(command, "|$`<") {
 		return
@@ -317,12 +318,46 @@ func visitPipedDownloadExecutionAliases(command string, visit func(string) bool)
 		}
 		words, ok := literalShellWords(command)
 		if !ok {
-			return true, "", ""
+			// The shell runs the lines before a syntax error, so analyze each
+			// line on its own rather than skipping the whole command.
+			if !strings.Contains(command, "\n") {
+				return true, "", ""
+			}
+			fetcher, url := "", ""
+			for _, line := range strings.Split(command, "\n") {
+				more, f, u := walk(line, depth+1)
+				if fetcher == "" {
+					fetcher, url = f, u
+				}
+				if !more {
+					return false, fetcher, url
+				}
+			}
+			return true, fetcher, url
 		}
 		for _, word := range words {
-			if word.operator && strings.HasPrefix(word.value, "<<") && word.value != "<<<" {
-				return true, "", "" // here-document contents are data
+			if !word.operator || !strings.HasPrefix(word.value, "<<") || word.value == "<<<" {
+				continue
 			}
+			// Analyze the command without here-document bodies, and a body as
+			// code whenever its reader may execute it.
+			stripped, docs, ok := splitHereDocuments(command)
+			if !ok || stripped == command {
+				break
+			}
+			more, fetcher, url := walk(stripped, depth+1)
+			if !more {
+				return false, fetcher, url
+			}
+			for _, doc := range docs {
+				if hereDocumentIsData(doc.line) {
+					continue
+				}
+				if more, _, _ = walk(doc.body, depth+1); !more {
+					return false, fetcher, url
+				}
+			}
+			return true, fetcher, url
 		}
 
 		alias := func(name, target string) string {
