@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -561,14 +560,15 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			if err != nil {
 				logger.Warn("hook: failed to parse input", "format", format, "error", err)
 
-				// Clean EOF is normal for hosts that close stdin when the agent
-				// restarts; don't record an audit entry for it. Claude Code always
-				// sends a JSON payload, so in enforce mode an empty one is a parse
-				// failure Rampart cannot classify and must refuse.
-				if (errors.Is(err, io.EOF) || err.Error() == "EOF") && !(format == "claude-code" && mode == "enforce") {
-					logger.Debug("hook: clean EOF on stdin, skipping audit")
-					return outputHookResult(cmd, format, hookAllow, false, "parse failure: EOF", "")
-				}
+				// Empty or whitespace-only stdin is not a safe "nothing happened"
+				// signal. A hook is a one-shot process: the host starts it for a
+				// single tool call and feeds it that call on stdin, so an empty
+				// read means the payload never arrived, not that the agent closed
+				// a long-lived stream. Returning an explicit allow here told the
+				// host to skip its own permission prompt for a call Rampart never
+				// saw. Empty input is therefore handled as the unparseable input
+				// it is, by the shared parse-failure path below: fail closed in
+				// enforce mode and keep the audit record.
 
 				// In enforce mode, fail closed — a parse failure must not silently
 				// allow the tool call. In monitor/audit modes, allow through so the
@@ -615,7 +615,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			// Load policies only after parsing the host context, so a project policy
 			// is selected from the tool call's repository rather than Rampart's
 			// process working directory.
-			policyPath, cleanupPolicy, err := resolveWrapPolicyPath(opts.configPath)
+			policyPath, repoPolicyPath, cleanupPolicy, err := resolveHookPolicyPath(cmd, opts.configPath)
 			if err != nil {
 				if mode == "enforce" {
 					return outputEnforceFailure("Rampart policy configuration is unavailable; refusing host data")
@@ -638,6 +638,15 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				store = engine.NewMultiStore(policyPath, effectiveDir, logger)
 			} else {
 				store = engine.NewFileStore(policyPath)
+			}
+
+			// A repository-local rampart.yaml that Rampart discovered itself is
+			// layered as a project policy rather than used as the baseline, so the
+			// engine's "a project policy cannot weaken a global default" invariant
+			// applies to it and it can only tighten the shipped standard.
+			if repoPolicyPath != "" && os.Getenv("RAMPART_NO_PROJECT_POLICY") == "" {
+				logger.Debug("hook: layering repository policy", "path", repoPolicyPath)
+				store = engine.NewLayeredStore(store, repoPolicyPath, logger)
 			}
 
 			if gitCtx.root != "" && os.Getenv("RAMPART_NO_PROJECT_POLICY") == "" {
@@ -1990,4 +1999,56 @@ func outputHookResultWithResponse(
 		}
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}
+}
+
+// defaultConfigPath is the root --config default. It is a relative path, so it
+// resolves against whatever working directory the caller happens to have.
+const defaultConfigPath = "rampart.yaml"
+
+// resolveHookPolicyPath picks the baseline policy for a hook invocation and,
+// separately, any repository-local policy file to layer on top of it.
+//
+// A hook runs with its working directory set by the agent, which is the
+// repository the agent has been pointed at. Honoring a relative rampart.yaml
+// found there as the baseline let a cloned repository supply the entire
+// policy, including default_action, and so replace the boundary instead of
+// adding to it. An implicitly discovered file is therefore never the baseline.
+// It is returned as a project layer, where the engine's rule that a project
+// policy cannot weaken a global default applies and it can only tighten.
+//
+// An explicit --config, or a non-default path set programmatically, is an
+// operator decision about their own machine and is still honored as the
+// baseline.
+func resolveHookPolicyPath(cmd *cobra.Command, configPath string) (policyPath, repoPolicyPath string, cleanup func(), err error) {
+	candidate := strings.TrimSpace(configPath)
+
+	explicit := candidate != "" && candidate != defaultConfigPath
+	if cmd != nil && cmd.Flags().Changed("config") {
+		explicit = true
+	}
+	if explicit {
+		path, cleanupPath, resolveErr := resolveWrapPolicyPath(candidate)
+		if resolveErr != nil {
+			return "", "", nil, resolveErr
+		}
+		return path, "", cleanupPath, nil
+	}
+
+	// Implicit discovery: baseline is always the shipped standard profile.
+	path, cleanupPath, resolveErr := embeddedStandardPolicyFile()
+	if resolveErr != nil {
+		return "", "", nil, fmt.Errorf("hook: %w", resolveErr)
+	}
+
+	// Only layer a discovered file if it is a regular readable file. A missing
+	// one is the common case and must not fail the hook.
+	if info, statErr := os.Stat(defaultConfigPath); statErr == nil && info.Mode().IsRegular() {
+		if abs, absErr := filepath.Abs(defaultConfigPath); absErr == nil {
+			repoPolicyPath = abs
+		} else {
+			repoPolicyPath = defaultConfigPath
+		}
+	}
+
+	return path, repoPolicyPath, cleanupPath, nil
 }
