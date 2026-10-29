@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   claude-code` reports it as drift. Claude Code v2.1.295 and later honour the
   option; earlier versions ignore it and behave as before.
 
-## [1.9.6] - 2026-10-16
+## [1.9.6] - 2026-10-28
 
 ### Security
 
@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Multi-operand forms of protected commands are matched** — `chmod -R 777`
   with `/` among several operands, and multi-file reads of protected credential
   files, matched only in their single-operand form.
+- **Release builds use Go 1.26.10** — The module baseline, container build, and
+  source-build requirement now use the Go patch release that resolves the called
+  standard-library vulnerability GO-2026-6809 in `crypto/x509`, reported against
+  Go 1.26.9.
 
 ## [1.9.5] - 2026-10-16
 
