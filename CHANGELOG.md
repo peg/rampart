@@ -26,6 +26,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Multi-operand forms of protected commands are matched** — `chmod -R 777`
   with `/` among several operands, and multi-file reads of protected credential
   files, matched only in their single-operand form.
+- **A repository's own `rampart.yaml` can no longer replace the policy** — the
+  `hook` command took its baseline policy from a relative path, and a hook runs
+  in the directory the agent is working in, so a file in that directory could
+  supply the whole policy, `default_action` included, in place of the profile
+  the user installed. The baseline is now an explicit `--config` when one is
+  given, otherwise `~/.rampart/policies/`, otherwise the embedded standard
+  profile. A `rampart.yaml` discovered in the working directory is layered as a
+  project policy, so it can still add restrictions but cannot relax the
+  baseline. This matches the existing rule that a project policy cannot weaken
+  a global default. Setups that pass `--config` explicitly are unaffected.
+- **Empty hook input is refused instead of approved** — an empty or
+  whitespace-only read from stdin returned an explicit approval, which tells a
+  host to skip its own permission prompt. A hook is a one-shot process started
+  for a single tool call, so an empty read means the payload never arrived.
+  Enforce mode now refuses it and records the decision, the same as any other
+  unparseable payload, consistently across every supported hook format. Monitor
+  and audit modes still allow the call through so an observing agent is never
+  blocked.
 - **Release builds use Go 1.26.10** — The module baseline, container build, and
   source-build requirement now use the Go patch release that resolves the called
   standard-library vulnerability GO-2026-6809 in `crypto/x509`, reported against
