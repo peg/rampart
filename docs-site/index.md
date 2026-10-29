@@ -216,7 +216,9 @@ policy decisions, not proof of execution or independent audit witnessing.
 
 Rampart v1.9.6 makes rule exclusions excuse only the command they match, so a
 harmless excluded fragment can no longer clear a protected command beside it,
-and keeps download-and-execute analysis working across here-documents. v1.9.5
+keeps download-and-execute analysis working across here-documents, stops a
+repository's own `rampart.yaml` from replacing the installed policy, refuses
+empty hook input instead of approving it, and builds with Go 1.26.10. v1.9.5
 stopped file searches from reaching protected credential files and recognizes
 Claude Code's subagent hand-back tool. v1.9.4 completed the
 download-and-pipe detection added in v1.9.3: fetched content that reaches a
