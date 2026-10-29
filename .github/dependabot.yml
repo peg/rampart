@@ -1,5 +1,8 @@
-# Ordinary version updates flow through staging. GitHub still opens security
-# update pull requests against the default branch.
+# Version updates flow through staging. Dependabot security updates are not
+# enabled for this repository; govulncheck in CI covers Go vulnerabilities.
+#
+# The Dockerfile is not watched: its golang image must match go.mod, which CI
+# enforces, so Go upgrades land as one deliberate change to both files.
 version: 2
 updates:
   - package-ecosystem: gomod
@@ -13,26 +16,24 @@ updates:
         patterns:
           - "*"
 
-  - package-ecosystem: docker
-    directory: /
-    target-branch: staging
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 3
-    # CI requires Docker Go updates to include the matching go.mod change.
-
+  # Actions are pinned to commit SHAs, so this is what moves the pins forward.
   - package-ecosystem: github-actions
     directory: /
     target-branch: staging
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
 
+  # Docs-site tooling only.
   - package-ecosystem: pip
     directory: /
     target-branch: staging
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 3
     labels:
       - documentation
