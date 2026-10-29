@@ -171,7 +171,7 @@ func TestRestrictiveComponentDepthFailsClosed(t *testing.T) {
 	if got := matchRestrictiveCommandFirst([]string{"unmatched-command"}, command, ActionDeny); got == "" {
 		t.Fatal("incomplete component analysis weakened the restriction")
 	}
-	if restrictiveCommandComponentExcluded([]string{"**"}, command) {
+	if !unexcludedRestrictiveMatch(command, []string{"**"}, func(string) bool { return true }) {
 		t.Fatal("incomplete component analysis established an exclusion")
 	}
 }

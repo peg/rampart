@@ -133,6 +133,232 @@ func literalShellWords(command string) ([]literalShellWord, bool) {
 	return words, true
 }
 
+// hereDocument is one here-document body and the command line that reads it,
+// with here-document operators removed from that line.
+type hereDocument struct {
+	body string
+	line string
+}
+
+// splitHereDocuments removes here-document bodies from a POSIX command and
+// returns the remaining command text with each body. A body is data to most
+// readers but code to a shell or interpreter, so callers decide per body. An
+// unterminated body runs to the end of the input, as in the shell. Quoted text
+// and arithmetic are not scanned for operators. The boolean is false when an
+// operator has no delimiter.
+func splitHereDocuments(command string) (string, []hereDocument, bool) {
+	type pendingDoc struct {
+		delimiter string
+		stripTabs bool
+		start     int // where the reading command starts in line
+		at        int // where the operator was in line
+	}
+	var out, line strings.Builder
+	var docs []hereDocument
+	var pending []pendingDoc
+	var quote byte
+	segmentStart := 0
+	// readerCommand returns the command that reads a here-document: the text of
+	// its logical line from the previous separator to the next one.
+	readerCommand := func(text string, doc pendingDoc) string {
+		for end := doc.at; end < len(text); end++ {
+			if isCommandSeparatorAt(text, end) {
+				return text[doc.start:end]
+			}
+		}
+		return text[doc.start:]
+	}
+	for i := 0; i < len(command); i++ {
+		ch := command[i]
+		switch {
+		case quote == '\'':
+			if ch == '\'' {
+				quote = 0
+			}
+		case ch == '\\' && i+1 < len(command):
+			out.WriteByte(ch)
+			line.WriteByte(ch)
+			i++
+			ch = command[i]
+		case quote == '"':
+			if ch == '"' {
+				quote = 0
+			}
+		case ch == '\'' || ch == '"':
+			quote = ch
+		case strings.HasPrefix(command[i:], "$((") || strings.HasPrefix(command[i:], "(("):
+			end := arithmeticEnd(command, i)
+			out.WriteString(command[i:end])
+			line.WriteString(command[i:end])
+			i = end - 1
+			continue
+		case strings.HasPrefix(command[i:], "<<") && !strings.HasPrefix(command[i:], "<<<"):
+			j := i + 2
+			stripTabs := j < len(command) && command[j] == '-'
+			if stripTabs {
+				j++
+			}
+			for j < len(command) && (command[j] == ' ' || command[j] == '\t') {
+				j++
+			}
+			delimiter, next := readHereDocDelimiter(command, j)
+			if delimiter == "" {
+				return command, nil, false
+			}
+			pending = append(pending, pendingDoc{delimiter: delimiter, stripTabs: stripTabs, start: segmentStart, at: line.Len()})
+			out.WriteByte(' ')
+			line.WriteByte(' ')
+			i = next - 1
+			continue
+		case ch == '\n' && len(pending) > 0:
+			out.WriteByte('\n')
+			pos := i + 1
+			for _, doc := range pending {
+				var body strings.Builder
+				for pos < len(command) {
+					end := strings.IndexByte(command[pos:], '\n')
+					next := len(command)
+					if end >= 0 {
+						next = pos + end + 1
+						end += pos
+					} else {
+						end = len(command)
+					}
+					text := command[pos:end]
+					pos = next
+					compare := text
+					if doc.stripTabs {
+						compare = strings.TrimLeft(text, "\t")
+					}
+					if compare == doc.delimiter {
+						break
+					}
+					body.WriteString(text)
+					body.WriteByte('\n')
+				}
+				docs = append(docs, hereDocument{body: body.String(), line: readerCommand(line.String(), doc)})
+			}
+			pending = nil
+			line.Reset()
+			segmentStart = 0
+			i = pos - 1
+			continue
+		case ch == '\n':
+			line.Reset()
+			segmentStart = 0
+			out.WriteByte(ch)
+			continue
+		case isCommandSeparatorAt(command, i):
+			out.WriteByte(ch)
+			line.WriteByte(ch)
+			segmentStart = line.Len()
+			continue
+		}
+		out.WriteByte(ch)
+		line.WriteByte(ch)
+	}
+	for _, doc := range pending {
+		docs = append(docs, hereDocument{line: readerCommand(line.String(), doc)})
+	}
+	return out.String(), docs, true
+}
+
+// isCommandSeparatorAt reports whether the byte at i ends a pipeline: ';', a
+// grouping character, or '&' that is a list operator rather than part of a
+// redirection such as 2>&1, &> or |&.
+func isCommandSeparatorAt(text string, i int) bool {
+	switch text[i] {
+	case ';', '(', ')', '{', '}':
+		return true
+	case '&':
+		if i > 0 && strings.IndexByte("<>|", text[i-1]) >= 0 {
+			return false
+		}
+		return i+1 >= len(text) || text[i+1] != '>'
+	}
+	return false
+}
+
+// readHereDocDelimiter reads a here-document delimiter word starting at i and
+// returns it with quoting removed, plus the index after the word.
+func readHereDocDelimiter(command string, i int) (string, int) {
+	var delimiter strings.Builder
+	for i < len(command) && !strings.ContainsRune(" \t\n;&|<>()", rune(command[i])) {
+		switch ch := command[i]; ch {
+		case '\'', '"':
+			end := strings.IndexByte(command[i+1:], ch)
+			if end < 0 {
+				return "", len(command)
+			}
+			delimiter.WriteString(command[i+1 : i+1+end])
+			i += end + 2
+		case '\\':
+			if i+1 < len(command) {
+				delimiter.WriteByte(command[i+1])
+			}
+			i += 2
+		default:
+			delimiter.WriteByte(ch)
+			i++
+		}
+	}
+	return delimiter.String(), i
+}
+
+// arithmeticEnd returns the index after the arithmetic expression that starts
+// at i with "((" or "$((", or the end of the input when it is unbalanced.
+func arithmeticEnd(command string, i int) int {
+	depth := 0
+	for j := i; j < len(command); j++ {
+		switch command[j] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return j + 1
+			}
+		}
+	}
+	return len(command)
+}
+
+// hereDocumentIsData reports whether a here-document only reaches a reader
+// that cannot execute it: cat, tee or another known read-only filter with no
+// later pipeline stage. Anything else may run the body as code.
+func hereDocumentIsData(line string) bool {
+	words, ok := literalShellWords(line)
+	if !ok {
+		return false
+	}
+	reader := ""
+	for _, word := range words {
+		if word.operator {
+			if word.value == "|" || word.value == "|&" {
+				return false
+			}
+			continue
+		}
+		if reader == "" && !isShellAssignmentWord(word.value) {
+			reader = shellWrapperBasename(word.value)
+		}
+	}
+	return reader == "tee" || pipelineInertReaders[reader]
+}
+
+func isShellAssignmentWord(word string) bool {
+	name, _, found := strings.Cut(word, "=")
+	if !found || name == "" {
+		return false
+	}
+	for i, ch := range name {
+		if ch != '_' && (ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') && (i == 0 || ch < '0' || ch > '9') {
+			return false
+		}
+	}
+	return true
+}
+
 func isUnsignedDigits(value string) bool {
 	if value == "" {
 		return false
@@ -250,14 +476,44 @@ func visitDownloadExecutionAliases(command string, visit func(string) bool) {
 		}
 		words, ok := literalShellWords(command)
 		if !ok {
+			// The shell runs the lines before a syntax error, so analyze each
+			// line on its own rather than skipping the whole command.
+			if !strings.Contains(command, "\n") {
+				return true
+			}
+			for _, line := range strings.Split(command, "\n") {
+				if !walk(line, cwd, depth+1) {
+					return false
+				}
+			}
+			return true
+		}
+		for _, word := range words {
+			if !word.operator || !strings.HasPrefix(word.value, "<<") || word.value == "<<<" {
+				continue
+			}
+			// Analyze the command without here-document bodies, and a body as
+			// a script whenever its reader may execute it.
+			stripped, docs, ok := splitHereDocuments(command)
+			if !ok || stripped == command {
+				return true
+			}
+			if !walk(stripped, cwd, depth+1) {
+				return false
+			}
+			for _, doc := range docs {
+				if !hereDocumentIsData(doc.line) && !walk(doc.body, cwd, depth+1) {
+					return false
+				}
+			}
 			return true
 		}
 		for _, word := range words {
 			if word.operator && (strings.Contains(word.value, "<<") || word.value == "|" || word.value == "&" ||
 				word.value == "(" || word.value == ")" || word.value == "{" || word.value == "}") {
-				// Here-document contents are data. Pipelines and background jobs
-				// have different process/cwd scopes from sequential commands.
-				// Grouping/function definitions require execution-scope analysis.
+				// Pipelines and background jobs have different process/cwd scopes
+				// from sequential commands. Grouping/function definitions require
+				// execution-scope analysis. Here-strings are left to the pipe walker.
 				return true
 			}
 		}

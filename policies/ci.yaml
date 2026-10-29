@@ -179,8 +179,11 @@ policies:
             - "halt *"
             - "poweroff"
             - "poweroff *"
-            # Mass permission change
+            # Mass permission change, including / among several operands
             - "chmod -R 777 /"
+            - "chmod -R 777 / **"
+            - "chmod -R 777 ** /"
+            - "chmod -R 777 ** / **"
           command_not_matches:
             # Allow temp/build cleanup
             - "rm -rf /tmp"
