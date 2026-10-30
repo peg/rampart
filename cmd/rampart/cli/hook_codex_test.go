@@ -244,6 +244,9 @@ func TestCodexPatchTargetsMatchHostWhitespaceSemantics(t *testing.T) {
 	if parsed.Params["patch"] != patch {
 		t.Fatal("patch parsing changed the original patch")
 	}
+	if parsed.Params["path"] != want[0] {
+		t.Fatalf("path = %#v, want the first target for audit display", parsed.Params["path"])
+	}
 	if _, exists := parsed.Params["command"]; exists {
 		t.Fatal("patch text remained in the command field")
 	}
@@ -666,5 +669,36 @@ func TestClinePatchCommandIsNotAShellCommand(t *testing.T) {
 	}
 	if strings.Join(paths, "\x00") != "notes.txt" {
 		t.Fatalf("policy paths = %#v, want notes.txt", paths)
+	}
+}
+
+func TestClinePatchAliasesMustAgree(t *testing.T) {
+	safe := "*** Begin Patch\n*** Add File: notes.txt\n+note\n*** End Patch"
+	other := "*** Begin Patch\n*** Add File: other.txt\n+note\n*** End Patch"
+
+	params, paths, err := normalizeClineParams("apply_patch", "write", map[string]any{"input": safe}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if params["patch"] != safe || strings.Join(paths, "\x00") != "notes.txt" {
+		t.Fatalf("input patch = %v, paths %#v; want it under patch with its target", params["patch"], paths)
+	}
+
+	for name, input := range map[string]map[string]any{
+		"input and command":     {"input": safe, "command": other},
+		"input and patch decoy": {"input": safe, "patch": other},
+	} {
+		if _, _, err := normalizeClineParams("apply_patch", "write", input, true); err == nil {
+			t.Errorf("%s: conflicting patch aliases were accepted", name)
+		}
+	}
+
+	// Completed-call events stay tolerant so response scanning still runs.
+	params, _, err = normalizeClineParams("apply_patch", "write", map[string]any{"input": safe, "command": other}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if params["patch"] != safe || params["command"] != nil {
+		t.Fatal("post-call patch text was not moved out of the command field")
 	}
 }

@@ -32,10 +32,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ([#481](https://github.com/peg/rampart/issues/481)) — patch text is file
   content, so it is no longer matched as a shell command or held to the
   command matching bound. Every file the patch targets is still evaluated
-  against path policy, and the most restrictive result wins. Command patterns
-  in write rules no longer match lines inside Codex patches; a policy that
-  inspects patch text can match the `patch` tool parameter, which stays
-  bounded and fails closed.
+  against path policy, and the most restrictive result wins. A Cline patch
+  whose `input`, `command` and `patch` values disagree is refused before it
+  runs.
+
+  **Upgrade note:** `command_matches` and `command_contains` conditions no
+  longer see Codex or Cline patch text. A custom write rule that inspected
+  patch content that way should use `tool_param_matches` on the `patch`
+  parameter, which stays bounded and fails closed. The shipped profiles do
+  not depend on it.
 - `rampart mcp -- <server>` no longer panics before starting the proxy.
 
 ## [1.9.6] - 2026-10-29

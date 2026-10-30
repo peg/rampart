@@ -96,6 +96,9 @@ func parseCodexInput(reader io.Reader) (*hookParseResult, error) {
 			return nil, err
 		}
 		if len(result.PolicyPaths) > 0 {
+			// "path" names the call in audit and approval views; policy still
+			// evaluates every target through PolicyPaths.
+			params["path"] = result.PolicyPaths[0]
 			params["paths"] = append([]string(nil), result.PolicyPaths...)
 		}
 	}
@@ -153,6 +156,29 @@ func movePatchPayload(params map[string]any) {
 	}
 	delete(params, "command")
 	params["patch"] = patch
+}
+
+// clinePatchText moves Cline's apply_patch text (input, or the older command
+// alias) into the "patch" parameter. Before execution, aliases that disagree
+// fail closed so every evaluated target comes from the text Cline applies.
+func clinePatchText(params map[string]any, enforce bool) (string, error) {
+	if enforce {
+		patch, _, err := normalizeHookStringAliases(params, "patch", "hook: Cline apply_patch", "patch", "input", "command")
+		if err != nil {
+			return "", err
+		}
+		delete(params, "command")
+		return patch, nil
+	}
+	patch, _ := params["input"].(string)
+	if strings.TrimSpace(patch) == "" {
+		patch, _ = params["command"].(string)
+	}
+	movePatchPayload(params)
+	if strings.TrimSpace(patch) != "" {
+		params["patch"] = patch
+	}
+	return patch, nil
 }
 
 type patchSyntax uint8
