@@ -279,6 +279,49 @@ func FuzzExtractSubcommands(f *testing.F) {
 	})
 }
 
+func TestSubcommandDepthLimit(t *testing.T) {
+	nest := func(open, close string, n int) string {
+		return "echo " + strings.Repeat(open, n) + "x" + strings.Repeat(close, n)
+	}
+	cases := []struct {
+		name string
+		cmd  string
+		want bool
+	}{
+		{"dollar paren at limit", nest("$(echo ", ")", maxSubcommandDepth), false},
+		{"dollar paren past limit", nest("$(echo ", ")", maxSubcommandDepth+1), true},
+		{"process substitution past limit", nest("cat <(", ")", maxSubcommandDepth+1), true},
+		{"eval at limit", strings.Repeat("eval ", maxSubcommandDepth) + "echo x", false},
+		{"eval past limit", strings.Repeat("eval ", maxSubcommandDepth+1) + "echo x", true},
+		{"mixed past limit", strings.Repeat("eval $(", maxSubcommandDepth/2+1) + "x" + strings.Repeat(")", maxSubcommandDepth/2+1), true},
+		{"plain command", "git status && go test ./...", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := subcommandDepthExceeded(tc.cmd); got != tc.want {
+				t.Fatalf("subcommandDepthExceeded(%q) = %v, want %v", tc.cmd, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEvaluateDeniesCommandsPastSubcommandDepth(t *testing.T) {
+	e := setupEngine(t, `
+version: "1"
+default_action: allow
+policies: []
+`)
+	deep := "echo " + strings.Repeat("$(echo ", maxSubcommandDepth+1) + "x" + strings.Repeat(")", maxSubcommandDepth+1)
+	got := e.Evaluate(execCall("main", deep))
+	if got.Action != ActionDeny {
+		t.Fatalf("Action = %v, want deny (message %q)", got.Action, got.Message)
+	}
+	shallow := "echo " + strings.Repeat("$(echo ", maxSubcommandDepth) + "x" + strings.Repeat(")", maxSubcommandDepth)
+	if got := e.Evaluate(execCall("main", shallow)); got.Action != ActionAllow {
+		t.Fatalf("Action = %v, want allow at the limit (message %q)", got.Action, got.Message)
+	}
+}
+
 func TestSanitizeCommand(t *testing.T) {
 	tests := []struct {
 		name string

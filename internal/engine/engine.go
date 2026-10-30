@@ -147,6 +147,14 @@ func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 		}
 	}
 
+	if command := call.Command(); command != "" && subcommandDepthExceeded(command) {
+		return Decision{
+			Action:       ActionDeny,
+			Message:      fmt.Sprintf("command nests substitutions or eval more than %d levels deep; failing closed", maxSubcommandDepth),
+			EvalDuration: time.Since(start),
+		}
+	}
+
 	if opts.DefaultDeny {
 		defaultAction = ActionDeny
 	}
