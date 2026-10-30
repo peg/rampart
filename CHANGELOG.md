@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Codex and Cline `apply_patch` payloads above 8 KiB are no longer denied**
+  ([#481](https://github.com/peg/rampart/issues/481)) — patch text is file
+  content, so it is no longer matched as a shell command or held to the
+  command matching bound. Every file the patch targets is still evaluated
+  against path policy, and the most restrictive result wins. Command patterns
+  in write rules no longer match lines inside Codex patches; a policy that
+  inspects patch text can match the `patch` tool parameter, which stays
+  bounded and fails closed.
 - `rampart mcp -- <server>` no longer panics before starting the proxy.
 
 ## [1.9.6] - 2026-10-29

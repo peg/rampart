@@ -1488,6 +1488,7 @@ func normalizeClineParams(toolName, toolType string, input map[string]any, enfor
 			patch, _ := params["input"].(string)
 			if strings.TrimSpace(patch) == "" {
 				patch, _ = params["command"].(string)
+				movePatchPayload(params)
 			}
 			if strings.TrimSpace(patch) != "" {
 				patchPaths, patchErr := extractPatchPaths(patch, clinePatchSyntax)

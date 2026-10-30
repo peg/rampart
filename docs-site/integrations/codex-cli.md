@@ -37,7 +37,9 @@ Codex reports supported local tool calls through the same lifecycle protocol:
 - delegated-agent calls when the host emits the lifecycle event.
 
 Rampart evaluates every target in a multi-file `apply_patch`; the most
-restrictive decision wins. Unfamiliar future tool names fail closed in enforce
+restrictive decision wins. The patch text is file content, not a shell
+command: command patterns do not match it, and a policy that inspects it uses
+the `patch` tool parameter. Unfamiliar future tool names fail closed in enforce
 mode until Rampart classifies them. Hosted tools and specialized paths that do
 not emit lifecycle hooks remain outside this boundary.
 

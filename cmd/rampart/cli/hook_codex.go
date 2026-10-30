@@ -99,6 +99,9 @@ func parseCodexInput(reader io.Reader) (*hookParseResult, error) {
 			params["paths"] = append([]string(nil), result.PolicyPaths...)
 		}
 	}
+	if strings.EqualFold(strings.TrimSpace(input.ToolName), "apply_patch") {
+		movePatchPayload(params)
+	}
 
 	if input.HookEventName == "PostToolUse" {
 		result.Response, err = decodeCodexToolResponse(input.ToolResponse)
@@ -135,6 +138,21 @@ func validateCodexActionParams(toolName, mappedTool string, params map[string]an
 		return err
 	}
 	return nil
+}
+
+// movePatchPayload keeps apply_patch text out of the command field. The text
+// is file content, not a shell command, so command patterns, the command
+// matching bound and the substitution depth limit do not apply to it. Every
+// file target the patch names is evaluated against path policy instead, and a
+// policy that inspects the payload matches the "patch" parameter, which keeps
+// the referenced-parameter matching bound.
+func movePatchPayload(params map[string]any) {
+	patch, ok := params["command"].(string)
+	if !ok {
+		return
+	}
+	delete(params, "command")
+	params["patch"] = patch
 }
 
 type patchSyntax uint8
