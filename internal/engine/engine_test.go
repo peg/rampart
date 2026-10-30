@@ -268,6 +268,47 @@ policies:
 	}
 }
 
+func TestEvaluate_DurableOverrideWithoutSelectorDoesNotWinOverAsk(t *testing.T) {
+	for name, when := range map[string]string{
+		"default":        "default: true",
+		"empty":          "{}",
+		"exclusion only": `command_not_matches: ["rm *"]`,
+		"session only":   `session_matches: ["*"]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "standard.yaml"), []byte(`
+version: "1"
+default_action: deny
+policies:
+  - name: ask-sudo
+    match:
+      tool: exec
+    rules:
+      - action: ask
+        when:
+          command_matches: ["sudo *"]
+`), 0o644))
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "user-overrides.yaml"), []byte(`
+version: "1"
+policies:
+  - name: catch-all
+    rules:
+      - action: allow
+        when:
+          `+when+`
+`), 0o644))
+
+			eng, err := New(NewDirStore(dir, nil), nil)
+			require.NoError(t, err)
+
+			got := eng.Evaluate(execCall("main", "sudo ls"))
+			require.Equal(t, ActionAsk, got.Action)
+			assert.NotContains(t, got.MatchedPolicies, "catch-all")
+		})
+	}
+}
+
 func TestEvaluate_DurableUserOverrideWinsBeforeAsk(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "standard.yaml"), []byte(`

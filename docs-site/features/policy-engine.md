@@ -449,6 +449,7 @@ policies:
 
 !!! tip "Priority"
     Project policy files are standard policy documents and participate in the normal evaluation order: **deny always wins**. Durable human overrides in `user-overrides.yaml` are treated separately so explicit user carve-outs can persist without being swallowed by unrelated broad denies.
+    A durable rule must name what it allows: a command, path, URL, domain or tool parameter. Rules in `user-overrides.yaml` or `auto-allowed.yaml` that use `default: true`, an empty `when`, or only exclusions are ignored.
 
 ### Denial suggestions
 

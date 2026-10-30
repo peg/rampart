@@ -508,8 +508,11 @@ func (e *Engine) evaluateDurableAllowPolicy(p Policy, call ToolCall) evaluatePol
 }
 
 func matchDurableAllowCondition(cond Condition, call ToolCall, counter CallCounter) bool {
-	if cond.Default || cond.IsEmpty() {
-		return true
+	// Durable files are trusted by name and their allows outrank ask, so a rule
+	// there must name what it grants. Default, empty, and exclusion-only
+	// conditions would allow everything else; Rampart's writers never emit them.
+	if !hasDurableSelector(cond) {
+		return false
 	}
 	if len(cond.CommandMatches) == 0 && len(cond.CommandContains) == 0 && len(cond.CommandEnvAssignments) == 0 {
 		return matchConditionForAction(cond, call, counter, ActionAllow)
@@ -525,6 +528,16 @@ func matchDurableAllowCondition(cond Condition, call ToolCall, counter CallCount
 		return true
 	}
 	return matchConditionForAction(cond, call, counter, ActionAllow)
+}
+
+func hasDurableSelector(cond Condition) bool {
+	return len(cond.CommandMatches) > 0 ||
+		len(cond.CommandContains) > 0 ||
+		len(cond.CommandEnvAssignments) > 0 ||
+		len(cond.PathMatches) > 0 ||
+		len(cond.URLMatches) > 0 ||
+		len(cond.DomainMatches) > 0 ||
+		len(cond.ToolParamMatches) > 0
 }
 
 func matchStrictCommandCondition(cond Condition, call ToolCall) bool {
