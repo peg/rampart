@@ -1067,6 +1067,12 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 	if strings.TrimSpace(input.ToolName) == "" {
 		return nil, fmt.Errorf("hook: Claude Code tool_name is required")
 	}
+	// A response marks the call as already run. Evaluating a pre-tool event as a
+	// response would skip the command-side policy, so a conflicting phase fails
+	// closed through the parse-failure path.
+	if event == "PreToolUse" && input.ToolResponse != nil {
+		return nil, fmt.Errorf("hook: Claude Code PreToolUse payload contains tool_response")
+	}
 
 	// Validate tool_use_id format to prevent injection attacks
 	if err := validateToolUseID(input.ToolUseID); err != nil {

@@ -124,6 +124,43 @@ policies:
 
 // TestParseClaudeCodeInput_SessionAndToolUseID verifies that session_id and
 // tool_use_id from the Claude Code hook payload are propagated into the parse result.
+// TestHookPreToolUse_WithToolResponseDenies verifies a pre-tool payload that
+// also carries tool_response is not evaluated as a completed call.
+func TestHookPreToolUse_WithToolResponseDenies(t *testing.T) {
+	dir := t.TempDir()
+	testSetHome(t, dir)
+
+	configPath := filepath.Join(dir, "policy.yaml")
+	if err := os.WriteFile(configPath, []byte(`version: "1"
+default_action: allow
+policies: []
+`), 0o644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+
+	payload := map[string]any{
+		"hook_event_name": "PreToolUse",
+		"session_id":      "sess-phase-conflict",
+		"tool_use_id":     "toolu_phase_conflict",
+		"tool_name":       "Bash",
+		"tool_input":      map[string]any{"command": "true"},
+		"tool_response":   "ok",
+	}
+	stdinJSON, _ := json.Marshal(payload)
+
+	stdout, _, hookErr := runHookWithStdin(t, &rootOptions{configPath: configPath}, string(stdinJSON), "--mode", "enforce")
+	if hookErr != nil {
+		t.Fatalf("hook RunE error: %v", hookErr)
+	}
+	var out hookOutput
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("unmarshal hook output: %v (stdout=%q)", err, stdout)
+	}
+	if out.HookSpecificOutput == nil || out.HookSpecificOutput.PermissionDecision != "deny" {
+		t.Fatalf("expected permissionDecision=deny, got %+v", out.HookSpecificOutput)
+	}
+}
+
 func TestParseClaudeCodeInput_SessionAndToolUseID(t *testing.T) {
 	payload := map[string]any{
 		"hook_event_name": "PreToolUse",

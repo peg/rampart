@@ -214,3 +214,10 @@ func TestOutputGeminiHookResultPreservesHostPermissionsAndFailsClosed(t *testing
 		}
 	}
 }
+
+func TestParseGeminiInputRejectsBeforeToolWithResponse(t *testing.T) {
+	_, err := parseGeminiInput(strings.NewReader(`{"hook_event_name":"BeforeTool","tool_name":"run_shell_command","tool_input":{"command":"true"},"tool_response":{"output":"ok"}}`))
+	if err == nil || !strings.Contains(err.Error(), "BeforeTool payload contains tool_response") {
+		t.Fatalf("expected phase conflict error, got %v", err)
+	}
+}
