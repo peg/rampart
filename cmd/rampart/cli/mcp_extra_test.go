@@ -1,12 +1,28 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestMCPShorthandDelegatesWithContext(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	cmd := NewRootCmd(ctx, &bytes.Buffer{}, &bytes.Buffer{})
+	cmd.SetIn(strings.NewReader(""))
+	// The test binary with an empty -test.run exits at once on every platform.
+	cmd.SetArgs([]string{"mcp", "--audit-dir", filepath.Join(home, "audit"), "--", os.Args[0], "-test.run=^$"})
+	_ = cmd.Execute()
+}
 
 func TestSuperviseMCPProcessTerminatesChildWhenProxyFails(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

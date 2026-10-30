@@ -48,6 +48,25 @@ func TestPendingApprovalsRendered(t *testing.T) {
 	assert.Contains(t, view, "(a)pprove")
 }
 
+func TestPendingApprovalTextIsTerminalSafe(t *testing.T) {
+	m := NewModel(Config{AuditFile: "/tmp/test.jsonl", ServeURL: "http://localhost:9999"})
+	m.width = 200
+	m.pendingApprovals = []PendingApproval{{
+		ID:        "abc123",
+		Tool:      "exec\x1b[2J",
+		Command:   "echo safe\x1b[2K\r\u202erm -rf / API_KEY=fixture-secret",
+		Message:   "msg\x1b]0;title\x07",
+		ExpiresAt: time.Now().Add(time.Minute),
+	}}
+
+	view := m.View()
+	for _, raw := range []string{"\x1b[2J", "\x1b[2K", "\r", "\u202e", "\x1b]0;", "\x07", "fixture-secret"} {
+		assert.NotContains(t, view, raw)
+	}
+	assert.Contains(t, view, `\x1b[2K`)
+	assert.Contains(t, view, `\u202e`)
+}
+
 func TestKeybindingSelectAndApprove(t *testing.T) {
 	m := NewModel(Config{
 		AuditFile: "/tmp/test.jsonl",

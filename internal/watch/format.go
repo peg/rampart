@@ -17,11 +17,13 @@ package watch
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/peg/rampart/internal/audit"
+	"github.com/peg/rampart/internal/notify"
 )
 
 const (
@@ -133,6 +135,14 @@ func relativeTime(now, ts time.Time) string {
 	default:
 		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	}
+}
+
+// safeTerminalText redacts credentials and renders terminal control and
+// invisible direction characters literally, so agent-supplied approval text
+// cannot rewrite the dashboard or impersonate another row.
+func safeTerminalText(text string) string {
+	quoted := strconv.QuoteToGraphic(notify.SanitizeCommand(text))
+	return quoted[1 : len(quoted)-1]
 }
 
 func formatEventLine(event audit.Event, width int) string {

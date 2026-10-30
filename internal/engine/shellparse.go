@@ -62,28 +62,55 @@ func SanitizeCommand(cmd string) string {
 	return b.String()
 }
 
+// maxSubcommandDepth bounds nested $(...), backtick, process-substitution and
+// eval extraction. Every extracted level is matched again by each command
+// rule, so analysis cost grows steeply with depth. EvaluateWith denies commands
+// nested deeper than this before matching; real commands stay well below it.
+const maxSubcommandDepth = 8
+
 func ExtractSubcommands(cmd string) []string {
-	cmd = SanitizeCommand(cmd)
-	var results []string
-
-	// Extract $(...) substitutions (handling nested parens).
-	results = append(results, extractDollarParen(cmd)...)
-
-	// Extract backtick substitutions.
-	results = append(results, extractBackticks(cmd)...)
-
-	// Extract eval arguments.
-	results = append(results, extractEval(cmd)...)
-
-	// Extract process substitutions <(...) and >(...).
-	results = append(results, extractProcessSubstitution(cmd)...)
-
+	results, _ := extractSubcommands(cmd, 0)
 	return results
 }
 
-// extractProcessSubstitution finds <(...) and >(...) in cmd and returns inner commands.
-func extractProcessSubstitution(cmd string) []string {
+// subcommandDepthExceeded reports whether cmd nests substitutions or eval
+// deeper than maxSubcommandDepth.
+func subcommandDepthExceeded(cmd string) bool {
+	_, overflow := extractSubcommands(cmd, 0)
+	return overflow
+}
+
+func extractSubcommands(cmd string, level int) ([]string, bool) {
+	if level > maxSubcommandDepth {
+		return nil, true
+	}
+	cmd = SanitizeCommand(cmd)
 	var results []string
+	overflow := false
+	collect := func(found []string, exceeded bool) {
+		results = append(results, found...)
+		overflow = overflow || exceeded
+	}
+
+	// Extract $(...) substitutions (handling nested parens).
+	collect(extractDollarParen(cmd, level))
+
+	// Extract backtick substitutions.
+	collect(extractBackticks(cmd, level))
+
+	// Extract eval arguments.
+	collect(extractEval(cmd, level))
+
+	// Extract process substitutions <(...) and >(...).
+	collect(extractProcessSubstitution(cmd, level))
+
+	return results, overflow
+}
+
+// extractProcessSubstitution finds <(...) and >(...) in cmd and returns inner commands.
+func extractProcessSubstitution(cmd string, level int) ([]string, bool) {
+	var results []string
+	overflow := false
 	i := 0
 	for i < len(cmd)-1 {
 		if (cmd[i] == '<' || cmd[i] == '>') && cmd[i+1] == '(' {
@@ -99,7 +126,9 @@ func extractProcessSubstitution(cmd string) []string {
 						inner := strings.TrimSpace(cmd[start:j])
 						if inner != "" {
 							results = append(results, inner)
-							results = append(results, ExtractSubcommands(inner)...)
+							nested, exceeded := extractSubcommands(inner, level+1)
+							results = append(results, nested...)
+							overflow = overflow || exceeded
 						}
 					}
 				}
@@ -110,13 +139,14 @@ func extractProcessSubstitution(cmd string) []string {
 			i++
 		}
 	}
-	return results
+	return results, overflow
 }
 
 // extractDollarParen finds all $(...) in cmd and returns the inner commands.
 // It handles nested parentheses by counting depth.
-func extractDollarParen(cmd string) []string {
+func extractDollarParen(cmd string, level int) ([]string, bool) {
 	var results []string
+	overflow := false
 	i := 0
 	for i < len(cmd)-1 {
 		if cmd[i] == '$' && cmd[i+1] == '(' {
@@ -137,7 +167,9 @@ func extractDollarParen(cmd string) []string {
 						if inner != "" {
 							results = append(results, inner)
 							// Recurse to find nested subcommands.
-							results = append(results, ExtractSubcommands(inner)...)
+							nested, exceeded := extractSubcommands(inner, level+1)
+							results = append(results, nested...)
+							overflow = overflow || exceeded
 						}
 					}
 					j++
@@ -150,12 +182,13 @@ func extractDollarParen(cmd string) []string {
 			i++
 		}
 	}
-	return results
+	return results, overflow
 }
 
 // extractBackticks finds all `...` in cmd and returns the inner commands.
-func extractBackticks(cmd string) []string {
+func extractBackticks(cmd string, level int) ([]string, bool) {
 	var results []string
+	overflow := false
 	i := 0
 	for i < len(cmd) {
 		if cmd[i] == '`' {
@@ -167,7 +200,9 @@ func extractBackticks(cmd string) []string {
 				inner := strings.TrimSpace(cmd[i+1 : j])
 				if inner != "" {
 					results = append(results, inner)
-					results = append(results, ExtractSubcommands(inner)...)
+					nested, exceeded := extractSubcommands(inner, level+1)
+					results = append(results, nested...)
+					overflow = overflow || exceeded
 				}
 				i = j + 1
 			} else {
@@ -178,12 +213,13 @@ func extractBackticks(cmd string) []string {
 			i++
 		}
 	}
-	return results
+	return results, overflow
 }
 
 // extractEval detects eval "..." or eval '...' and extracts the argument.
-func extractEval(cmd string) []string {
+func extractEval(cmd string, level int) ([]string, bool) {
 	var results []string
+	overflow := false
 	// Tokenize to find "eval" as a command.
 	trimmed := strings.TrimSpace(cmd)
 	// Strip env var prefixes to find eval.
@@ -197,10 +233,12 @@ func extractEval(cmd string) []string {
 		inner := strings.Join(tokens[1:], " ")
 		if inner != "" {
 			results = append(results, inner)
-			results = append(results, ExtractSubcommands(inner)...)
+			nested, exceeded := extractSubcommands(inner, level+1)
+			results = append(results, nested...)
+			overflow = overflow || exceeded
 		}
 	}
-	return results
+	return results, overflow
 }
 
 // SplitCompoundCommand splits a shell command on unquoted &, &&, ||, ;, and |

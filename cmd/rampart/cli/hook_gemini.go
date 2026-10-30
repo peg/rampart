@@ -39,6 +39,9 @@ func parseGeminiInput(reader io.Reader) (*hookParseResult, error) {
 	if event != "BeforeTool" && event != "AfterTool" {
 		return nil, fmt.Errorf("hook: unsupported Gemini hook_event_name %q", input.HookEventName)
 	}
+	if event == "BeforeTool" && len(input.ToolResponse) > 0 {
+		return nil, fmt.Errorf("hook: Gemini BeforeTool payload contains tool_response")
+	}
 	tool := mapGeminiTool(input.ToolName)
 	if event == "BeforeTool" && tool == "unknown" {
 		return nil, fmt.Errorf("hook: unsupported Gemini tool_name %q; update Rampart before allowing this tool", input.ToolName)

@@ -214,11 +214,14 @@ policy decisions, not proof of execution or independent audit witnessing.
 
 ## Current release
 
-Rampart v1.9.6 makes rule exclusions excuse only the command they match, so a
-harmless excluded fragment can no longer clear a protected command beside it,
-keeps download-and-execute analysis working across here-documents, stops a
-repository's own `rampart.yaml` from replacing the installed policy, refuses
-empty hook input instead of approving it, and builds with Go 1.26.10. v1.9.5
+Rampart v1.9.7 extends self-protection to more of Rampart's own commands,
+requires durable allow rules to name what they allow, fails closed in more hook
+error paths, redacts more credential shapes, and evaluates Codex and Cline
+`apply_patch` text as file content so large patches are no longer denied.
+v1.9.6 made rule exclusions excuse only the command they match, kept
+download-and-execute analysis working across here-documents, stopped a
+repository's own `rampart.yaml` from replacing the installed policy, refused
+empty hook input instead of approving it, and built with Go 1.26.10. v1.9.5
 stopped file searches from reaching protected credential files and recognizes
 Claude Code's subagent hand-back tool. v1.9.4 completed the
 download-and-pipe detection added in v1.9.3: fetched content that reaches a
