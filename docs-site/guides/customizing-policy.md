@@ -312,7 +312,7 @@ Safe wildcard suggestions are generated automatically. Wildcards are **not** sug
 
 ## Self-modification protection
 
-`rampart allow`, `rampart block`, and `rampart rules` are **blocked when run by an AI agent**. The standard policy includes:
+`rampart allow`, `rampart block`, and `rampart rules` are **blocked when run by an AI agent**, as are the commands that decide approvals, expose the serve token, or rewrite Rampart's installation (`approve`, `deny`, `token`, `setup`, `protect`, `uninstall`, `serve`, `upgrade`). The standard policy matches direct, absolute-path, `./` and global-flag invocations; the `ci` profile uses the substring rule shown here:
 
 ```yaml
 - name: block-self-modification
@@ -329,6 +329,7 @@ Safe wildcard suggestions are generated automatically. Wildcards are **not** sug
           - "rampart rules"
           - "rampart policy generate"
           - "rampart init"
+          # ...plus token, approve, deny, uninstall, protect and quickstart
       message: "Policy modification commands must be run by a human, not an agent"
 ```
 

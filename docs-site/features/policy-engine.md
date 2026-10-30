@@ -466,7 +466,7 @@ The wildcard variant is only suggested when it's safe (not for `rm`, `shred`, `d
 
 ### Self-modification protection
 
-`rampart allow`, `rampart block`, and `rampart rules` are blocked when an AI agent tries to run them. The `block-self-modification` rule in `standard.yaml` matches these commands and denies them:
+Commands that change Rampart's policy, approvals, credentials or installation are blocked when an AI agent tries to run them: `allow`, `block`, `rules`, `init`, `setup`, `serve`, `upgrade`, `token`, `approve`, `deny`, `uninstall`, `protect`, `quickstart`, and the mutating `policy` subcommands. Read-only commands such as `status`, `doctor`, `pending` and `policy explain` stay available. The `block-self-modification` rule in `standard.yaml` matches direct, absolute-path, `./` and global-flag invocations. An excerpt:
 
 ```yaml
 - name: block-self-modification
@@ -480,8 +480,10 @@ The wildcard variant is only suggested when it's safe (not for `rm`, `shred`, `d
           - "rampart allow *"
           - "rampart block *"
           - "rampart rules *"
-          - "rampart policy generate*"
-          - "rampart init *"
+          - "rampart token *"
+          - "rampart approve *"
+          - "rampart uninstall *"
+          # ...plus the other subcommands and invocation forms
       message: "Policy modification commands must be run by a human, not an agent"
 ```
 
