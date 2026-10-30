@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Self-protection covers more of Rampart's own commands** — the standard,
+  OpenClaw and CI profiles now also deny agent use of `token`, `approve`,
+  `deny`, `uninstall`, `protect` and `quickstart`, and match global flags
+  before the subcommand, including flag values that contain a path.
+- **Durable allow rules must name what they allow** — rules in
+  `user-overrides.yaml` and `auto-allowed.yaml` that use `default: true`, an
+  empty `when`, or only exclusions are ignored at the durable tier. Rules
+  written by `rampart allow`, Always Allow and the learn API are unaffected.
+- **Fail-closed hook handling** — `ask.headless_only` denies when
+  `rampart serve` is unreachable, and pre-tool payloads that also carry a tool
+  response are refused.
+- **Bounded command analysis** — commands that nest substitutions or `eval`
+  more than eight levels deep are denied.
+- **Broader redaction** — more credential shapes are redacted from audit, logs,
+  the API and notifications; session state is stored redacted, and
+  `rampart watch` renders approval text literally.
+
+### Fixed
+
+- `rampart mcp -- <server>` no longer panics before starting the proxy.
+
 ## [1.9.6] - 2026-10-29
 
 ### Security
