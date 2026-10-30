@@ -936,8 +936,10 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					return resolveExternalHookApproval(cmd, format, call, reasonMsg, serveURL, serveToken, serveAutoDiscovered, logger)
 				}
 				if decision.HeadlessOnly {
+					// Hosts such as Claude Code treat a hook error exit as non-blocking,
+					// so an unavailable approval flow must be a protocol deny.
 					if serveURL == "" || !isServeRunning(serveURL) {
-						return fmt.Errorf("hook: ask.headless_only requires rampart serve, but no serve instance is reachable at %s", serveURL)
+						return outputEnforceFailure("ask.headless_only requires rampart serve, but no serve instance is reachable; denying")
 					}
 					approvalClient := &hookApprovalClient{
 						serveURL:       strings.TrimRight(serveURL, "/"),
@@ -948,7 +950,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					}
 					result := approvalClient.requestApprovalCtx(cmd.Context(), call, reasonMsg, 5*time.Minute)
 					if result == hookAsk {
-						return fmt.Errorf("hook: ask.headless_only could not reach rampart serve approval flow; native ask fallback is disabled")
+						return outputEnforceFailure("ask.headless_only could not reach the rampart serve approval flow; native ask fallback is disabled, denying")
 					}
 					return outputHookResult(cmd, format, result, false, reasonMsg, cmdStr)
 				}

@@ -370,7 +370,7 @@ func TestHookActionAsk_DefaultHeadlessOnlyFalse_DoesEmitPermissionDecisionAsk(t 
 	}
 }
 
-func TestHookActionAsk_HeadlessOnly_NoServe_ReturnsError(t *testing.T) {
+func TestHookActionAsk_HeadlessOnly_NoServe_Denies(t *testing.T) {
 	dir := t.TempDir()
 	testSetHome(t, dir)
 
@@ -388,13 +388,22 @@ func TestHookActionAsk_HeadlessOnly_NoServe_ReturnsError(t *testing.T) {
 	}
 	stdinJSON, _ := json.Marshal(payload)
 
+	// Claude Code treats a hook error exit as non-blocking, so an unreachable
+	// approval flow must produce a protocol deny rather than an error.
 	opts := &rootOptions{configPath: configPath}
-	_, _, hookErr := runHookWithStdin(t, opts, string(stdinJSON), "--mode", "enforce", "--serve-url", "http://127.0.0.1:1")
-	if hookErr == nil {
-		t.Fatal("expected error when ask.headless_only=true and serve is unreachable")
+	stdout, _, hookErr := runHookWithStdin(t, opts, string(stdinJSON), "--mode", "enforce", "--serve-url", "http://127.0.0.1:1")
+	if hookErr != nil {
+		t.Fatalf("hook RunE error: %v", hookErr)
 	}
-	if !strings.Contains(hookErr.Error(), "ask.headless_only requires rampart serve") {
-		t.Fatalf("unexpected error: %v", hookErr)
+	var out hookOutput
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("unmarshal hook output: %v (stdout=%q)", err, stdout)
+	}
+	if out.HookSpecificOutput == nil || out.HookSpecificOutput.PermissionDecision != "deny" {
+		t.Fatalf("expected permissionDecision=deny, got %+v", out.HookSpecificOutput)
+	}
+	if !strings.Contains(out.HookSpecificOutput.PermissionDecisionReason, "ask.headless_only requires rampart serve") {
+		t.Fatalf("unexpected reason: %q", out.HookSpecificOutput.PermissionDecisionReason)
 	}
 }
 
