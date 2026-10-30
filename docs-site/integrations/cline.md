@@ -92,7 +92,9 @@ honors it and confirm host activation; do not treat the artifact alone as proof.
 | MCP | legacy wrappers and current `server__tool` names | shared MCP classifier |
 
 Rampart evaluates every path in current batched reads and patches, and every
-command in `run_commands`. Current multi-URL `fetch_web_content` calls are
+command in `run_commands`. Patch text is file content, not a shell command: a
+policy that inspects it uses the `patch` tool parameter, and a patch whose
+`input` and `command` values disagree is refused. Current multi-URL `fetch_web_content` calls are
 denied with a request to split the batch, because allowing after evaluating
 only one URL would be unsafe. Unknown future pre-call tools fail closed in
 enforce mode until Rampart can classify them.

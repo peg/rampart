@@ -96,8 +96,14 @@ func parseCodexInput(reader io.Reader) (*hookParseResult, error) {
 			return nil, err
 		}
 		if len(result.PolicyPaths) > 0 {
+			// "path" names the call in audit and approval views; policy still
+			// evaluates every target through PolicyPaths.
+			params["path"] = result.PolicyPaths[0]
 			params["paths"] = append([]string(nil), result.PolicyPaths...)
 		}
+	}
+	if strings.EqualFold(strings.TrimSpace(input.ToolName), "apply_patch") {
+		movePatchPayload(params)
 	}
 
 	if input.HookEventName == "PostToolUse" {
@@ -135,6 +141,44 @@ func validateCodexActionParams(toolName, mappedTool string, params map[string]an
 		return err
 	}
 	return nil
+}
+
+// movePatchPayload keeps apply_patch text out of the command field. The text
+// is file content, not a shell command, so command patterns, the command
+// matching bound and the substitution depth limit do not apply to it. Every
+// file target the patch names is evaluated against path policy instead, and a
+// policy that inspects the payload matches the "patch" parameter, which keeps
+// the referenced-parameter matching bound.
+func movePatchPayload(params map[string]any) {
+	patch, ok := params["command"].(string)
+	if !ok {
+		return
+	}
+	delete(params, "command")
+	params["patch"] = patch
+}
+
+// clinePatchText moves Cline's apply_patch text (input, or the older command
+// alias) into the "patch" parameter. Before execution, aliases that disagree
+// fail closed so every evaluated target comes from the text Cline applies.
+func clinePatchText(params map[string]any, enforce bool) (string, error) {
+	if enforce {
+		patch, _, err := normalizeHookStringAliases(params, "patch", "hook: Cline apply_patch", "patch", "input", "command")
+		if err != nil {
+			return "", err
+		}
+		delete(params, "command")
+		return patch, nil
+	}
+	patch, _ := params["input"].(string)
+	if strings.TrimSpace(patch) == "" {
+		patch, _ = params["command"].(string)
+	}
+	movePatchPayload(params)
+	if strings.TrimSpace(patch) != "" {
+		params["patch"] = patch
+	}
+	return patch, nil
 }
 
 type patchSyntax uint8

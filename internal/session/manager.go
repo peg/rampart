@@ -25,6 +25,7 @@ import (
 	"unicode"
 
 	"github.com/peg/rampart/internal/filetxn"
+	"github.com/peg/rampart/internal/notify"
 	"github.com/peg/rampart/internal/securefile"
 )
 
@@ -238,6 +239,8 @@ func (m *Manager) RecordAsk(toolUseID, tool, command, pattern, policyName, messa
 }
 
 // RecordAskWithAudit records a pending ask and optional audit linkage metadata.
+// Session state is correlated by tool_use_id and only counts approvals, so the
+// command, pattern and message are stored redacted like the audit log.
 func (m *Manager) RecordAskWithAudit(toolUseID, tool, command, pattern, policyName, message string, audit bool, auditApprovalID string) error {
 	path, err := m.statePath()
 	if err != nil {
@@ -250,11 +253,11 @@ func (m *Manager) RecordAskWithAudit(toolUseID, tool, command, pattern, policyNa
 		}
 		s.PendingAsks[toolUseID] = PendingAsk{
 			Tool:               tool,
-			Command:            command,
-			GeneralizedPattern: pattern,
+			Command:            notify.SanitizeCommand(command),
+			GeneralizedPattern: notify.SanitizeCommand(pattern),
 			AskedAt:            time.Now().UTC(),
 			PolicyName:         policyName,
-			DecisionMessage:    message,
+			DecisionMessage:    notify.SanitizeCommand(message),
 			Audit:              audit,
 			AuditApprovalID:    auditApprovalID,
 		}

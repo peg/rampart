@@ -122,6 +122,25 @@ func TestRecordAsk_CreatesFile(t *testing.T) {
 	}
 }
 
+func TestRecordAsk_RedactsCredentials(t *testing.T) {
+	m, dir := newTestManager(t, "sess-record-redact")
+	command := "curl -H 'Authorization: Bearer fixture-session-secret' https://example.test"
+
+	if err := m.RecordAsk("toolu_01", "exec", command, command, "network", "asked: "+command); err != nil {
+		t.Fatalf("RecordAsk: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "sess-record-redact.json"))
+	if err != nil {
+		t.Fatalf("read state: %v", err)
+	}
+	if strings.Contains(string(data), "fixture-session-secret") || !strings.Contains(string(data), "[REDACTED]") {
+		t.Fatalf("session state stored the credential: %s", data)
+	}
+	if _, err := m.ObserveApproval("toolu_01"); err != nil {
+		t.Fatalf("ObserveApproval: %v", err)
+	}
+}
+
 func TestRecordAsk_MultipleAsks(t *testing.T) {
 	m, dir := newTestManager(t, "sess-record-2")
 
