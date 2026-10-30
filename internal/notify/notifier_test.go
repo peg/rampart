@@ -71,10 +71,14 @@ func TestSanitizeCommandShortCredentialForms(t *testing.T) {
 		{name: "secret-first name", command: "SECRET_KEY=" + fake + " ./manage.py", secret: fake},
 		{name: "URL userinfo", command: "psql postgres://admin:" + fake + "@db.example.test/app", secret: fake},
 		{name: "URL token without user", command: "git clone https://:" + fake + "@example.test/repo.git", secret: fake},
+		{name: "token after an identifier", command: "echo id_AKIA" + strings.ToUpper(fake[:16]), secret: strings.ToUpper(fake[:16])},
+		{name: "URL-encoded sk- key", command: "curl 'https://example.test/?k=%3Dsk-" + fake + "'", secret: fake},
+		{name: "URL-encoded GitHub token", command: "curl 'https://example.test/?t=%3Dghp_" + fake + "'", secret: fake},
+		{name: "underscored GitHub token", command: "echo VAR_gho_" + fake, secret: fake},
 		{name: "PEM private key", command: "printf '-----BEGIN OPENSSH PRIVATE KEY-----\n" + fake + "\n-----END OPENSSH PRIVATE KEY-----'", secret: fake},
 	}...)
 
-	for _, command := range []string{"MAX_TOKENS=4096 ./run", "rm -rf /tmp/build-sk-1234567890abcdefghijk", "git push origin sk-feature"} {
+	for _, command := range []string{"MAX_TOKENS=4096 ./run", "./scripts/task-runner-configuration-check", "git push origin sk-feature"} {
 		if got := SanitizeCommand(command); got != command {
 			t.Errorf("SanitizeCommand(%q) = %q, want unchanged", command, got)
 		}
