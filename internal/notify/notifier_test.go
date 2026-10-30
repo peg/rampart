@@ -49,6 +49,36 @@ func TestSanitizeCommandShortCredentialForms(t *testing.T) {
 		{name: "password assignment", command: "PASSWORD=short-password tool", secret: "short-password"},
 		{name: "URL query", command: "curl https://example.test?token=short-query&mode=test", secret: "short-query"},
 	}
+	// Fake values are assembled at runtime so secret scanners do not flag the source.
+	fake := strings.Repeat("A1b2C3d4", 6)
+	tests = append(tests, []struct {
+		name    string
+		command string
+		secret  string
+	}{
+		{name: "GitHub classic token", command: "echo ghp_" + fake[:36], secret: fake[:36]},
+		{name: "GitHub fine-grained token", command: "echo github_pat_11AB_" + fake, secret: fake},
+		{name: "GitLab token", command: "echo glpat-" + fake[:20], secret: fake[:20]},
+		{name: "Anthropic key", command: "echo sk-ant-api03-" + fake, secret: fake},
+		{name: "OpenAI project key", command: "echo sk-proj-" + fake, secret: fake},
+		{name: "Stripe key", command: "echo sk_live_" + fake[:24], secret: fake[:24]},
+		{name: "AWS session key id", command: "echo ASIA" + strings.ToUpper(fake[:16]), secret: strings.ToUpper(fake[:16])},
+		{name: "Google API key", command: "echo AIza" + fake[:35], secret: fake[:35]},
+		{name: "Slack app token", command: "echo xoxa-" + fake, secret: fake},
+		{name: "JWT", command: "curl -d eyJ" + fake[:12] + "." + fake[:14] + "." + fake[:16], secret: fake[:14] + "." + fake[:16]},
+		{name: "underscored secret name", command: "AWS_SECRET_ACCESS_KEY=" + fake + " aws s3 ls", secret: fake},
+		{name: "prefixed token name", command: "export GITHUB_TOKEN='" + fake + "'", secret: fake},
+		{name: "secret-first name", command: "SECRET_KEY=" + fake + " ./manage.py", secret: fake},
+		{name: "URL userinfo", command: "psql postgres://admin:" + fake + "@db.example.test/app", secret: fake},
+		{name: "URL token without user", command: "git clone https://:" + fake + "@example.test/repo.git", secret: fake},
+		{name: "PEM private key", command: "printf '-----BEGIN OPENSSH PRIVATE KEY-----\n" + fake + "\n-----END OPENSSH PRIVATE KEY-----'", secret: fake},
+	}...)
+
+	for _, command := range []string{"MAX_TOKENS=4096 ./run", "rm -rf /tmp/build-sk-1234567890abcdefghijk", "git push origin sk-feature"} {
+		if got := SanitizeCommand(command); got != command {
+			t.Errorf("SanitizeCommand(%q) = %q, want unchanged", command, got)
+		}
+	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
