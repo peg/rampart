@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.7] - 2026-10-30
+
 ### Security
 
 - **Self-protection covers more of Rampart's own commands** — the standard,
