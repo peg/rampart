@@ -286,8 +286,9 @@ echo '{"tool_name":"Bash","tool_input":{"command":"rm -rf /"}}' | rampart hook
 
 **Policy resolution.** A hook runs in whatever directory the agent is working
 in, so it does not take its baseline policy from that directory. The baseline
-is an explicit `--config` if you pass one, otherwise the policies in
-`~/.rampart/policies/`, otherwise the embedded standard profile. A
+is an explicit `--config` if you pass one, otherwise the embedded standard
+profile. Policies in `~/.rampart/policies/` (or `--config-dir`) are added to the
+baseline, which wins when both define a policy with the same name. A
 `rampart.yaml` found in the working directory is layered on top as a project
 policy: it can add restrictions, and it cannot relax the baseline or change
 `default_action`.
