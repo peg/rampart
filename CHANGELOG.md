@@ -31,8 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in the directory the agent is working in, so a file in that directory could
   supply the whole policy, `default_action` included, in place of the profile
   the user installed. The baseline is now an explicit `--config` when one is
-  given, otherwise `~/.rampart/policies/`, otherwise the embedded standard
-  profile. A `rampart.yaml` discovered in the working directory is layered as a
+  given, otherwise the embedded standard profile, with any policies in
+  `~/.rampart/policies/` added to it. A `rampart.yaml` discovered in the
+  working directory is layered as a
   project policy, so it can still add restrictions but cannot relax the
   baseline. This matches the existing rule that a project policy cannot weaken
   a global default. Setups that pass `--config` explicitly are unaffected.
@@ -44,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unparseable payload, consistently across every supported hook format. Monitor
   and audit modes still allow the call through so an observing agent is never
   blocked.
-- **Release builds use Go 1.26.10** — The module baseline, container build, and
+- **Release builds use Go 1.26.10** — the module baseline, container build, and
   source-build requirement now use the Go patch release that resolves the called
   standard-library vulnerability GO-2026-6809 in `crypto/x509`, reported against
   Go 1.26.9.
