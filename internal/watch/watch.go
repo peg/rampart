@@ -543,7 +543,7 @@ func (m *Model) View() string {
 				sel = ">"
 			}
 			line1 := fmt.Sprintf("  │ %s[%d] %s: %s  [%s]",
-				sel, num, a.Tool, truncateRunes(a.Command, innerWidth-30), truncateRunes(a.Message, 30))
+				sel, num, safeTerminalText(a.Tool), truncateRunes(safeTerminalText(a.Command), innerWidth-30), truncateRunes(safeTerminalText(a.Message), 30))
 			line2 := fmt.Sprintf("  │     ⏳ %s remaining — (a)pprove (d)eny (A)lways allow", formatDuration(remaining))
 
 			if num == m.selectedApproval {

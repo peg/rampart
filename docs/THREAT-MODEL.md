@@ -1,6 +1,6 @@
 # Threat Model
 
-> Last reviewed: 2026-09-04 | Applies to: v1.9.6+
+> Last reviewed: 2026-10-30 | Applies to: v1.9.7+
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 
@@ -201,7 +201,7 @@ Rampart imposes limits on regex patterns used for response matching to prevent R
 
 These limits protect against both accidental performance degradation and malicious patterns. They prevent policy authors from creating DoS conditions, and prevent attackers from injecting malicious regex patterns via webhook-driven policy updates. Patterns exceeding these limits are rejected at policy load time with clear error messages.
 
-Glob matching is bounded separately: values used by glob conditions are limited to 8 KiB, ordinary patterns to 8 KiB, double-star patterns to 256 bytes, and each pattern to two `**` occurrences. Oversized match inputs are denied as whole values; Rampart never checks a truncated prefix. The policy loader and linter reject patterns outside these limits.
+Glob matching is bounded separately: values used by glob conditions are limited to 8 KiB, ordinary patterns to 8 KiB, double-star patterns to 256 bytes, and each pattern to two `**` occurrences. Oversized match inputs are denied as whole values; Rampart never checks a truncated prefix. Codex and Cline `apply_patch` text is file content rather than a command: each target path is held to the 8 KiB bound and evaluated separately, a patch may name at most 100 targets, the hook input is capped at 4 MiB, and the patch text is held to the 8 KiB bound only when a policy matches it through the `patch` tool parameter. The policy loader and linter reject patterns outside these limits.
 
 `call_count` conditions retain at most 1,000 calls per tool, 1,024 active tool identities, and a 30-day window. Long-running proxy mode keeps this state in memory. One-shot native hooks share a locked state file at `~/.rampart/hook-call-counts.json`, so thresholds apply across separate hook processes. Corrupt, unavailable, or capacity-exhausted state fails closed in enforce mode.
 

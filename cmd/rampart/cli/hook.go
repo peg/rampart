@@ -936,8 +936,10 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					return resolveExternalHookApproval(cmd, format, call, reasonMsg, serveURL, serveToken, serveAutoDiscovered, logger)
 				}
 				if decision.HeadlessOnly {
+					// Hosts such as Claude Code treat a hook error exit as non-blocking,
+					// so an unavailable approval flow must be a protocol deny.
 					if serveURL == "" || !isServeRunning(serveURL) {
-						return fmt.Errorf("hook: ask.headless_only requires rampart serve, but no serve instance is reachable at %s", serveURL)
+						return outputEnforceFailure("ask.headless_only requires rampart serve, but no serve instance is reachable; denying")
 					}
 					approvalClient := &hookApprovalClient{
 						serveURL:       strings.TrimRight(serveURL, "/"),
@@ -948,7 +950,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					}
 					result := approvalClient.requestApprovalCtx(cmd.Context(), call, reasonMsg, 5*time.Minute)
 					if result == hookAsk {
-						return fmt.Errorf("hook: ask.headless_only could not reach rampart serve approval flow; native ask fallback is disabled")
+						return outputEnforceFailure("ask.headless_only could not reach the rampart serve approval flow; native ask fallback is disabled, denying")
 					}
 					return outputHookResult(cmd, format, result, false, reasonMsg, cmdStr)
 				}
@@ -1064,6 +1066,12 @@ func parseClaudeCodeInput(reader interface{ Read([]byte) (int, error) }, logger 
 	}
 	if strings.TrimSpace(input.ToolName) == "" {
 		return nil, fmt.Errorf("hook: Claude Code tool_name is required")
+	}
+	// A response marks the call as already run. Evaluating a pre-tool event as a
+	// response would skip the command-side policy, so a conflicting phase fails
+	// closed through the parse-failure path.
+	if event == "PreToolUse" && input.ToolResponse != nil {
+		return nil, fmt.Errorf("hook: Claude Code PreToolUse payload contains tool_response")
 	}
 
 	// Validate tool_use_id format to prevent injection attacks
@@ -1477,9 +1485,9 @@ func normalizeClineParams(toolName, toolType string, input map[string]any, enfor
 			return nil, nil, err
 		}
 		if name == "apply_patch" {
-			patch, _ := params["input"].(string)
-			if strings.TrimSpace(patch) == "" {
-				patch, _ = params["command"].(string)
+			patch, err := clinePatchText(params, enforce)
+			if err != nil {
+				return nil, nil, err
 			}
 			if strings.TrimSpace(patch) != "" {
 				patchPaths, patchErr := extractPatchPaths(patch, clinePatchSyntax)

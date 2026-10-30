@@ -60,7 +60,8 @@ ask:
 
 Despite the option's name, this selects the service-backed blocking approval
 path instead of Claude's native prompt; it does not detect whether a person or
-TTY is present. A reachable `rampart serve` is required. The hook waits for an
+TTY is present. A reachable `rampart serve` is required; in enforce mode the
+hook denies the call when it cannot reach one. The hook waits for an
 external resolution for up to five minutes, with no native ask fallback.
 A shorter host hook timeout can end the wait first, subject to that host's
 failure behavior.

@@ -55,7 +55,9 @@ func newMCPCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 		DisableFlagParsing: false,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
-				// Backward compat: "rampart mcp -- server" delegates to proxy
+				// Backward compat: "rampart mcp -- server" delegates to proxy.
+				// Cobra only sets the context on the command it executes.
+				proxyCmd.SetContext(cmd.Context())
 				return proxyCmd.RunE(proxyCmd, args)
 			}
 			return cmd.Help()

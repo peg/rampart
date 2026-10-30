@@ -19,6 +19,7 @@ import (
 
 	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/engine"
+	"github.com/peg/rampart/policies"
 	"github.com/spf13/cobra"
 )
 
@@ -240,8 +241,14 @@ func TestCodexPatchTargetsMatchHostWhitespaceSemantics(t *testing.T) {
 	if strings.Join(parsed.PolicyPaths, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("policy paths = %#v, want %#v", parsed.PolicyPaths, want)
 	}
-	if parsed.Params["command"] != patch {
-		t.Fatal("patch parsing changed the original command")
+	if parsed.Params["patch"] != patch {
+		t.Fatal("patch parsing changed the original patch")
+	}
+	if parsed.Params["path"] != want[0] {
+		t.Fatalf("path = %#v, want the first target for audit display", parsed.Params["path"])
+	}
+	if _, exists := parsed.Params["command"]; exists {
+		t.Fatal("patch text remained in the command field")
 	}
 }
 
@@ -560,4 +567,138 @@ func runCodexHookOutput(t *testing.T, decision hookDecisionType, post bool) map[
 		t.Fatalf("decode output %q: %v", out.String(), err)
 	}
 	return decoded
+}
+
+func TestCodexLargePatchUsesPathPolicy(t *testing.T) {
+	standard, err := policies.Profile("standard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	eng, err := engine.New(engine.NewMemoryStore(standard, "standard"), logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	update := func(path string, lines ...string) string {
+		return "*** Update File: " + path + "\n@@\n" + strings.Join(lines, "\n") + "\n"
+	}
+	// Content past the 8 KiB glob input bound, so a following target starts
+	// beyond byte 8192 of the patch.
+	filler := strings.TrimSuffix(strings.Repeat("+// "+strings.Repeat("x", 70)+"\n", 130), "\n")
+	nested := "+echo " + strings.Repeat("$(echo ", 9) + "x" + strings.Repeat(")", 9)
+
+	for _, testCase := range []struct {
+		name  string
+		files []string
+		want  engine.Action
+	}{
+		{name: "large ordinary patch", files: []string{update("src/main.go", filler)}, want: engine.ActionAllow},
+		{name: "sensitive target past the bound", files: []string{
+			update("src/main.go", filler),
+			update("/home/dev/.ssh/authorized_keys", "+ssh-ed25519 AAAA marker"),
+		}, want: engine.ActionDeny},
+		{name: "deeply nested script content", files: []string{update("scripts/build.sh", nested)}, want: engine.ActionAllow},
+		{name: "oversized target path", files: []string{
+			update("src/"+strings.Repeat("a", 8200)+".go", "+x"),
+		}, want: engine.ActionDeny},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			patch := "*** Begin Patch\n" + strings.Join(testCase.files, "") + "*** End Patch"
+			toolInput, err := json.Marshal(map[string]string{"command": patch})
+			if err != nil {
+				t.Fatal(err)
+			}
+			input, err := json.Marshal(codexHookInput{
+				SessionID: "session-1", HookEventName: "PreToolUse",
+				ToolName: "apply_patch", ToolUseID: "call-1",
+				ToolInput: toolInput,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := parseCodexInput(bytes.NewReader(input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			call := engine.ToolCall{Agent: parsed.Agent, Tool: parsed.Tool, Params: parsed.Params, Input: parsed.Params}
+			_, decision := evaluateHookCall(eng, call, parsed.PolicyPaths)
+			if decision.Action != testCase.want {
+				t.Fatalf("decision = %s (%s), want %s", decision.Action, decision.Message, testCase.want)
+			}
+		})
+	}
+}
+
+func TestPatchPayloadParameterKeepsMatchingBound(t *testing.T) {
+	store := engine.NewMemoryStore([]byte(`
+version: "1"
+default_action: allow
+policies:
+  - name: inspect-patch
+    match:
+      tool: write
+    rules:
+      - action: deny
+        when:
+          tool_param_matches:
+            patch: "*BEGIN RSA PRIVATE KEY*"
+`), "patch-test")
+	eng, err := engine.New(store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	patch := "*** Begin Patch\n*** Add File: notes.txt\n+" + strings.Repeat("x", 9000) + "\n*** End Patch"
+	params := map[string]any{"command": patch}
+	movePatchPayload(params)
+	params["path"] = "notes.txt"
+	decision := eng.Evaluate(engine.ToolCall{Agent: "codex", Tool: "write", Params: params, Input: params})
+	if decision.Action != engine.ActionDeny || !strings.Contains(decision.Message, "tool parameter patch") {
+		t.Fatalf("decision = %s (%s), want a fail-closed deny on the patch parameter", decision.Action, decision.Message)
+	}
+}
+
+func TestClinePatchCommandIsNotAShellCommand(t *testing.T) {
+	patch := "*** Begin Patch\n*** Add File: notes.txt\n+" + strings.Repeat("A", 9000) + "\n*** End Patch"
+	params, paths, err := normalizeClineParams("apply_patch", "write", map[string]any{"command": patch}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if params["patch"] != patch || params["command"] != nil {
+		t.Fatalf("patch params = %v keys, want the payload under patch only", len(params))
+	}
+	if strings.Join(paths, "\x00") != "notes.txt" {
+		t.Fatalf("policy paths = %#v, want notes.txt", paths)
+	}
+}
+
+func TestClinePatchAliasesMustAgree(t *testing.T) {
+	safe := "*** Begin Patch\n*** Add File: notes.txt\n+note\n*** End Patch"
+	other := "*** Begin Patch\n*** Add File: other.txt\n+note\n*** End Patch"
+
+	params, paths, err := normalizeClineParams("apply_patch", "write", map[string]any{"input": safe}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if params["patch"] != safe || strings.Join(paths, "\x00") != "notes.txt" {
+		t.Fatalf("input patch = %v, paths %#v; want it under patch with its target", params["patch"], paths)
+	}
+
+	for name, input := range map[string]map[string]any{
+		"input and command":     {"input": safe, "command": other},
+		"input and patch decoy": {"input": safe, "patch": other},
+	} {
+		if _, _, err := normalizeClineParams("apply_patch", "write", input, true); err == nil {
+			t.Errorf("%s: conflicting patch aliases were accepted", name)
+		}
+	}
+
+	// Completed-call events stay tolerant so response scanning still runs.
+	params, _, err = normalizeClineParams("apply_patch", "write", map[string]any{"input": safe, "command": other}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if params["patch"] != safe || params["command"] != nil {
+		t.Fatal("post-call patch text was not moved out of the command field")
+	}
 }
