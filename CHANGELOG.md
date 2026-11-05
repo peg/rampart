@@ -51,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   return a blank zero-timestamp event for the chain-continuation header that
   starts every rotated audit file. Each rotation previously added one phantom
   record to counts and time ranges. Chain verification is unchanged.
+- `rampart test` now labels an `ask` decision `ASK`. It previously printed
+  `✅ ALLOW` next to an "approval required" message, although `--json`
+  reported `ask` and the integration would prompt. A `webhook` decision is
+  labelled `WEBHOOK`, and any action without its own label no longer
+  renders as an allow. Exit codes are unchanged.
 
 ## [1.9.7] - 2026-10-30
 
