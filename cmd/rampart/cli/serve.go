@@ -340,7 +340,13 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				if embErr != nil {
 					return fmt.Errorf("serve: load embedded standard policy: %w", embErr)
 				}
-				fmt.Fprintf(cmd.ErrOrStderr(), "serve: using embedded standard policy (no config file found — create one with 'rampart init')\n")
+				// This is the normal state after `rampart protect`, so do not
+				// suggest that a config file is missing.
+				if effectiveDir != "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "serve: using embedded standard policy plus policies in %s\n", effectiveDir)
+				} else {
+					fmt.Fprintf(cmd.ErrOrStderr(), "serve: using embedded standard policy\n")
+				}
 				usingEmbedded = true
 				if effectiveDir != "" {
 					// Combine embedded standard with the ~/.rampart/policies/ dir.

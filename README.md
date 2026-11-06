@@ -70,7 +70,7 @@ That is the normal path:
 **macOS and Linux installer**
 
 ```bash
-curl -fsSL https://rampart.sh/install | bash
+curl -fsSL https://rampart.sh/install | sh
 ```
 
 **Windows PowerShell**

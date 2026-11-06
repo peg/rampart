@@ -401,6 +401,70 @@ func TestDoctorHooksRejectsStaleClaudeCommand(t *testing.T) {
 	}
 }
 
+// Protecting one agent must not make doctor fail for another installed agent
+// that Rampart never touched, but stale Rampart hooks and a machine where
+// nothing is protected still fail.
+func TestDoctorHooksUnprotectedAgentIsANoteOnceAnotherIsProtected(t *testing.T) {
+	codexStatus := func(t *testing.T) (int, checkResult) {
+		t.Helper()
+		var codex checkResult
+		issues := doctorHooks(func(name, status, message string) {
+			if name == "Hooks" && strings.Contains(message, "Codex") {
+				codex = checkResult{Name: name, Status: status, Message: message}
+			}
+		})
+		return issues, codex
+	}
+	setup := func(t *testing.T, protectClaude bool, codexHooks string) {
+		t.Helper()
+		home := t.TempDir()
+		testSetHome(t, home)
+		t.Setenv("CLAUDE_CONFIG_DIR", "")
+		t.Setenv("PATH", t.TempDir())
+		t.Chdir(t.TempDir())
+		managedDir := t.TempDir()
+		originalResolver := claudeManagedSettingsDirResolver
+		claudeManagedSettingsDirResolver = func() string { return managedDir }
+		t.Cleanup(func() { claudeManagedSettingsDirResolver = originalResolver })
+		if protectClaude {
+			writeCurrentClaudeHookSettings(t, home, nil)
+		}
+		codexDir := filepath.Join(home, ".codex")
+		requireNoErr(t, os.MkdirAll(codexDir, 0o700))
+		if codexHooks != "" {
+			requireNoErr(t, os.WriteFile(filepath.Join(codexDir, "hooks.json"), []byte(codexHooks), 0o600))
+		}
+	}
+
+	t.Run("never set up, Claude Code protected", func(t *testing.T) {
+		setup(t, true, "")
+		issues, codex := codexStatus(t)
+		if issues != 0 || codex.Status != "info" {
+			t.Fatalf("issues=%d codex=%+v, want 0 issues and an info note", issues, codex)
+		}
+		if !strings.Contains(codex.Message, "rampart protect codex") {
+			t.Fatalf("note should name the protect command: %s", codex.Message)
+		}
+	})
+
+	t.Run("stale Rampart hooks, Claude Code protected", func(t *testing.T) {
+		stale := `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"/retired/rampart hook --format codex"}]}]}}`
+		setup(t, true, stale)
+		issues, codex := codexStatus(t)
+		if issues != 1 || codex.Status != "fail" || !strings.Contains(codex.Message, "stale") {
+			t.Fatalf("issues=%d codex=%+v, want stale Codex hooks to fail", issues, codex)
+		}
+	})
+
+	t.Run("nothing protected", func(t *testing.T) {
+		setup(t, false, "")
+		issues, codex := codexStatus(t)
+		if issues != 1 || codex.Status != "fail" || !strings.Contains(codex.Message, "rampart protect codex") {
+			t.Fatalf("issues=%d codex=%+v, want a failure naming protect", issues, codex)
+		}
+	})
+}
+
 func TestDoctorPolicies_EmptyCustomPlaceholderIsNotWarn(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
@@ -1154,6 +1218,10 @@ func TestIsNewerReleaseVersion(t *testing.T) {
 		{"v1.0.0-alpha", "v1.0.0-beta", true},
 		{"v0.9.22-staging-47fa0cf", "v0.9.22", false},
 		{"v0.9.22-0.20260503052103-a72c3452fe38", "v0.9.22", false},
+		// A git-describe build is a commit after the tag; offering the tag
+		// would be a downgrade.
+		{"v1.9.7-55-g4d91f21", "v1.9.7", false},
+		{"1.9.7-55-g4d91f21", "v1.10.0", false},
 	}
 	for _, tt := range tests {
 		if got := isNewerReleaseVersion(tt.current, tt.latest); got != tt.want {
