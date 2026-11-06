@@ -56,6 +56,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reported `ask` and the integration would prompt. A `webhook` decision is
   labelled `WEBHOOK`, and any action without its own label no longer
   renders as an allow. Exit codes are unchanged.
+- `rampart doctor` no longer fails just because another agent is installed.
+  After `rampart protect claude-code` on a machine that also has Codex or
+  Cline, doctor exited 1 and told the user to run `rampart setup`. An
+  installed agent that Rampart never configured is now a note naming
+  `rampart protect <agent>`, once at least one agent is protected. Stale or
+  broken Rampart hooks, and a machine where nothing is protected, still fail.
+  Hook hints and the summary now point to `rampart protect`, and notes print
+  with `ℹ` instead of a checkmark.
+- `rampart doctor` no longer offers a downgrade on `git describe` builds such
+  as `v1.9.7-55-g4d91f21`.
+- `rampart protect` now ends with next steps for hook hosts: restart the host,
+  try a harmless blocked command, and review decisions with `rampart log`.
+- `rampart serve` no longer suggests `rampart init` when it runs on the
+  embedded standard policy, which is the normal state after `protect`.
+- The README installer snippet uses `sh`, matching the installer and the
+  quickstart.
 
 ## [1.9.7] - 2026-10-30
 
