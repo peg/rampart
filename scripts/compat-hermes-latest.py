@@ -68,6 +68,7 @@ URL_CHILD_ENV_KEYS = (
 )
 
 HERMES_RELEASE_API = "https://api.github.com/repos/NousResearch/hermes-agent/releases/latest"
+HERMES_RELEASE_TAG_API = "https://api.github.com/repos/NousResearch/hermes-agent/releases/tags/"
 HERMES_RELEASE_TAG = re.compile(r"^v[0-9]{4}\.[0-9]{1,2}\.[0-9]{1,2}(?:\.[0-9]+)?$")
 HERMES_RELEASE_NAME = re.compile(r"^Hermes Agent v([0-9]+\.[0-9]+\.[0-9]+)(?:\s|$)")
 
@@ -371,11 +372,21 @@ def url_opener(env: dict[str, str]) -> urllib.request.OpenerDirector:
     return urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
 
 
-def github_latest_release(env: dict[str, str]) -> tuple[str, str, str]:
-    """Resolve Hermes' official stable GitHub release and exact source checkout."""
+def github_latest_release(env: dict[str, str], requested_tag: str | None = None) -> tuple[str, str, str]:
+    """Resolve Hermes' official stable GitHub release and exact source checkout.
 
+    Without ``requested_tag`` this is the latest release. With one, it is that
+    exact reviewed release, validated the same way.
+    """
+
+    if requested_tag is None:
+        api = HERMES_RELEASE_API
+    else:
+        if not HERMES_RELEASE_TAG.fullmatch(requested_tag):
+            raise RuntimeError(f"Requested Hermes release tag is invalid: {requested_tag!r}")
+        api = HERMES_RELEASE_TAG_API + urllib.parse.quote(requested_tag, safe="")
     request = urllib.request.Request(
-        HERMES_RELEASE_API,
+        api,
         headers={"User-Agent": "rampart-hermes-compat/1"},
     )
     with url_opener(env).open(request, timeout=15) as response:
@@ -386,6 +397,8 @@ def github_latest_release(env: dict[str, str]) -> tuple[str, str, str]:
     name = str(payload.get("name", ""))
     if not HERMES_RELEASE_TAG.fullmatch(tag):
         raise RuntimeError(f"Hermes latest release returned an invalid tag: {tag!r}")
+    if requested_tag is not None and tag != requested_tag:
+        raise RuntimeError(f"Hermes release API returned {tag!r} for requested tag {requested_tag!r}")
     version_match = HERMES_RELEASE_NAME.match(name)
     if not version_match:
         raise RuntimeError(f"Hermes latest release returned an invalid name: {name!r}")
@@ -623,11 +636,17 @@ def main() -> int:
         "--package",
         help="Explicit pip package spec to test instead of Hermes' official latest GitHub release",
     )
+    parser.add_argument(
+        "--release-tag",
+        help="Test this exact official Hermes release tag (for example the last reviewed release) instead of the latest",
+    )
     parser.add_argument("--python", help="Base Python interpreter used to create the isolated environment")
     parser.add_argument("--hermes-python", help="Use an existing Python interpreter with Hermes installed instead of creating a venv")
     parser.add_argument("--hermes-bin", help="Hermes executable to report version from when --hermes-python is used")
     parser.add_argument("--keep-temp", action="store_true", help="Keep the temporary directory for debugging")
     args = parser.parse_args()
+    if args.release_tag and (args.package or args.hermes_python):
+        parser.error("--release-tag cannot be combined with --package or --hermes-python")
 
     temp = Path(tempfile.mkdtemp(prefix="rampart-hermes-compat-"))
     try:
@@ -650,7 +669,7 @@ def main() -> int:
             package = args.package
             editable = False
             if package is None:
-                official_release_tag, official_release_version, package = github_latest_release(env)
+                official_release_tag, official_release_version, package = github_latest_release(env, args.release_tag)
                 editable = True
             hermes_python, hermes_bin_path = make_venv(temp, package, env, args.python, editable=editable)
             if args.package is None:

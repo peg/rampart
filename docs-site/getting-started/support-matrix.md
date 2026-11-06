@@ -38,8 +38,9 @@ loaded plugin build. Cached service-backed receipts do not identify the current
 running service instance/build/mode and cannot promote current status.
 
 Static-only integrations are excluded from the aggregate rather than reported
-as passing. In particular, use `rampart doctor` for Hermes installation status
-and the isolated latest-Hermes compatibility check for runtime evidence.
+as passing. Use `rampart doctor` for Hermes installation status; Hermes also
+has an isolated compatibility check against its last reviewed release. These
+static checks do not establish host interception.
 
 ## At a glance
 
@@ -160,7 +161,7 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
       <td data-label="Support tier">Supported</td>
     </tr>
     <tr class="tier-supported">
-      <td data-label="Surface"><strong>Custom / Python / CI</strong></td>
+      <td data-label="Surface"><strong>Custom agents / CI</strong></td>
       <td data-label="Best path">HTTP API</td>
       <td data-label="Bare protect">No</td>
       <td data-label="rampart serve">Required</td>
@@ -206,9 +207,11 @@ and the isolated latest-Hermes compatibility check for runtime evidence.
   `BeforeTool`/`AfterTool` hooks cover documented shell, file, network, MCP,
   memory, and delegated-agent calls; a real authenticated host proof is still
   pending, and this does not cover Antigravity
-- **Hermes Agent** → experimental plugin path with isolated latest-runtime
-  discovery, dispatch, deny/allow, native approval/resume, and degraded-mode
-  checks. Older Hermes releases block `ask` with upgrade guidance. Its built-in
+- **Hermes Agent** → experimental plugin path with isolated discovery,
+  dispatch, deny/allow, native approval/resume, and degraded-mode checks against
+  its last reviewed release (Hermes 0.21.5); newer releases are not claimed
+  compatible until reviewed. Older Hermes releases block `ask` with upgrade
+  guidance. Its built-in
   status check remains static, so it is not included in `rampart verify --all`,
   and authenticated live-host proof remains pending
 
@@ -245,7 +248,7 @@ necessarily execute the tool.
 
 | Integration | `rampart serve` unavailable | Host hook failure or timeout |
 | --- | --- | --- |
-| [Claude Code](../integrations/claude-code.md) | Local policy and native `ask` remain available. | Command-hook timeout or launch failure supplies no veto; normal Claude permissions apply. A valid denial or blocking exit still blocks. [Upstream contract](https://code.claude.com/docs/en/hooks#timeouts) |
+| [Claude Code](../integrations/claude-code.md) | Local policy and native `ask` remain available. | By default a command-hook timeout or launch failure supplies no veto and normal Claude permissions apply. With `onFailure: "block"` (Claude Code 2.1.295+; set on new installs there, opt-in for existing ones) these failures block PreToolUse. A valid denial or blocking exit always blocks. [Upstream contract](https://code.claude.com/docs/en/hooks#timeouts) |
 | [Cline](../integrations/cline.md) | Local policy remains available; `ask` cancels with context. | Current CLI continues after pre-hook launch, timeout, or control-parse errors. Post-tool file hooks are observational. |
 | [Codex](../integrations/codex-cli.md) | Local allow/deny remains available; external approvals deny when unavailable. | Host-controlled; unexpected crash and timeout behavior is not claimed fail-closed. |
 | [Gemini CLI](../integrations/gemini-cli.md) (experimental) | Local allow/deny remains available; external approvals deny when unavailable. | Host-controlled; unexpected crash and timeout behavior is not claimed fail-closed. |

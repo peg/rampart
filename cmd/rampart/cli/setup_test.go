@@ -22,6 +22,34 @@ import (
 	"testing"
 )
 
+func TestHasInstalledPolicy(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+
+	if hasInstalledPolicy() {
+		t.Fatal("expected no policy to be detected in empty home")
+	}
+
+	policyDir := filepath.Join(home, ".rampart", "policies")
+	if err := os.MkdirAll(policyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"custom.yaml", "guard.yaml"} {
+		if err := os.WriteFile(filepath.Join(policyDir, name), []byte("version: \"1\"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if hasInstalledPolicy() {
+		t.Fatal("supplemental custom and Guard files must not suppress base profile initialization")
+	}
+	if err := os.WriteFile(filepath.Join(policyDir, "standard.yaml"), []byte("version: \"1\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !hasInstalledPolicy() {
+		t.Fatal("expected policy to be detected")
+	}
+}
+
 func TestRemoveClaudeCodeHooks_WithHooks(t *testing.T) {
 	// Set up a temp home with settings containing rampart hooks
 	tmpHome := t.TempDir()

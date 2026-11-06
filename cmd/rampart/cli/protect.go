@@ -141,9 +141,9 @@ type protectionPlanSummary struct {
 }
 
 // runProtectionPlan is the single managed setup-and-verification path used by
-// protect and compatibility onboarding commands. Global Guard installation is
-// performed once, while each integration retains ownership of its host-specific
-// transaction and verification semantics.
+// protect. Global Guard installation is performed once, while each integration
+// retains ownership of its host-specific transaction and verification
+// semantics.
 func runProtectionPlan(cmd *cobra.Command, rootOpts *rootOptions, drivers []integrationDriver, opts protectionPlanOptions) (protectionPlanSummary, error) {
 	summary := protectionPlanSummary{Attempted: len(drivers)}
 	if err := prepareManagedProtection(rootOpts); err != nil {
@@ -173,6 +173,7 @@ func runProtectionPlan(cmd *cobra.Command, rootOpts *rootOptions, drivers []inte
 
 	serviceReady := false
 	var protectErrors []error
+	var hookHosts []string
 	for _, driver := range ordered {
 		if driver.OpenClaw {
 			err := runProtectOpenClaw(cmd, protectOpenClawOptions{
@@ -207,17 +208,34 @@ func runProtectionPlan(cmd *cobra.Command, rootOpts *rootOptions, drivers []inte
 			continue
 		}
 		summary.Succeeded++
+		hookHosts = append(hookHosts, driver.DisplayName)
 	}
-
-	// quickstart historically supports a policy-and-service-only mode through
-	// --agents none. Preserve that compatibility without inventing a second
-	// service startup path.
-	if len(ordered) == 0 {
-		if err := ensureServeRunningForURL(cmd.OutOrStdout(), cmd.ErrOrStderr(), resolvedURL); err != nil {
-			protectErrors = append(protectErrors, fmt.Errorf("start Rampart policy service: %w", err))
-		}
-	}
+	printProtectNextSteps(cmd.OutOrStdout(), hookHosts)
 	return summary, errors.Join(protectErrors...)
+}
+
+// printProtectNextSteps tells a newcomer how to see the boundary work in the
+// host. Hook hosts load hooks at session start, and adapter verification does
+// not prove the running host picked them up, so the steps say to restart and
+// try a harmless canary. The canary path is denied by the credential rules
+// and does not need to exist, so it is safe even if the host never loaded
+// the hook.
+const protectCanaryCommand = "cat ~/.ssh/id_rampart_test"
+
+func printProtectNextSteps(w io.Writer, hosts []string) {
+	if len(hosts) == 0 {
+		return
+	}
+	names := strings.Join(hosts, " and ")
+	ask := names
+	if len(hosts) > 1 {
+		ask = "any of them"
+	}
+	fmt.Fprintln(w, "\nNext steps:")
+	fmt.Fprintf(w, "  1. Restart %s, or start a new session, so it loads the Rampart hooks.\n", names)
+	fmt.Fprintf(w, "  2. Try a harmless block: ask %s to run `%s`.\n", ask, protectCanaryCommand)
+	fmt.Fprintln(w, "     The file does not need to exist. Rampart denies the read before it runs.")
+	fmt.Fprintln(w, "  3. Review decisions with `rampart log`, or `rampart watch` for a live view.")
 }
 
 func validateManagedProtectionConfig(rootOpts *rootOptions) error {
@@ -272,7 +290,7 @@ func runProtectHookDriver(cmd *cobra.Command, rootOpts *rootOptions, driver inte
 	if receiptErr != nil {
 		return fmt.Errorf("protect %s: persist assurance evidence: %w", driver.ID, receiptErr)
 	}
-	fmt.Fprintf(w, "\nRampart configuration and adapter verification passed for %s. Restart or reload the host if setup requested it.\n", driver.DisplayName)
+	fmt.Fprintf(w, "\nRampart configuration and adapter verification passed for %s.\n", driver.DisplayName)
 	return nil
 }
 

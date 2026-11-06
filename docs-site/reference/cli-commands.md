@@ -37,22 +37,6 @@ cannot yet prove that an already-running or installed service uses the same
 file. Advanced custom-config deployments should use `rampart serve install`,
 the appropriate `rampart setup <agent>` command, and explicit verification.
 
-### `rampart quickstart` (deprecated compatibility)
-
-Preserves the older profile-selection and wrap-guidance workflow while routing
-supported native integrations through the same managed protection path as
-`rampart protect`. New installations should use `rampart protect`.
-
-```bash
-rampart quickstart                  # Legacy compatibility workflow
-rampart quickstart --yes            # Compatibility spelling for existing scripts
-rampart quickstart -y               # Short compatibility spelling
-```
-
-Quickstart remains non-interactive. `--yes` / `-y`, `--profile`, and wrap-only
-agent guidance remain available so existing scripts continue to work, but new
-onboarding and repair flows should use `rampart protect`.
-
 ### `rampart verify`
 
 Actively test expected policy decisions with fixed, non-executing canaries.

@@ -246,6 +246,8 @@ default_action: allow
 	if err := root.Execute(); err != nil {
 		t.Fatalf("empty stdin returned an error: %v", err)
 	}
+	// Claude Code always sends a payload, so an empty one in enforce mode is a
+	// parse failure that must refuse the call rather than allow it.
 	var got hookOutput
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("decode empty stdin response: %v; output: %s", err, &out)

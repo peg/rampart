@@ -38,7 +38,7 @@ import (
 )
 
 // defaultServePort is the default port for rampart serve.
-// Referenced by doctor, hook, quickstart, and serve install.
+// Referenced by doctor, hook, and serve install.
 // Must match the --port flag default in newServeCmd.
 const defaultServePort = 9090
 
@@ -184,6 +184,12 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 				icon = colorYellow + "⚠" + colorReset
 			} else {
 				icon = "⚠"
+			}
+		case "info":
+			if useColor {
+				icon = colorDim + "ℹ" + colorReset
+			} else {
+				icon = "ℹ"
 			}
 		default:
 			if useColor {
@@ -382,7 +388,7 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 			if issues > 1 {
 				noun = "issues"
 			}
-			fmt.Fprintf(w, "%d %s found. Run 'rampart setup' to fix hook installation.\n", issues, noun)
+			fmt.Fprintf(w, "%d %s found. Each ✗ line above names the command that fixes it.\n", issues, noun)
 		}
 		if warnings > 0 {
 			fmt.Fprintf(w, "%d warning(s) — not blocking but worth reviewing.\n", warnings)
@@ -897,6 +903,7 @@ func doctorHooks(emit emitFn) int {
 	if err != nil {
 		return 0
 	}
+	anyProtected := len(detectProtectedAgents()) > 0
 	claudeDir := claudeConfigDir(home)
 	_, claudeDirErr := os.Stat(claudeDir)
 	claudeBinary, _ := exec.LookPath("claude")
@@ -917,10 +924,8 @@ func doctorHooks(emit emitFn) int {
 				emit("Hooks", "ok", "Claude Code (current PreToolUse, PostToolUse, and PostToolUseFailure hooks; no readable setting disables user hooks)")
 			}
 		} else {
-			emit("Hooks", "fail",
-				fmt.Sprintf("Claude Code hooks missing, stale, incomplete, or unsafe (expected current Rampart hooks in %s)", claudeSettingsPath)+
-					hintSep+"rampart setup claude-code")
-			issues++
+			issues += doctorHookGap(emit, anyProtected, claudeRampartHooksPresent(home), "Claude Code", "claude-code",
+				fmt.Sprintf("Claude Code hooks missing, stale, incomplete, or unsafe (expected current Rampart hooks in %s)", claudeSettingsPath))
 		}
 	}
 
@@ -936,10 +941,8 @@ func doctorHooks(emit emitFn) int {
 		if clineHooksConfiguredForHome(home) {
 			emit("Hooks", "ok", "Cline (current PreToolUse and PostToolUse hook files)")
 		} else {
-			emit("Hooks", "fail",
-				fmt.Sprintf("Cline hook not installed or disabled (expected platform-native Rampart hook files in %s)", clineUserHooksDir(home))+
-					hintSep+"rampart setup cline && rampart verify cline")
-			issues++
+			issues += doctorHookGap(emit, anyProtected, clineManagedHooksPresent(home), "Cline", "cline",
+				fmt.Sprintf("Cline hook not installed or disabled (expected platform-native Rampart hook files in %s)", clineUserHooksDir(home)))
 		}
 	}
 
@@ -953,14 +956,38 @@ func doctorHooks(emit emitFn) int {
 		if codexHooksConfiguredForHome(home) {
 			emit("Hooks", "ok", "Codex (current PreToolUse and PostToolUse in hooks.json)")
 		} else {
-			emit("Hooks", "fail",
-				fmt.Sprintf("Codex lifecycle hooks missing, stale, incomplete, or unsafe (expected current Rampart hooks in %s)", hooksPath)+
-					hintSep+"rampart setup codex")
-			issues++
+			issues += doctorHookGap(emit, anyProtected, codexRampartIntegrationPresent(home), "Codex", "codex",
+				fmt.Sprintf("Codex lifecycle hooks missing, stale, incomplete, or unsafe (expected current Rampart hooks in %s)", hooksPath))
 		}
 	}
 
 	return issues
+}
+
+// doctorHookGap reports an installed agent without current Rampart hooks.
+// Rampart-owned hooks that no longer match the current install are always a
+// failure: the user believes that agent is protected. An agent Rampart never
+// touched is only a note once another agent is protected, so protecting one
+// agent does not make doctor fail for the others. With nothing protected it
+// stays a failure, so doctor never reports a healthy install that protects
+// nothing.
+func doctorHookGap(emit emitFn, anyProtected, rampartOwned bool, name, id, failMsg string) int {
+	fix := hintSep + "rampart protect " + id
+	if !rampartOwned && anyProtected {
+		emit("Hooks", "info", name+" is installed but not protected by Rampart (optional)"+fix)
+		return 0
+	}
+	emit("Hooks", "fail", failMsg+fix)
+	return 1
+}
+
+func clineManagedHooksPresent(home string) bool {
+	for _, hookDir := range clineKnownHookDirs(home) {
+		if clineManagedHooksPresentInDir(hookDir) {
+			return true
+		}
+	}
+	return false
 }
 
 // doctorCoverage cross-checks whether a user with OpenClaw protection but no
@@ -1352,7 +1379,7 @@ func doctorVersionCheck(w io.Writer, silent bool, emit emitFn) int {
 
 	// Pseudoversion or pre-release build (e.g. v0.2.37-0.20260218194853-6c13a58b371e).
 	// Comparing these to a stable release tag is meaningless and confusing — skip the check.
-	if strings.Contains(current, "-0.") {
+	if strings.Contains(current, "-0.") || isGitDescribeVersion(current) {
 		if emit != nil {
 			emit("Update check", "info", "Dev build — update checks skipped")
 		} else if !silent {
@@ -1436,7 +1463,7 @@ func compareReleaseVersions(a, b string) (int, bool) {
 func parseReleaseVersion(v string) (releaseVersion, bool) {
 	var out releaseVersion
 	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
-	if v == "" || v == "dev" || v == "unknown" || strings.Contains(v, "dirty") || strings.Contains(v, "staging") || strings.HasPrefix(v, "0.0.0-") || isGoPseudoVersion(v) {
+	if v == "" || v == "dev" || v == "unknown" || strings.Contains(v, "dirty") || strings.Contains(v, "staging") || strings.HasPrefix(v, "0.0.0-") || isGoPseudoVersion(v) || isGitDescribeVersion(v) {
 		return out, false
 	}
 	v = strings.SplitN(v, "+", 2)[0]
@@ -1700,6 +1727,26 @@ func normalizedReleaseVersion(version string) (string, bool) {
 		normalized += "-" + strings.Join(parsed.prerelease, ".")
 	}
 	return normalized, true
+}
+
+// isGitDescribeVersion reports a `git describe` build such as
+// v1.9.7-55-g4d91f21: a commit after the tag, not that release or a
+// prerelease of it, so comparing it with a release tag is meaningless.
+func isGitDescribeVersion(version string) bool {
+	parts := strings.Split(strings.TrimSuffix(version, "-dirty"), "-")
+	if len(parts) < 3 {
+		return false
+	}
+	count, commit := parts[len(parts)-2], parts[len(parts)-1]
+	if _, err := strconv.Atoi(count); err != nil || !strings.HasPrefix(commit, "g") || len(commit) < 8 {
+		return false
+	}
+	for _, r := range commit[1:] {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 func isGoPseudoVersion(version string) bool {

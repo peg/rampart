@@ -17,7 +17,7 @@ Rampart better.
 3. Open your pull request against `staging` as a draft while you iterate.
 
 Draft pull requests receive a fast source check. Marking a pull request ready
-starts the full cross-platform, packaging, container, and SDK matrix.
+starts the full cross-platform, packaging, and container matrix.
 
 For a new integration, major behavior change, or architectural rewrite, open
 an issue before investing deeply so the security boundary can be agreed first.

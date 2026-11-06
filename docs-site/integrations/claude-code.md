@@ -78,7 +78,10 @@ Claude Code → PreToolUse  → Rampart policy → Allow/Deny/Ask
 When Claude Code wants to run a command, it sends the tool call to `rampart hook` via stdin. Rampart evaluates it against your policies and returns a JSON response:
 
 ```json
-// Allowed (explicit allow bypasses Claude Code permission system)
+// Allowed by policy (no decision: Claude Code's own permission rules and prompts still apply)
+{}
+
+// Approved by you through Rampart's approval queue
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}
 
 // Denied
@@ -87,6 +90,12 @@ When Claude Code wants to run a command, it sends the tool call to `rampart hook
 // Requires approval (waits for human decision)
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"Rampart: Manual approval required"}}
 ```
+
+**Allow behavior:** Rampart only narrows what Claude Code permits. A policy
+allow returns no decision, so Claude Code's permission mode, allow/ask/deny
+rules and prompts apply as if Rampart were not installed. Monitor and audit
+modes never return a decision. The explicit `allow` is reserved for a call you
+approved through Rampart's own approval queue, such as a `headless_only` ask.
 
 **Ask behavior:** When a policy action is `ask`, the hook returns `"permissionDecision":"ask"`. Claude Code shows its native permission prompt, so the user approves or denies directly in the Claude Code UI.
 
@@ -101,8 +110,30 @@ prior side effects or upstream telemetry. See Claude's
 
 Local policy evaluation and native `ask` do not require `rampart serve`.
 Rampart-handled malformed input and policy errors deny in enforce mode.
-Claude command-hook timeouts and launch failures supply no veto; normal host
-permissions apply. This differs from Claude Agent SDK callback hooks. See the
+By default Claude Code lets a command hook that times out, cannot launch, exits
+unexpectedly, or prints invalid output proceed through its normal permission
+flow, so a failure of Rampart itself would not stop the tool call. This differs
+from Claude Agent SDK callback hooks.
+
+Claude Code 2.1.295 and newer support `onFailure: "block"` on command hooks.
+Rampart sets it on the **PreToolUse** hook only, so the Post hooks keep the
+default and a scanning failure cannot hide tool output:
+
+- A **new installation** on a detected supported Claude Code fails closed.
+- An **existing installation** is never changed silently. Setup reports that
+  fail-closed is available and how to enable it.
+- `rampart setup claude-code --hook-failure=block` opts in explicitly and
+  refuses an older or undetected Claude Code, because an older release may
+  reject a settings file with an unknown hook field.
+  `--hook-failure=continue` returns to Claude Code's default.
+- `rampart verify claude-code` reports the active mode.
+
+With fail-closed enabled, a Rampart crash or hang blocks tool calls until it is
+fixed or the mode is reverted. Run the setup command above from a terminal
+outside Claude Code, or edit the settings file, to revert. A hung hook is still
+treated as failed only after Claude's documented command-hook timeout. Rampart
+configures this documented host behavior but does not verify it by launching
+Claude Code. See the
 [upstream failure contract](https://code.claude.com/docs/en/hooks#timeouts) and
 the [per-host failure table](../getting-started/support-matrix.md#degraded-behavior-notes).
 

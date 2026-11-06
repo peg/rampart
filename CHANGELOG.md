@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `rampart setup claude-code --hook-failure=auto|block|continue` controls what
+  happens when the PreToolUse hook fails. Claude Code lets a hook that cannot
+  start, times out, or exits unexpectedly proceed by default, which silently
+  disables enforcement; Claude Code 2.1.295+ can block instead. A new
+  installation on a detected supported version now fails closed on PreToolUse
+  only. An existing installation is left unchanged and told how to opt in, and
+  an older or undetected Claude Code never receives the field. `verify` reports
+  the active mode. With it enabled, a Rampart crash or hang blocks tool calls
+  until fixed or reverted with `--hook-failure=continue`.
+
+### Changed
+
+- Claude Code: a policy allow no longer answers `allow` on the user's behalf.
+  The hook now returns no decision, so Claude Code's own permission mode,
+  allow/ask/deny rules and prompts still apply and Rampart only narrows what
+  Claude Code permits. Monitor and audit modes never return a decision. A call
+  approved through Rampart's approval queue keeps an explicit allow, and an
+  empty hook payload in enforce mode is refused. If you relied on Rampart to
+  suppress Claude Code prompts, add Claude Code permission rules or choose a
+  permission mode instead.
+- The experimental Hermes compatibility gate now tests the last reviewed release
+  (Hermes 0.21.5, `v2026.9.24`) instead of the rolling latest, so upstream
+  releases no longer turn scheduled CI red. Hermes releases after 0.21.5 are not
+  claimed compatible until reviewed.
+
+### Removed
+
+- The alpha Python SDK (`sdks/python`) is removed. It was never published to
+  PyPI. Custom and Python agents should call the
+  [HTTP API](https://docs.rampart.sh/reference/api-reference/) directly.
+- `rampart quickstart` is removed. Use `rampart protect <agent>` (for example
+  `rampart protect claude-code`). The command still exists as a hidden stub that
+  prints this guidance and exits non-zero, so old scripts fail with an
+  explanation instead of an unknown-command error.
+
+### Fixed
+
+- Audit readers (the HTTP audit API and dashboard, `status`, `inventory`,
+  `init-from-audit`, and the compliance, HTML and export reports) no longer
+  return a blank zero-timestamp event for the chain-continuation header that
+  starts every rotated audit file. Each rotation previously added one phantom
+  record to counts and time ranges. Chain verification is unchanged.
+- `rampart test` now labels an `ask` decision `ASK`. It previously printed
+  `✅ ALLOW` next to an "approval required" message, although `--json`
+  reported `ask` and the integration would prompt. A `webhook` decision is
+  labelled `WEBHOOK`, and any action without its own label no longer
+  renders as an allow. Exit codes are unchanged.
+- `rampart doctor` no longer fails just because another agent is installed.
+  After `rampart protect claude-code` on a machine that also has Codex or
+  Cline, doctor exited 1 and told the user to run `rampart setup`. An
+  installed agent that Rampart never configured is now a note naming
+  `rampart protect <agent>`, once at least one agent is protected. Stale or
+  broken Rampart hooks, and a machine where nothing is protected, still fail.
+  Hook hints and the summary now point to `rampart protect`, and notes print
+  with `ℹ` instead of a checkmark.
+- `rampart doctor` no longer offers a downgrade on `git describe` builds such
+  as `v1.9.7-55-g4d91f21`.
+- `rampart protect` now ends with next steps for hook hosts: restart the host,
+  try a harmless blocked command, and review decisions with `rampart log`.
+- `rampart serve` no longer suggests `rampart init` when it runs on the
+  embedded standard policy, which is the normal state after `protect`.
+- The README installer snippet uses `sh`, matching the installer and the
+  quickstart.
+
 ## [1.9.7] - 2026-10-30
 
 ### Security

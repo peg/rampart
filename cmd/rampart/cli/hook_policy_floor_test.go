@@ -134,8 +134,10 @@ func TestHookExplicitConfigIsStillHonored(t *testing.T) {
 		t.Fatal(err)
 	}
 	work := t.TempDir()
-	if decision := hookDecisionOf(t, runHookInDir(t, work, "rm -rf /", "--config", configPath)); decision != "allow" {
-		t.Fatalf("explicit --config was not honored: got %q, want allow", decision)
+	// A Claude Code policy allow returns no decision, leaving the call to
+	// Claude Code's own permissions; the shipped profile would deny it.
+	if got := runHookInDir(t, work, "rm -rf /", "--config", configPath); got.HookSpecificOutput != nil || got.Decision != "" {
+		t.Fatalf("explicit --config was not honored: got %+v, want no decision", got)
 	}
 }
 

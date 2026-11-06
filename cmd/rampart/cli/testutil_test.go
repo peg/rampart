@@ -34,6 +34,13 @@ func testSetOpenClawBinary(t *testing.T, home string) string {
 	return path
 }
 
+func writeTestExecutable(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write test executable %s: %v", path, err)
+	}
+}
+
 // skipOnWindows skips the test on Windows with the given reason.
 func skipOnWindows(t *testing.T, reason string) {
 	t.Helper()

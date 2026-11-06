@@ -106,7 +106,7 @@ not install a misleading post-result scanner.
 
 **`rampart wrap`** — Add a cooperative shell boundary without agent code changes. Best for agents that honor `$SHELL` or resolve common shells through `PATH`; it is not subprocess interposition.
 
-**HTTP Proxy** — Point your agent's tool calls at `localhost:9090`. Framework-agnostic. Best for: custom agents, Python scripts, anything that makes HTTP calls.
+**HTTP Proxy** — Point your agent's tool calls at `localhost:9090`. Framework-agnostic. Best for: custom agents and anything that makes HTTP calls; see the [HTTP API reference](https://docs.rampart.sh/reference/api-reference/).
 
 **OpenClaw Plugin** — Rampart evaluates the tool call first. Allow decisions pass through, deny decisions are blocked immediately, and matched exec `ask` decisions are routed into OpenClaw's native approval flow without turning on prompts for every exec. Best for: OpenClaw deployments that want native approval UX with selective policy-driven exec approvals.
 

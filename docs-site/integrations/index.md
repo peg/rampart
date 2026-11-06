@@ -24,7 +24,7 @@ evidence.
 | **Shell Wrapper** | Sets `$SHELL` to a policy-checking shim | Aider, OpenCode, Continue |
 | **MCP Proxy** | Transparent proxy for individual MCP servers | Claude Desktop, Cursor (optional second boundary) |
 | **LD_PRELOAD** | Interposes supported libc exec/spawn functions; native library is source-built | Optional defense in depth for compatible Unix processes |
-| **HTTP API** | RESTful endpoint for custom integrations | Python agents, custom code |
+| **HTTP API** | RESTful endpoint for custom integrations | Custom agents, CI pipelines |
 | **Native Plugin** | Agent framework calls Rampart before each tool runs | OpenClaw, Antigravity, Hermes Agent (experimental) |
 | **Shim + Service** | Legacy shell shim + dist patching compatibility path | Older OpenClaw |
 
@@ -62,7 +62,7 @@ When a policy action is `ask`, behavior varies by integration:
 | [GitHub Copilot CLI / VS Code](github-copilot.md) | CLI adapter-tested; shared VS Code Preview contract | `rampart setup copilot` | All |
 | [OpenClaw](openclaw.md) | Managed native guard | `rampart protect openclaw` | Linux, macOS |
 | [Hermes Agent](hermes.md) | Experimental user plugin | `rampart setup hermes` | Linux, macOS |
-| [Python Agents](python-agents.md) | HTTP API | `rampart serve` | All |
+| [Custom agents](../reference/api-reference.md) | HTTP API | `rampart serve` | All |
 | [Any CLI Agent](any-cli-agent.md) | Shell wrapper | `rampart wrap --` | Linux, macOS |
 
 \* Cline's Windows `.ps1` contract is source-reviewed and cross-build tested;
@@ -93,7 +93,7 @@ wrap: "rampart wrap --" {
 preload: "rampart preload --" {
   style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
 }
-api: "HTTP API / SDK\\nlocalhost:9090" {
+api: "HTTP API\\nlocalhost:9090" {
   style.fill: "#1d3320"; style.stroke: "#2ea043"; style.font-color: "#3fb950"; style.border-radius: 6
 }
 
@@ -104,7 +104,7 @@ q -> shim: "OpenClaw, Antigravity, or Hermes\\n(native plugin where supported)"
 q -> mcp: "Claude Desktop or any MCP-compatible client\\n(Cursor can use this as a second boundary)"
 q -> wrap: "Any CLI agent\\nwith \$SHELL support"
 q -> preload: "Any CLI agent\\nwithout \$SHELL or native hooks"
-q -> api: "Custom / Python agent\\nor CI pipeline"
+q -> api: "Custom agent\\nor CI pipeline"
 ```
 
 !!! tip "Start with the simplest method"

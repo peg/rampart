@@ -64,7 +64,7 @@ rampart wrap --config /path/to/policy.yaml -- your-agent
 
 ## Platform Support
 
-`rampart wrap` requires Linux or macOS. For Windows, use the [HTTP API](python-agents.md) or [MCP proxy](../features/mcp-proxy.md).
+`rampart wrap` requires Linux or macOS. For Windows, use the [HTTP API](../reference/api-reference.md) or [MCP proxy](../features/mcp-proxy.md).
 
 ## When Wrap Doesn't Work
 

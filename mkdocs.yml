@@ -135,7 +135,6 @@ nav:
     - Hermes (Experimental): integrations/hermes.md
     - Claude Desktop: integrations/claude-desktop.md
     - MCP Proxy: features/mcp-proxy.md
-    - Python Agents: integrations/python-agents.md
     - Any CLI Agent: integrations/any-cli-agent.md
     - Windows Setup: guides/windows.md
   - Policies:
