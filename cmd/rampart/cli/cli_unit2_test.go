@@ -275,7 +275,7 @@ func TestDoctorHooks(t *testing.T) {
 		results = append(results, checkResult{Name: name, Status: status, Message: msg})
 	}
 	// Should not panic even if no hooks configured
-	issues := doctorHooks(emit)
+	issues, _ := doctorHooks(emit)
 	if issues < 0 {
 		t.Errorf("unexpected negative issues: %d", issues)
 	}
