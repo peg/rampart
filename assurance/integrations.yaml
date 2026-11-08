@@ -98,7 +98,7 @@ integrations:
     evidence:
       - path: cmd/rampart/cli/hook_test.go
         kind: unit
-        proves: Claude hook payloads map to structured allow, ask, and deny responses.
+        proves: Claude hook payloads map to deny and ask responses, return no decision on a policy allow, and return an explicit allow only after Rampart approval.
       - path: cmd/rampart/cli/hook_mcp_test.go
         kind: unit
         proves: Claude MCP tool names pass through the shared native-hook classifier, including conservative destructive-tool classification.

@@ -42,13 +42,16 @@ rampart doctor
 | Tool type | Example | Policy coverage |
 |-----------|---------|-----------------|
 | `exec` | `rm -rf /`, `curl ... | bash` | Block destructive and remote execution patterns, allow safe commands, or require approval |
-| `read` | `cat ~/.ssh/id_rsa`, `cat .env`, `cat .env.local` | Deny sensitive paths and secret files, log policy matches |
+| `read` | `cat ~/.ssh/id_rsa`, `cat ~/.aws/credentials` | Deny credential stores and high-confidence secret paths, log policy matches |
 | `write` | Editing `/etc/*` or production config | Enforce path rules, require approval for high-risk targets |
 | `fetch` | Web content, API responses, MCP output | Monitor for prompt injection and suspicious exfiltration directives |
 
 ## Understanding the Standard Policy
 
-Rampart's standard policy lives at `~/.rampart/policies/standard.yaml`.
+Claude Code hooks always start from Rampart's built-in standard policy. Files
+in `~/.rampart/policies/` can add policies with new names, and `rampart allow`
+and `rampart block` add durable rules, but editing a copied `standard.yaml`
+there does not change hook decisions.
 
 The default model is:
 
@@ -67,7 +70,7 @@ rampart policy explain --tool exec 'rm -rf /'
 
 The explain output marks the winning policy, shows where it came from, and calls out durable user overrides from `user-overrides.yaml` so you can tell whether an `Allow Always` decision is coming from learned local policy.
 
-Use `default_action` and explicit rule ordering to control strictness. In higher-security environments, set `default_action: deny` and add narrow allow rules.
+For hooks, add stricter rules as your own named policies: a matching deny always wins. `default_action` in a file under `~/.rampart/policies/` does not change hook decisions.
 
 ## Customizing for Your Workflow
 
@@ -88,11 +91,11 @@ For operations that are valid but risky, use `action: ask` instead of unconditio
 
 ## Prompt Injection Protection
 
-Rampart includes a `watch-prompt-injection` policy in the standard profile. It monitors tool responses for instruction-override patterns, exfiltration directives, and role-hijack attempts.
+Rampart includes a `watch-prompt-injection` policy in the standard profile. It checks tool responses for instruction-override patterns, exfiltration directives, and role-hijack attempts.
 
 This matters for Claude Code because prompts are not the only input channel. Web pages, fetched docs, and MCP tool output can all carry hidden or explicit instructions intended to redirect the agent.
 
-The default action is `ask` — when a high-confidence injection pattern is detected, Rampart pauses execution and requires human approval before the agent continues.
+The default action is `deny`. The check runs after the tool, so there is no approval point left: on a high-confidence match the post-tool hook blocks the response and records the decision. The tool itself has already run.
 
 ## Verifying It Works
 
@@ -101,10 +104,9 @@ Run these checks after setup:
 ```bash
 rampart doctor
 rampart watch
-rampart test
 ```
 
-Then trigger a known blocked command from Claude Code, such as `rm -rf /` in a test environment. Confirm you see a deny event and reason in `rampart watch` and the audit log.
+Then ask Claude Code to run the harmless canary `cat ~/.ssh/id_rampart_test`. The file does not need to exist. Confirm you see a deny event and reason in `rampart watch` and the audit log.
 
 ## Common Questions
 

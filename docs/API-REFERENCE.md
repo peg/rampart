@@ -220,7 +220,7 @@ Denied:
   "eval_duration_us": 12,
   "policy": "block-destructive",
   "suggestions": [
-    "rampart allow exec 'rm -rf /tmp/demo' --reason 'safe cleanup'"
+    "rampart allow \"rm -rf /tmp/demo\""
   ]
 }
 ```

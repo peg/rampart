@@ -65,7 +65,7 @@ Every policy decision is written to `~/.rampart/audit/` as JSONL files (one per 
 
 ```
 rampart report             # HTML summary of recent activity
-rampart report --days 7    # last 7 days
+rampart report --last 7d   # last 7 days
 ```
 
 ## The flows
