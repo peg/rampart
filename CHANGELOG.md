@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (Hermes 0.21.5, `v2026.9.24`) instead of the rolling latest, so upstream
   releases no longer turn scheduled CI red. Hermes releases after 0.21.5 are not
   claimed compatible until reviewed.
+- The threat model, docs site description and Homebrew formula description no
+  longer call Rampart a firewall or say it catches misbehaving agents reliably.
+  Self-protection is described as covering the listed command and file-tool
+  forms, and the sandbox recommendation no longer links a third-party tool.
 
 ### Removed
 
