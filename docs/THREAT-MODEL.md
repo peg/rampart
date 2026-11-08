@@ -1,12 +1,12 @@
 # Threat Model
 
-> Last reviewed: 2026-10-30 | Applies to: v1.10.0+
+> Last reviewed: 2026-11-08 | Applies to: v1.10.0+
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 
 ## What Rampart Is
 
-A firewall for AI agent tool calls. It evaluates agent-reported shell commands,
+A policy layer for AI agent tool calls. It evaluates agent-reported shell commands,
 file operations, fetch requests, and related metadata against YAML policies.
 Rampart sees what the framework sends it, not raw syscalls or network traffic.
 It is designed to reduce common accidental and prompt-injection-driven tool
@@ -21,7 +21,7 @@ Rampart's target threat is an AI agent that:
 - **Made a well-intentioned mistake** (wrong environment, wrong file, wrong server)
 - **Escalated beyond its intended scope** (sub-agent spawning unrestricted tool calls)
 
-These agents aren't adversarial — they're confused, manipulated, or wrong. Rampart catches them reliably.
+These agents aren't adversarial — they're confused, manipulated, or wrong. Rampart is built to stop the common forms of these mistakes before they run. It does not catch every variant, and its coverage depends on the policy and on what the integration exposes.
 
 ## Not the Target: Adversarial Human Attackers
 
@@ -340,8 +340,8 @@ v0.7.4 introduced temporal allows (`--for`, `--once`). Expired rules are
 
 Rampart protects its own configuration from agent tampering through two layers:
 
-1. **Exec-level:** The standard policy blocks `rampart allow`, `rampart block`, `rampart init`, and shell redirects to `.rampart/` directories. This prevents agents from running CLI commands that modify policy.
-2. **Write/Edit-level:** The standard policy blocks write and edit tool calls targeting `**/.rampart/**`. This prevents agents from directly overwriting policy files, config, or audit logs via file tools.
+1. **Exec-level:** The standard policy blocks `rampart allow`, `rampart block`, `rampart init`, and shell redirects to `.rampart/` directories. These rules match the command text the agent reports, so they cover the listed forms rather than every way to reach the same effect.
+2. **Write/Edit-level:** The standard policy blocks write and edit tool calls targeting `**/.rampart/**`. This stops file tools from overwriting policy files, config, or audit logs; shell writes rely on the exec-level rules above.
 
 Both layers are active by default in the `standard` and `paranoid` profiles. The `yolo` profile disables these protections — it's named that way for a reason.
 
@@ -349,9 +349,9 @@ Both layers are active by default in the `standard` and `paranoid` profiles. The
 
 ## Philosophy
 
-Rampart is a **seatbelt, not a roll cage**. It catches the vast majority of dangerous situations an AI agent will encounter — accidental or manipulated. It doesn't claim to stop every possible attack vector, and we're honest about what falls outside its scope.
+Rampart is a **seatbelt, not a roll cage**. It is designed to catch common dangerous actions an AI agent attempts, whether accidental or manipulated. It doesn't claim a detection rate or to stop every possible attack vector, and we're honest about what falls outside its scope.
 
-If you need full isolation, use a sandbox (container, VM, or a tool like [nono](https://github.com/nicholasgasior/nono)). Rampart and sandboxes are complementary — use both for defense in depth.
+If you need full isolation, use a sandbox (a container, VM, or OS-level sandbox). Rampart and sandboxes are complementary — use both for defense in depth.
 
 ---
 

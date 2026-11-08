@@ -60,7 +60,7 @@ brews:
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://rampart.sh"
-    description: "Open-source firewall for AI agents"
+    description: "Policy, approval and audit for AI coding agents"
     license: "Apache-2.0"
     install: |
       bin.install "rampart"
