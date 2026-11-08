@@ -214,21 +214,18 @@ policy decisions, not proof of execution or independent audit witnessing.
 
 ## Current release
 
-Rampart v1.9.7 extends self-protection to more of Rampart's own commands,
-requires durable allow rules to name what they allow, fails closed in more hook
-error paths, redacts more credential shapes, and evaluates Codex and Cline
-`apply_patch` text as file content so large patches are no longer denied.
-v1.9.6 made rule exclusions excuse only the command they match, kept
-download-and-execute analysis working across here-documents, stopped a
-repository's own `rampart.yaml` from replacing the installed policy, refused
-empty hook input instead of approving it, and built with Go 1.26.10. v1.9.5
-stopped file searches from reaching protected credential files and recognizes
-Claude Code's subagent hand-back tool. v1.9.4 completed the
-download-and-pipe detection added in v1.9.3: fetched content that reaches a
-shell, an interpreter, eval or an unrecognized program is denied, while
-read-only filters such as head, jq and wc are not blocked. These build on
-v1.9.2, which preserves native action path and
-working-directory identity and redacts diagnostics. Read the
+Rampart v1.10.0 stops answering `allow` for Claude Code: a policy allow now
+returns no decision, so Claude Code's own permission mode and prompts still
+apply and Rampart only narrows what Claude Code permits. New Claude Code
+installations on 2.1.295 or later fail closed when the PreToolUse hook cannot
+run. `rampart doctor` no longer fails because another agent is installed but
+unprotected, and `rampart protect` ends with a harmless test to try. The alpha
+Python SDK and `rampart quickstart` are removed. v1.9.7 extended
+self-protection to more of Rampart's own commands, required durable allow rules
+to name what they allow, redacted more credential shapes, and stopped large
+Codex and Cline `apply_patch` calls from being denied for size. Earlier 1.9
+releases tightened rule exclusions, download-and-execute detection, credential
+search roots and native path identity. Read the
 [upgrade guidance](getting-started/upgrade.md) before upgrading a custom
 background service or relying on native OpenClaw approval review. See the [release
 notes](https://github.com/peg/rampart/releases/latest) for the concise upgrade
