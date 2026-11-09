@@ -108,8 +108,9 @@ jobs:
 
       # Pinned to the last release Rampart reviewed so upstream releases cannot
       # turn this scheduled gate red; move the pin only after reviewing a newer one.
+      # The commit is the pin: the gate installs it and fails if the tag moves.
       - name: Validate against the reviewed Hermes release
-        run: python scripts/compat-hermes-latest.py --release-tag v2026.9.24
+        run: python scripts/compat-hermes-latest.py --release-tag v2026.9.24 --release-commit f97608f178d1ffeca59860195ab7da295f7c8e5f
 
   openclaw-latest:
     name: OpenClaw latest source + container gate

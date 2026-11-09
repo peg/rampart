@@ -246,7 +246,7 @@ integrations:
         proves: Tool normalization, redaction, allow, deny, native ask approval identity, malformed responses, unknown-tool fail-closed behavior, adapter exceptions, and service failure are tested.
       - path: scripts/compat-hermes-latest.py
         kind: integration
-        proves: Hermes' last reviewed official release (v2026.9.24, Hermes 0.21.5) is installed in isolation as an editable checkout of that exact tag and must pass packaged discovery, native approval allow/deny resolution, dispatcher decisions, degraded mode, and multi-path deny-wins behavior. Newer releases are not exercised by scheduled CI.
+        proves: Hermes' last reviewed official release (v2026.9.24, Hermes 0.21.5) is installed in isolation as an editable checkout of the release's reviewed commit (the gate fails if the tag no longer points to it) and must pass packaged discovery, native approval allow/deny resolution, dispatcher decisions, degraded mode, and multi-path deny-wins behavior. Newer releases are not exercised by scheduled CI.
     limitations:
       - Hermes v2026.9.24 source blocks pre_tool_call callback exceptions and configured timeouts; these host-owned failure paths are not all covered by installed evidence. Observer-hook failures may be skipped.
       - Native approval/resume requires a reviewed Hermes approval collector that retains rule identity and lets later denials win; unknown source structures and older incomplete releases block `ask`.

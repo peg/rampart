@@ -136,6 +136,41 @@ class CompatEnvironmentTests(unittest.TestCase):
         self.assertEqual((tag, version), ("v2026.9.24", "0.21.5"))
         self.assertTrue(source.endswith("@v2026.9.24#egg=hermes-agent"))
 
+    def _sequence_opener(self, *payloads: dict[str, object]) -> mock.Mock:
+        responses = []
+        for payload in payloads:
+            response = mock.MagicMock()
+            response.__enter__.return_value = io.BytesIO(json.dumps(payload).encode())
+            responses.append(response)
+        opener = mock.Mock()
+        opener.open.side_effect = responses
+        return opener
+
+    def test_reviewed_release_commit_is_installed_and_tag_moves_fail(self) -> None:
+        release = {
+            "tag_name": "v2026.9.24",
+            "name": "Hermes Agent v0.21.5 (v2026.9.24)",
+            "draft": False,
+            "prerelease": False,
+        }
+        commit = "f97608f178d1ffeca59860195ab7da295f7c8e5f"
+        annotated = {"object": {"sha": "e3dd27ee2d8b011737a4eea8e3eb3d711ab78690", "type": "tag"}}
+        opener = self._sequence_opener(release, annotated, {"object": {"sha": commit, "type": "commit"}})
+        with mock.patch.object(MODULE, "url_opener", return_value=opener):
+            _, _, source = MODULE.github_latest_release({}, "v2026.9.24", commit)
+        self.assertTrue(source.endswith("@" + commit + "#egg=hermes-agent"))
+
+        moved = self._sequence_opener(release, {"object": {"sha": "0" * 40, "type": "commit"}})
+        with mock.patch.object(MODULE, "url_opener", return_value=moved):
+            with self.assertRaisesRegex(RuntimeError, "not the reviewed commit"):
+                MODULE.github_latest_release({}, "v2026.9.24", commit)
+
+        for bad in ("main", "f97608f", commit.upper()):
+            with self.subTest(commit=bad):
+                with mock.patch.object(MODULE, "url_opener", return_value=self._sequence_opener(release)):
+                    with self.assertRaisesRegex(RuntimeError, "release commit is invalid"):
+                        MODULE.github_latest_release({}, "v2026.9.24", bad)
+
     def test_reviewed_release_tag_rejects_malformed_or_mismatched_requests(self) -> None:
         for requested in ("../../main", "main", "v0.21.7", "v2026.9.24/../x", ""):
             with self.subTest(requested=requested):
