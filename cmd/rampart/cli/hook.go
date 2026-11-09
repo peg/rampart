@@ -571,10 +571,11 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				// enforce mode and keep the audit record.
 
 				// In enforce mode, fail closed — a parse failure must not silently
-				// allow the tool call. In monitor/audit modes, allow through so the
-				// agent is never blocked by a Rampart bug.
+				// allow the tool call. In monitor/audit modes, return no decision so
+				// the agent is never blocked by a Rampart bug and the host's own
+				// permissions still apply.
 				outcome := "allow"
-				hookOutcome := hookAllow
+				hookOutcome := hookDefer // no host decision: Claude Code's own permissions still apply
 				isPost, rawResponse := hookPayloadPhase(format, input)
 				if mode == "enforce" {
 					outcome = "deny"

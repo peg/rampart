@@ -51,6 +51,7 @@ rampart verify codex           # Verify Codex hook installation and adapter deni
 rampart verify gemini          # Verify Gemini hook installation and adapter denial
 rampart verify antigravity     # Verify Antigravity plugin installation and adapter denial
 rampart verify copilot         # Verify shared Copilot hook and dual-host denial
+rampart verify cursor          # Verify Cursor hook installation and adapter denial
 rampart verify policy          # Verify the local Rampart policy path
 rampart verify openclaw --json # Emit schema rampart.verify.v1
 ```
@@ -89,15 +90,21 @@ service build and dispatched tool actions also require separate evidence.
 
 ### `rampart setup claude-code`
 
-Install native hooks into Claude Code. Adds a `PreToolUse` hook to `~/.claude/settings.json` — no LD_PRELOAD or shim needed.
+Install native hooks into Claude Code. Adds `PreToolUse`, `PostToolUse` and `PostToolUseFailure` hooks to `~/.claude/settings.json` — no LD_PRELOAD or shim needed. Most users should run `rampart protect claude-code`, which also installs the managed policies and verifies the result.
 
 ```bash
 rampart setup claude-code           # Install hooks
 rampart setup claude-code --force   # Overwrite existing hooks
 rampart setup claude-code --remove  # Remove hooks
+rampart setup claude-code --hook-failure=block     # Block tool calls if the hook fails (Claude Code 2.1.295+)
+rampart setup claude-code --hook-failure=continue  # Let tool calls run if the hook fails
 ```
 
-Hooks are written to `~/.claude/settings.json` and intercept tool calls at the `PreToolUse` lifecycle point. A `PostToolUseFailure` hook is also registered to prevent Claude Code from repeatedly retrying denied operations. Both exec and file operations are covered natively — no `--patch-tools` equivalent needed.
+`--hook-failure` defaults to `auto`: a new installation on a detected Claude
+Code 2.1.295 or later blocks tool calls when the PreToolUse hook fails, and an
+existing installation keeps its current behavior.
+
+Hooks are written to `~/.claude/settings.json` and intercept tool calls at the `PreToolUse` lifecycle point. `PostToolUse` scans tool responses, and `PostToolUseFailure` keeps Claude Code from repeatedly retrying denied operations. Both exec and file operations are covered natively — no `--patch-tools` equivalent needed.
 
 ### `rampart setup cline`
 
@@ -697,7 +704,6 @@ rampart rules --project                        # List only project rules
 rampart rules --json                           # JSON output for scripting
 rampart rules remove 1                         # Remove rule by index
 rampart rules reset                            # Remove all override rules
-rampart rules reset --global                   # Reset only global rules
 ```
 
 ### `rampart policy generate preset`

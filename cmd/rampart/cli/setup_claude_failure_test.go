@@ -204,6 +204,36 @@ func TestSetupClaudeCodeFreshInstallFailsClosedOnSupportedVersion(t *testing.T) 
 	}
 }
 
+func TestSetupClaudeCodeLeftoverPostHookIsPlannedAsFreshEnforcement(t *testing.T) {
+	home := claudeFailureTestHome(t)
+	stubClaudeVersion(t, claudeVersion{2, 1, 295}, true)
+	// Only a legacy Rampart PostToolUse hook: nothing enforced before setup.
+	legacy := map[string]any{"hooks": map[string]any{
+		"PostToolUse": []any{map[string]any{"matcher": ".*", "hooks": []any{
+			map[string]any{"type": "command", "command": currentClaudeHookCommand()},
+		}}},
+	}}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runClaudeSetup(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := readClaudeSettings(t, home)
+	if got := rampartHookIn(t, settings, "PreToolUse")["onFailure"]; got != "block" {
+		t.Fatalf("PreToolUse onFailure = %v, want block for a new enforcement hook; output: %s", got, out)
+	}
+}
+
 func TestSetupClaudeCodeFreshInstallDoesNotWriteOnFailureWhenUnsupported(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -449,5 +479,91 @@ func TestVerifyClaudeHooksReportsFailureMode(t *testing.T) {
 				t.Errorf("message %q does not contain %q", check.Message, tc.want)
 			}
 		})
+	}
+}
+
+// Fields that make Claude Code skip or stop waiting for Rampart's decision
+// must not survive on Rampart's own hook: doctor and verify flag them, and a
+// plain re-run of setup (no --force) removes them.
+func TestSetupClaudeCodeRepairsFieldsThatSkipTheDecision(t *testing.T) {
+	cases := map[string]map[string]any{
+		"async":         {"async": true},
+		"if":            {"if": "Bash(git *)"},
+		"args":          {"args": []any{"--noop"}},
+		"once":          {"once": true},
+		"tiny timeout":  {"timeout": 0.001},
+		"unknown field": {"futureField": "x"},
+	}
+	for name, extra := range cases {
+		t.Run(name, func(t *testing.T) {
+			home := claudeFailureTestHome(t)
+			stubClaudeVersion(t, claudeVersion{}, false)
+			if _, err := runClaudeSetup(t); err != nil {
+				t.Fatal(err)
+			}
+			settings := readClaudeSettings(t, home)
+			hook := rampartHookIn(t, settings, "PreToolUse")
+			for key, value := range extra {
+				hook[key] = value
+			}
+			data, err := json.Marshal(settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if claudeHooksConfiguredForHome(home) {
+				t.Fatalf("a Rampart hook with %v must not count as configured", extra)
+			}
+			out, err := runClaudeSetup(t) // no --force
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out, "Removed fields that could skip Rampart's decision") {
+				t.Errorf("setup should say which fields it removed, got:\n%s", out)
+			}
+			got := rampartHookIn(t, readClaudeSettings(t, home), "PreToolUse")
+			for key := range extra {
+				if _, ok := got[key]; ok {
+					t.Errorf("setup kept %s=%v on Rampart's PreToolUse hook", key, got[key])
+				}
+			}
+			if !claudeHooksConfiguredForHome(home) {
+				t.Fatal("setup did not repair the hook")
+			}
+		})
+	}
+}
+
+func TestSetupClaudeCodeKeepsSafeUserHookFields(t *testing.T) {
+	home := claudeFailureTestHome(t)
+	stubClaudeVersion(t, claudeVersion{}, false)
+	if _, err := runClaudeSetup(t); err != nil {
+		t.Fatal(err)
+	}
+	settings := readClaudeSettings(t, home)
+	hook := rampartHookIn(t, settings, "PreToolUse")
+	hook["timeout"] = 30
+	hook["statusMessage"] = "Checking with Rampart"
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !claudeHooksConfiguredForHome(home) {
+		t.Fatal("a safe timeout and statusMessage must still count as configured")
+	}
+	if _, err := runClaudeSetup(t, "--force"); err != nil {
+		t.Fatal(err)
+	}
+	got := rampartHookIn(t, readClaudeSettings(t, home), "PreToolUse")
+	if got["statusMessage"] != "Checking with Rampart" {
+		t.Errorf("setup dropped statusMessage: %+v", got)
+	}
+	if timeout, _ := got["timeout"].(float64); timeout != 30 {
+		t.Errorf("setup dropped the timeout: %+v", got)
 	}
 }

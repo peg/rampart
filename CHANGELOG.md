@@ -7,7 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.10.0] - 2026-11-05
+## [1.10.0] - 2026-11-08
+
+### Security
+
+- **Rampart's own files are protected from shell file utilities** — the
+  standard and OpenClaw profiles now deny shell commands such as `rm`, `cp`,
+  `mv`, `ln`, `sed`, `truncate` and output redirections that change files
+  under `~/.rampart`, in any path spelling, so an agent cannot remove or
+  replace the managed Guard policy. Read-only commands (`cat`, `ls`, `grep`)
+  still work.
+- **Launchers no longer hide the command they run** — `time` is treated as a
+  transparent executor, and the commands run by `xargs` and by `find -exec`,
+  `-execdir`, `-ok` and `-okdir` are checked by deny and ask rules. These
+  payloads never create a new allow.
+- **OpenClaw browser navigation is judged by the URL OpenClaw opens** — the
+  adapter derives `url`, `domain` and `scheme` from `targetUrl` (or `url` when
+  it is absent), so a second, conflicting alias cannot decide the policy.
+- **Audit readers count every event the verifier counts** — views, reports and
+  exports classify records by event id, as chain verification does, so extra
+  fields on a real event cannot hide it from them.
+- **`rampart protect` suggests a canary that is harmless without Rampart** —
+  the first test is now `echo rampart-canary`, which the managed Guard denies.
+  The previous canary read a plausible SSH key path, which a host that never
+  loaded the hook would have read.
 
 ### Added
 
@@ -17,24 +40,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   disables enforcement; Claude Code 2.1.295+ can block instead. A new
   installation on a detected supported version now fails closed on PreToolUse
   only. An existing installation is left unchanged and told how to opt in, and
-  an older or undetected Claude Code never receives the field. `verify` reports
-  the active mode. With it enabled, a Rampart crash or hang blocks tool calls
-  until fixed or reverted with `--hook-failure=continue`.
+  an older or undetected Claude Code never receives the field. To detect the
+  version, setup runs `claude --version` with a minimal environment and a
+  3-second timeout. `verify` reports the active mode. With it enabled, a
+  Rampart crash or hang blocks tool calls until fixed or reverted with
+  `--hook-failure=continue`.
 
 ### Changed
 
 - Claude Code: a policy allow no longer answers `allow` on the user's behalf.
   The hook now returns no decision, so Claude Code's own permission mode,
-  allow/ask/deny rules and prompts still apply and Rampart only narrows what
-  Claude Code permits. Monitor and audit modes never return a decision. A call
+  allow/ask/deny rules and prompts still apply. Monitor and audit modes never
+  return a decision, including for a hook payload Rampart cannot parse. A call
   approved through Rampart's approval queue keeps an explicit allow, and an
-  empty hook payload in enforce mode is refused. If you relied on Rampart to
-  suppress Claude Code prompts, add Claude Code permission rules or choose a
-  permission mode instead.
+  empty hook payload in enforce mode is refused. Existing installations need
+  no action. If you relied on Rampart to suppress Claude Code prompts, add
+  Claude Code permission rules or choose a permission mode instead.
 - The experimental Hermes compatibility gate now tests the last reviewed release
   (Hermes 0.21.5, `v2026.9.24`) instead of the rolling latest, so upstream
   releases no longer turn scheduled CI red. Hermes releases after 0.21.5 are not
   claimed compatible until reviewed.
+- `rampart setup claude-code` now fails closed by default for a new PreToolUse
+  hook on a supported host even when an older Rampart PostToolUse hook was
+  left behind; previously that leftover made setup treat it as an existing
+  installation.
+- `rampart doctor` fails when an agent that protect or verify recorded as
+  protected has lost its Rampart hooks, instead of warning as if it had never
+  been set up. `rampart setup <agent> --remove` clears that record for Claude
+  Code, Codex and Cline.
+- The scheduled Hermes compatibility gate installs the reviewed release by
+  commit and fails if its tag is moved upstream.
+- The threat model, docs site description and Homebrew formula description no
+  longer call Rampart a firewall or say it catches misbehaving agents reliably.
+  Self-protection is described as covering the listed command and file-tool
+  forms, and the sandbox recommendation no longer links a third-party tool.
+- Dependency updates: `prometheus/client_golang` 1.25.0, `golang.org/x/sys`
+  0.49.0, `golang.org/x/text` 0.42.0, `google.golang.org/protobuf` 1.36.12, and
+  `mkdocs-material` 9.8.0 for the documentation build.
 
 ### Removed
 
@@ -60,16 +102,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   renders as an allow. Exit codes are unchanged.
 - `rampart doctor` no longer fails just because another agent is installed.
   After `rampart protect claude-code` on a machine that also has Codex or
-  Cline, doctor exited 1 and told the user to run `rampart setup`. An
-  installed agent that Rampart never configured is now a note naming
-  `rampart protect <agent>`, once at least one agent is protected. Stale or
-  broken Rampart hooks, and a machine where nothing is protected, still fail.
-  Hook hints and the summary now point to `rampart protect`, and notes print
-  with `ℹ` instead of a checkmark.
+  Cline, doctor exited 1 and told the user to run `rampart setup`. Once at
+  least one agent is protected, an installed agent without Rampart hooks is now
+  a warning naming `rampart protect <agent>`; doctor cannot tell an agent that
+  was never protected from one whose hooks were deleted, so it does not stay
+  quiet. Stale Rampart hooks, and a machine where nothing is protected, still
+  fail. Hook hints and the summary now point to `rampart protect`, and notes
+  print with `ℹ` instead of a checkmark.
+- `rampart setup claude-code`, `verify` and `doctor` no longer accept fields on
+  Rampart's own hook entries that let Claude Code skip or stop waiting for
+  Rampart's decision: `async`, `if`, `args`, `once`, a timeout under 10
+  seconds, or any unrecognized field. Such a hook is reported as not
+  configured, and re-running setup removes those fields and says which it
+  removed. A `timeout` of 10 seconds or more and a `statusMessage` are kept.
+- In monitor and audit modes, a Claude Code hook payload Rampart could not
+  parse (for example a tool Rampart does not recognize yet) returned an
+  explicit `allow`, which skipped Claude Code's own permission prompt. It now
+  returns no decision.
 - `rampart doctor` no longer offers a downgrade on `git describe` builds such
   as `v1.9.7-55-g4d91f21`.
 - `rampart protect` now ends with next steps for hook hosts: restart the host,
-  try a harmless blocked command, and review decisions with `rampart log`.
+  try a harmless blocked command, and review decisions with `rampart log`. For
+  Claude Code it also explains that a denial appears as a "PreToolUse hook
+  error" carrying Rampart's reason.
 - `rampart serve` no longer suggests `rampart init` when it runs on the
   embedded standard policy, which is the normal state after `protect`.
 - The README installer snippet uses `sh`, matching the installer and the

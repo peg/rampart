@@ -2,11 +2,13 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	osexec "os/exec"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -80,6 +82,8 @@ func detectClaudeVersionFromPath() (claudeVersion, bool) {
 	defer cancel()
 	cmd := osexec.CommandContext(ctx, path, "--version")
 	cmd.Env = claudeVersionProbeEnv()
+	// A wrapper whose child keeps stdout open must not hang setup past the timeout.
+	cmd.WaitDelay = time.Second
 	output, err := cmd.Output()
 	if err != nil {
 		return claudeVersion{}, false
@@ -202,35 +206,6 @@ func claudeRampartPreToolUseHook(settings claudeSettings) (map[string]any, bool)
 	return nil, false
 }
 
-// claudeRampartHooksInstalled reports whether any lifecycle event already
-// carries a Rampart-owned command hook.
-func claudeRampartHooksInstalled(settings claudeSettings) bool {
-	hooks, ok := settings["hooks"].(map[string]any)
-	if !ok {
-		return false
-	}
-	for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure"} {
-		entries, _ := hooks[event].([]any)
-		for _, rawMatcher := range entries {
-			matcher, ok := rawMatcher.(map[string]any)
-			if !ok {
-				continue
-			}
-			rawHooks, _ := matcher["hooks"].([]any)
-			for _, rawHook := range rawHooks {
-				hook, ok := rawHook.(map[string]any)
-				if !ok {
-					continue
-				}
-				if command, _ := hook["command"].(string); isRampartClaudeHookCommand(command) {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
 // claudePreToolUseBlocksOnFailure reports whether Rampart's PreToolUse hook
 // is configured with onFailure "block".
 func claudePreToolUseBlocksOnFailure(settings claudeSettings) bool {
@@ -242,14 +217,17 @@ func claudePreToolUseBlocksOnFailure(settings claudeSettings) bool {
 	return value == claudeHookFailureBlock
 }
 
-// buildClaudePreToolUseHook returns Rampart's PreToolUse hook entry. Fields a
-// user added to the existing Rampart entry (for example a timeout) are kept;
-// only onFailure follows the plan.
+// buildClaudePreToolUseHook returns Rampart's PreToolUse hook entry. A safe
+// timeout or statusMessage on the existing Rampart entry is kept; every other
+// field is dropped, as a fresh install would, and onFailure follows the plan.
 func buildClaudePreToolUseHook(settings claudeSettings, command string, plan claudeFailurePlan) map[string]any {
 	hook := map[string]any{}
 	if existing, ok := claudeRampartPreToolUseHook(settings); ok {
-		for key, value := range existing {
-			hook[key] = value
+		if timeout, ok := claudeSafeHookTimeout(existing["timeout"]); ok {
+			hook["timeout"] = timeout
+		}
+		if message, ok := existing["statusMessage"].(string); ok {
+			hook["statusMessage"] = message
 		}
 	}
 	hook["type"] = "command"
@@ -288,4 +266,89 @@ func claudeFailureModeSummary(settings claudeSettings) string {
 	}
 	return "PreToolUse hook failures do not block the tool call (Claude Code's default); `rampart setup claude-code --hook-failure=block` enables fail-closed on Claude Code " +
 		claudeOnFailureMinVersion.String() + " or newer."
+}
+
+// claudeMinHookTimeoutSeconds is the shortest timeout kept on a Rampart hook.
+// A shorter one makes the hook time out before Rampart can answer, which lets
+// the tool call through unless onFailure is "block".
+const claudeMinHookTimeoutSeconds = 10
+
+// claudeSafeHookTimeout returns value when it is a numeric timeout of at least
+// claudeMinHookTimeoutSeconds.
+func claudeSafeHookTimeout(value any) (any, bool) {
+	var seconds float64
+	switch v := value.(type) {
+	case float64:
+		seconds = v
+	case json.Number:
+		f, err := v.Float64()
+		if err != nil {
+			return nil, false
+		}
+		seconds = f
+	default:
+		return nil, false
+	}
+	return value, seconds >= claudeMinHookTimeoutSeconds
+}
+
+// claudeRampartHookUnsafeFields lists the fields on a Rampart-owned hook that
+// could stop Claude Code from waiting for Rampart's decision. Claude Code
+// ignores the decision of an async hook, "if" and "args" change when or how
+// the hook runs, and unknown future fields are treated the same way.
+func claudeRampartHookUnsafeFields(hook map[string]any) []string {
+	var unsafe []string
+	for key, value := range hook {
+		switch key {
+		case "type", "command":
+		case "statusMessage":
+			if _, ok := value.(string); !ok {
+				unsafe = append(unsafe, key)
+			}
+		case "onFailure":
+			if value != claudeHookFailureBlock {
+				unsafe = append(unsafe, key)
+			}
+		case "timeout":
+			if _, ok := claudeSafeHookTimeout(value); !ok {
+				unsafe = append(unsafe, key)
+			}
+		default:
+			unsafe = append(unsafe, key)
+		}
+	}
+	sort.Strings(unsafe)
+	return unsafe
+}
+
+// claudeRampartHooksUnsafeFields lists, across every lifecycle event, the
+// unsafe fields found on Rampart-owned hooks.
+func claudeRampartHooksUnsafeFields(settings claudeSettings) []string {
+	hooks, _ := settings["hooks"].(map[string]any)
+	seen := map[string]bool{}
+	var fields []string
+	for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure"} {
+		entries, _ := hooks[event].([]any)
+		for _, rawMatcher := range entries {
+			matcher, _ := rawMatcher.(map[string]any)
+			rawHooks, _ := matcher["hooks"].([]any)
+			for _, rawHook := range rawHooks {
+				hook, ok := rawHook.(map[string]any)
+				if !ok {
+					continue
+				}
+				if command, _ := hook["command"].(string); !isRampartClaudeHookCommand(command) {
+					continue
+				}
+				for _, field := range claudeRampartHookUnsafeFields(hook) {
+					if !seen[field] {
+						seen[field] = true
+						fields = append(fields, field)
+					}
+				}
+			}
+		}
+	}
+	sort.Strings(fields)
+	return fields
 }

@@ -289,6 +289,9 @@ existing installation is left unchanged and told how to opt in. Use
 Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if remove {
+				if err := clearVerificationReceipt("claude-code"); err != nil {
+					return fmt.Errorf("setup: %w", err)
+				}
 				return removeClaudeCodeHooks(cmd)
 			}
 			home, err := os.UserHomeDir()
@@ -325,10 +328,13 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			hookCommand := currentClaudeHookCommand()
 
 			// Decide whether the PreToolUse hook fails closed. An existing
-			// installation keeps its current mode unless the user asks.
+			// enforcement hook keeps its current mode unless the user asks.
+			// Leftover Rampart Post hooks without a PreToolUse hook enforced
+			// nothing, so that case is planned as a fresh installation.
+			_, preToolUseInstalled := claudeRampartPreToolUseHook(settings)
 			failurePlan, err := planClaudeHookFailure(
 				hookFailure,
-				claudeRampartHooksInstalled(settings),
+				preToolUseInstalled,
 				claudePreToolUseBlocksOnFailure(settings),
 				detectClaudeVersion,
 			)
@@ -351,6 +357,7 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			// Only PreToolUse is the enforcement point; the Post hooks keep
 			// Claude Code's default so a scanning failure cannot hide tool output.
 			preToolUseHook := buildClaudePreToolUseHook(settings, hookCommand, failurePlan)
+			droppedFields := claudeRampartHooksUnsafeFields(settings)
 
 			// Use wildcard matcher to intercept ALL tools (Bash, Read, Write, Edit, Fetch, Task, etc.)
 			// This ensures comprehensive coverage as Claude Code adds new tools.
@@ -435,6 +442,9 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ Rampart hook installed in %s\n", settingsPath)
 			fmt.Fprintf(cmd.OutOrStdout(), "  Hook command: %s\n", hookCommand)
+			if len(droppedFields) > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "  Removed fields that could skip Rampart's decision: %s\n", strings.Join(droppedFields, ", "))
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), "  Claude Code will route hook-visible tool calls through Rampart.")
 			fmt.Fprintln(cmd.OutOrStdout(), "  Documented tools are classified; in enforce mode, unknown future PreToolUse tools deny until Rampart is updated.")
 			if failurePlan.Notice != "" {
@@ -2289,7 +2299,8 @@ func claudeHooksUseCommand(settings claudeSettings, expected string) bool {
 					continue
 				}
 				owned++
-				if command != expected || hook["type"] != "command" || matcher["matcher"] != ".*" {
+				if command != expected || hook["type"] != "command" || matcher["matcher"] != ".*" ||
+					len(claudeRampartHookUnsafeFields(hook)) > 0 {
 					return false
 				}
 			}

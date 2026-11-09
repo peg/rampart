@@ -24,13 +24,13 @@ to hooks.
 
 ## What Gets Protected by Default
 
-The standard policy (`~/.rampart/policies/standard.yaml`) uses three different defaults depending on the risk:
+Rampart's built-in standard policy uses three different defaults depending on the risk:
 
 | Category | Example | Default |
 |---------|---------|---------|
 | Destructive commands | `rm -rf /`, `dd if=/dev/urandom of=/dev/sda` | `deny` |
-| Credential stores / secret files | `cat ~/.ssh/id_rsa`, `cat ~/.aws/credentials`, `cat ~/.codex/auth.json` | `deny` |
-| Sensitive agent-state artifacts | `cat ~/.claude/history.jsonl`, reading Claude sessions, editing `~/.claude/settings.json` | `ask` |
+| Credential stores / secret files | `cat ~/.ssh/id_rsa`, `cat ~/.aws/credentials`, Read of `~/.codex/auth.json` | `deny` |
+| Sensitive agent-state artifacts | Read of `~/.claude/history.jsonl`, reading Claude sessions, editing `~/.claude/settings.json` | `ask` |
 
 This split is deliberate. Secret stores are too dangerous to expose silently. But agent history, shell snapshots, durable memory, and security-relevant settings are often legitimate to inspect, so Rampart requires human approval instead of hard-blocking them.
 
@@ -91,8 +91,7 @@ When Claude Code wants to run a command, it sends the tool call to `rampart hook
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"Rampart: Manual approval required"}}
 ```
 
-**Allow behavior:** Rampart only narrows what Claude Code permits. A policy
-allow returns no decision, so Claude Code's permission mode, allow/ask/deny
+**Allow behavior:** A policy allow returns no decision, so Claude Code's permission mode, allow/ask/deny
 rules and prompts apply as if Rampart were not installed. Monitor and audit
 modes never return a decision. The explicit `allow` is reserved for a call you
 approved through Rampart's own approval queue, such as a `headless_only` ask.
@@ -168,14 +167,18 @@ rampart watch
 
 ## Custom Policy
 
-By default, Rampart uses the `standard` profile. To customize:
+Claude Code hooks always start from Rampart's built-in `standard` profile. To
+customize it:
 
-```bash
-# Edit your policy
-vim ~/.rampart/policies/standard.yaml
+- Use `rampart allow "<command>"` or `rampart block "<command>"` for a
+  durable rule. `allow` overrides `ask` rules; a matching deny still wins.
+- Add your own policy file with new policy names in `~/.rampart/policies/`.
+  It applies from the next tool call.
 
-# Changes take effect immediately (hot reload)
-```
+Editing a copied `~/.rampart/policies/standard.yaml`, or changing
+`default_action` there, does not change hook decisions, because the built-in
+policies of the same name win. `rampart test` reads that file, so its answer
+can differ from the hook's while such a copy exists.
 
 See [Configuration](../getting-started/configuration.md) for the full policy format.
 

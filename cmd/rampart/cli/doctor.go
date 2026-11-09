@@ -248,7 +248,9 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	issues += doctorHookBinary(emit)
 
 	// 6. Hooks installed (Claude Code, Codex, and Cline)
-	issues += doctorHooks(emit)
+	hookIssues, hookWarnings := doctorHooks(emit)
+	issues += hookIssues
+	warnings += hookWarnings
 
 	// 7. Audit directory
 	auditIssues, auditWarnings := doctorAudit(emit)
@@ -895,13 +897,12 @@ func doctorPending(emit emitFn, serveURL, token string) int {
 	return 0
 }
 
-func doctorHooks(emit emitFn) int {
-	issues := 0
+func doctorHooks(emit emitFn) (issues, warnings int) {
 
 	// Claude Code hooks — honor CLAUDE_CONFIG_DIR when it relocates ~/.claude.
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return 0
+		return 0, 0
 	}
 	anyProtected := len(detectProtectedAgents()) > 0
 	claudeDir := claudeConfigDir(home)
@@ -924,8 +925,10 @@ func doctorHooks(emit emitFn) int {
 				emit("Hooks", "ok", "Claude Code (current PreToolUse, PostToolUse, and PostToolUseFailure hooks; no readable setting disables user hooks)")
 			}
 		} else {
-			issues += doctorHookGap(emit, anyProtected, claudeRampartHooksPresent(home), "Claude Code", "claude-code",
+			n, w := doctorHookGap(emit, anyProtected, claudeRampartHooksPresent(home), "Claude Code", "claude-code",
 				fmt.Sprintf("Claude Code hooks missing, stale, incomplete, or unsafe (expected current Rampart hooks in %s)", claudeSettingsPath))
+			issues += n
+			warnings += w
 		}
 	}
 
@@ -941,8 +944,10 @@ func doctorHooks(emit emitFn) int {
 		if clineHooksConfiguredForHome(home) {
 			emit("Hooks", "ok", "Cline (current PreToolUse and PostToolUse hook files)")
 		} else {
-			issues += doctorHookGap(emit, anyProtected, clineManagedHooksPresent(home), "Cline", "cline",
+			n, w := doctorHookGap(emit, anyProtected, clineManagedHooksPresent(home), "Cline", "cline",
 				fmt.Sprintf("Cline hook not installed or disabled (expected platform-native Rampart hook files in %s)", clineUserHooksDir(home)))
+			issues += n
+			warnings += w
 		}
 	}
 
@@ -956,29 +961,37 @@ func doctorHooks(emit emitFn) int {
 		if codexHooksConfiguredForHome(home) {
 			emit("Hooks", "ok", "Codex (current PreToolUse and PostToolUse in hooks.json)")
 		} else {
-			issues += doctorHookGap(emit, anyProtected, codexRampartIntegrationPresent(home), "Codex", "codex",
+			n, w := doctorHookGap(emit, anyProtected, codexRampartIntegrationPresent(home), "Codex", "codex",
 				fmt.Sprintf("Codex lifecycle hooks missing, stale, incomplete, or unsafe (expected current Rampart hooks in %s)", hooksPath))
+			issues += n
+			warnings += w
 		}
 	}
 
-	return issues
+	return issues, warnings
 }
 
-// doctorHookGap reports an installed agent without current Rampart hooks.
-// Rampart-owned hooks that no longer match the current install are always a
-// failure: the user believes that agent is protected. An agent Rampart never
-// touched is only a note once another agent is protected, so protecting one
-// agent does not make doctor fail for the others. With nothing protected it
-// stays a failure, so doctor never reports a healthy install that protects
-// nothing.
-func doctorHookGap(emit emitFn, anyProtected, rampartOwned bool, name, id, failMsg string) int {
+// doctorHookGap reports an installed agent without current Rampart hooks and
+// returns the issue and warning counts. Rampart-owned hooks that no longer
+// match the current install are always a failure: the user believes that agent
+// is protected. So is a verification receipt for an agent whose hooks are now
+// gone: protect or verify recorded it as protected, and only
+// `rampart setup <agent> --remove` forgets that. With nothing protected it also
+// fails, so doctor never reports a healthy install that protects nothing.
+// Otherwise the agent was most likely never protected, and doctor warns.
+func doctorHookGap(emit emitFn, anyProtected, rampartOwned bool, name, id, failMsg string) (issues, warnings int) {
 	fix := hintSep + "rampart protect " + id
+	if !rampartOwned && hasVerificationReceipt(id) {
+		emit("Hooks", "fail", name+" was protected (verification receipt found) but its Rampart hooks are missing. "+
+			"Re-protect it, or run `rampart setup "+id+" --remove` if you removed it on purpose"+fix)
+		return 1, 0
+	}
 	if !rampartOwned && anyProtected {
-		emit("Hooks", "info", name+" is installed but not protected by Rampart (optional)"+fix)
-		return 0
+		emit("Hooks", "warn", name+" has no Rampart hooks. If you protected it before, they were removed"+fix)
+		return 0, 1
 	}
 	emit("Hooks", "fail", failMsg+fix)
-	return 1
+	return 1, 0
 }
 
 func clineManagedHooksPresent(home string) bool {

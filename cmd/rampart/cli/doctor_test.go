@@ -343,7 +343,7 @@ func TestDoctorHooks_PathHints(t *testing.T) {
 	emit := func(name, status, msg string) {
 		results = append(results, checkResult{Name: name, Status: status, Message: msg})
 	}
-	issues := doctorHooks(emit)
+	issues, _ := doctorHooks(emit)
 	if issues != 2 {
 		t.Fatalf("expected 2 issues, got %d (%+v)", issues, results)
 	}
@@ -390,7 +390,7 @@ func TestDoctorHooksRejectsStaleClaudeCommand(t *testing.T) {
 	requireNoErr(t, os.WriteFile(settingsPath, data, 0o600))
 
 	var results []checkResult
-	issues := doctorHooks(func(name, status, message string) {
+	issues, _ := doctorHooks(func(name, status, message string) {
 		results = append(results, checkResult{Name: name, Status: status, Message: message})
 	})
 	if issues != 1 || len(results) != 1 || results[0].Status != "fail" {
@@ -402,18 +402,19 @@ func TestDoctorHooksRejectsStaleClaudeCommand(t *testing.T) {
 }
 
 // Protecting one agent must not make doctor fail for another installed agent
-// that Rampart never touched, but stale Rampart hooks and a machine where
-// nothing is protected still fail.
-func TestDoctorHooksUnprotectedAgentIsANoteOnceAnotherIsProtected(t *testing.T) {
-	codexStatus := func(t *testing.T) (int, checkResult) {
+// without Rampart hooks, but it must still warn: doctor cannot tell an agent
+// that was never protected from one whose hooks were deleted. Stale Rampart
+// hooks and a machine where nothing is protected still fail.
+func TestDoctorHooksUnprotectedAgentWarnsOnceAnotherIsProtected(t *testing.T) {
+	codexStatus := func(t *testing.T) (int, int, checkResult) {
 		t.Helper()
 		var codex checkResult
-		issues := doctorHooks(func(name, status, message string) {
+		issues, warnings := doctorHooks(func(name, status, message string) {
 			if name == "Hooks" && strings.Contains(message, "Codex") {
 				codex = checkResult{Name: name, Status: status, Message: message}
 			}
 		})
-		return issues, codex
+		return issues, warnings, codex
 	}
 	setup := func(t *testing.T, protectClaude bool, codexHooks string) {
 		t.Helper()
@@ -436,29 +437,51 @@ func TestDoctorHooksUnprotectedAgentIsANoteOnceAnotherIsProtected(t *testing.T) 
 		}
 	}
 
-	t.Run("never set up, Claude Code protected", func(t *testing.T) {
-		setup(t, true, "")
-		issues, codex := codexStatus(t)
-		if issues != 0 || codex.Status != "info" {
-			t.Fatalf("issues=%d codex=%+v, want 0 issues and an info note", issues, codex)
-		}
-		if !strings.Contains(codex.Message, "rampart protect codex") {
-			t.Fatalf("note should name the protect command: %s", codex.Message)
-		}
-	})
+	for name, codexHooks := range map[string]string{
+		"never set up, Claude Code protected":  "",
+		"hooks deleted, Claude Code protected": `{"hooks":{}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			setup(t, true, codexHooks)
+			issues, warnings, codex := codexStatus(t)
+			if issues != 0 || warnings != 1 || codex.Status != "warn" {
+				t.Fatalf("issues=%d warnings=%d codex=%+v, want 0 issues and 1 warning", issues, warnings, codex)
+			}
+			if !strings.Contains(codex.Message, "rampart protect codex") {
+				t.Fatalf("warning should name the protect command: %s", codex.Message)
+			}
+		})
+	}
 
 	t.Run("stale Rampart hooks, Claude Code protected", func(t *testing.T) {
 		stale := `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"/retired/rampart hook --format codex"}]}]}}`
 		setup(t, true, stale)
-		issues, codex := codexStatus(t)
+		issues, _, codex := codexStatus(t)
 		if issues != 1 || codex.Status != "fail" || !strings.Contains(codex.Message, "stale") {
 			t.Fatalf("issues=%d codex=%+v, want stale Codex hooks to fail", issues, codex)
 		}
 	})
 
+	t.Run("previously protected, hooks file gone", func(t *testing.T) {
+		setup(t, true, "")
+		receiptDir := filepath.Join(os.Getenv("HOME"), ".rampart", "verification")
+		requireNoErr(t, os.MkdirAll(receiptDir, 0o700))
+		requireNoErr(t, os.WriteFile(filepath.Join(receiptDir, "codex.json"), []byte("{}"), 0o600))
+		issues, _, codex := codexStatus(t)
+		if issues != 1 || codex.Status != "fail" || !strings.Contains(codex.Message, "was protected") {
+			t.Fatalf("issues=%d codex=%+v, want a lost managed boundary to fail", issues, codex)
+		}
+		// A deliberate removal forgets the receipt, so doctor goes back to a warning.
+		requireNoErr(t, clearVerificationReceipt("codex"))
+		issues, warnings, codex := codexStatus(t)
+		if issues != 0 || warnings != 1 || codex.Status != "warn" {
+			t.Fatalf("issues=%d warnings=%d codex=%+v, want a warning after --remove", issues, warnings, codex)
+		}
+	})
+
 	t.Run("nothing protected", func(t *testing.T) {
 		setup(t, false, "")
-		issues, codex := codexStatus(t)
+		issues, _, codex := codexStatus(t)
 		if issues != 1 || codex.Status != "fail" || !strings.Contains(codex.Message, "rampart protect codex") {
 			t.Fatalf("issues=%d codex=%+v, want a failure naming protect", issues, codex)
 		}
@@ -684,7 +707,7 @@ func TestDoctorHooks_ClaudeBinaryNoDir(t *testing.T) {
 	emit := func(name, status, msg string) {
 		results = append(results, checkResult{Name: name, Status: status, Message: msg})
 	}
-	issues := doctorHooks(emit)
+	issues, _ := doctorHooks(emit)
 	if issues != 1 {
 		t.Fatalf("expected 1 issue (missing Claude Code hook), got %d (%+v)", issues, results)
 	}

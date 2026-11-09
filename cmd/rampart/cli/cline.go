@@ -68,6 +68,9 @@ Use --remove to uninstall Rampart-managed hook files.`,
 				return err
 			}
 			if remove {
+				if err := clearVerificationReceipt("cline"); err != nil {
+					return fmt.Errorf("setup cline: %w", err)
+				}
 				return removeClineHooksFromDir(cmd, hookDir)
 			}
 

@@ -101,7 +101,10 @@ Rampart uses glob patterns for matching:
 
 For exec calls, Rampart also normalizes common shell wrappers and transparent
 launchers such as `env`, `command`, `exec`, `nohup`, `nice`, `timeout`,
-`setsid`, and `stdbuf`, then checks compound command components independently.
+`setsid`, `stdbuf`, and `time`, then checks compound command components
+independently. Deny and ask rules additionally see the command run by `xargs`
+and by `find -exec`/`-execdir`/`-ok`/`-okdir`, and treat each output
+redirection target as `tee <target>`; these extra forms never grant an allow.
 This is deliberate defense in depth, not a complete parser for every shell or
 an operating-system security boundary.
 
@@ -313,7 +316,7 @@ policies:
     - **Path variations:** `/bin/rm` vs `rm`
     - **Unicode/encoding tricks:** homoglyph characters
 
-    **For high-security deployments**, use `default_action: deny` with explicit allowlists rather than relying solely on deny-list glob patterns. This inverts the model: only explicitly permitted commands can run, and evasion techniques are blocked by default.
+    **For high-security deployments** that load their own policy file (for example `rampart serve --config` or `rampart wrap --config`), use `default_action: deny` with explicit allowlists rather than relying solely on deny-list glob patterns. This inverts the model: only explicitly permitted commands can run, and evasion techniques are blocked by default.
 
     ```yaml
     default_action: deny
@@ -448,12 +451,12 @@ policies:
 ```
 
 !!! tip "Priority"
-    Project policy files are standard policy documents and participate in the normal evaluation order: **deny always wins**. Durable human overrides in `user-overrides.yaml` are treated separately so explicit user carve-outs can persist without being swallowed by unrelated broad denies.
+    Project policy files are standard policy documents and participate in the normal evaluation order: **deny always wins**. Durable human overrides in `user-overrides.yaml` outrank `ask` rules, but any matching deny still wins.
     A durable rule must name what it allows: a command, path, URL, domain or tool parameter. Rules in `user-overrides.yaml` or `auto-allowed.yaml` that use `default: true`, an empty `when`, or only exclusions are ignored.
 
 ### Denial suggestions
 
-When Rampart denies a tool call, the error message includes a ready-to-run `rampart allow` command:
+When Rampart denies a tool call, the error message includes a ready-to-run `rampart allow` command. A durable allow does not override a deny rule, so it takes effect only after you edit or remove the rule that denied the call:
 
 ```
 Rampart: denied — command_matches "curl * | bash" (block-exfil)

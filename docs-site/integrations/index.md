@@ -21,7 +21,7 @@ evidence.
 | Method | How It Works | Best For |
 |--------|-------------|----------|
 | **Native Hooks** | Uses the agent's built-in hook system | Claude Code, Cline, Codex, Cursor, GitHub Copilot; Gemini CLI (experimental enterprise/API-key path) |
-| **Shell Wrapper** | Sets `$SHELL` to a policy-checking shim | Aider, OpenCode, Continue |
+| **Shell Wrapper** | Sets `$SHELL` to a policy-checking shim | Aider, Continue |
 | **MCP Proxy** | Transparent proxy for individual MCP servers | Claude Desktop, Cursor (optional second boundary) |
 | **LD_PRELOAD** | Interposes supported libc exec/spawn functions; native library is source-built | Optional defense in depth for compatible Unix processes |
 | **HTTP API** | RESTful endpoint for custom integrations | Custom agents, CI pipelines |

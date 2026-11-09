@@ -176,6 +176,32 @@ func writeVerificationReceipt(report verificationReport) error {
 	return nil
 }
 
+// hasVerificationReceipt reports whether protect or verify has recorded this
+// integration as protected on this machine. Any receipt file counts, valid or
+// not: it is evidence the integration was managed, which doctor must not
+// downgrade to "never configured" when its hooks disappear.
+func hasVerificationReceipt(integrationID string) bool {
+	path, err := verificationReceiptPath(integrationID)
+	if err != nil {
+		return false
+	}
+	_, err = os.Lstat(path)
+	return err == nil
+}
+
+// clearVerificationReceipt forgets an integration's receipt when the user
+// deliberately removes that integration, so doctor stops expecting it.
+func clearVerificationReceipt(integrationID string) error {
+	path, err := verificationReceiptPath(integrationID)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove verification receipt: %w", err)
+	}
+	return nil
+}
+
 func readVerificationReceipt(integrationID string) (verificationReceipt, error) {
 	path, err := verificationReceiptPath(integrationID)
 	if err != nil {

@@ -282,7 +282,6 @@ rampart protect openclaw   # installs, restarts, and verifies the managed guard
 
 ```bash
 rampart log --deny   # recent denials
-rampart log --ask    # recent approvals
 ```
 
 ## Legacy: shim + bridge (OpenClaw < 2026.3.28)

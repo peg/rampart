@@ -223,36 +223,44 @@ func TestHookEmptyStdinDeniesAcrossFormats(t *testing.T) {
 	}
 }
 
-// TestHookEmptyStdinAllowsInMonitorMode keeps the non-enforce contract: a
-// Rampart-side problem must not block an agent that asked only to observe.
-func TestHookEmptyStdinAllowsInMonitorMode(t *testing.T) {
+// TestHookUnparseableInputDefersInMonitorMode keeps the non-enforce contract
+// without granting anything: a call Rampart could not parse gets no host
+// decision, so Claude Code's own permissions still apply.
+func TestHookUnparseableInputDefersInMonitorMode(t *testing.T) {
+	inputs := map[string]string{
+		"empty":     "",
+		"brace":     "{",
+		"truncated": `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"comm`,
+	}
 	for _, mode := range []string{"monitor", "audit"} {
-		t.Run(mode, func(t *testing.T) {
-			home := t.TempDir()
-			testSetHome(t, home)
-			t.Chdir(t.TempDir())
-			t.Setenv("RAMPART_TOKEN", "")
+		for name, stdin := range inputs {
+			t.Run(mode+"/"+name, func(t *testing.T) {
+				home := t.TempDir()
+				testSetHome(t, home)
+				t.Chdir(t.TempDir())
+				t.Setenv("RAMPART_TOKEN", "")
 
-			var out, errBuf bytes.Buffer
-			root := NewRootCmd(context.Background(), &out, &errBuf)
-			root.SetIn(strings.NewReader(""))
-			root.SetArgs([]string{
-				"hook",
-				"--format", "claude-code",
-				"--mode", mode,
-				"--audit-dir", filepath.Join(t.TempDir(), "audit"),
-				"--serve-url", "http://127.0.0.1:1",
+				var out, errBuf bytes.Buffer
+				root := NewRootCmd(context.Background(), &out, &errBuf)
+				root.SetIn(strings.NewReader(stdin))
+				root.SetArgs([]string{
+					"hook",
+					"--format", "claude-code",
+					"--mode", mode,
+					"--audit-dir", filepath.Join(t.TempDir(), "audit"),
+					"--serve-url", "http://127.0.0.1:1",
+				})
+				if err := root.Execute(); err != nil {
+					t.Fatalf("hook returned an error: %v", err)
+				}
+				var got hookOutput
+				if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+					t.Fatalf("decode hook response: %v; output: %s", err, &out)
+				}
+				if got.HookSpecificOutput != nil || got.Decision != "" {
+					t.Fatalf("%s mode must return no decision for unparseable input, got %+v", mode, got)
+				}
 			})
-			if err := root.Execute(); err != nil {
-				t.Fatalf("hook returned an error: %v", err)
-			}
-			var got hookOutput
-			if err := json.Unmarshal(out.Bytes(), &got); err != nil {
-				t.Fatalf("decode hook response: %v; output: %s", err, &out)
-			}
-			if decision := hookDecisionOf(t, got); decision != "allow" {
-				t.Fatalf("%s mode must not block on empty stdin, got %q", mode, decision)
-			}
-		})
+		}
 	}
 }

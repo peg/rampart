@@ -551,6 +551,41 @@ func stripPOSIXTransparentExecutorOnce(tokens []string) []string {
 		return stripPOSIXSetsid(tokens)
 	case "stdbuf":
 		return stripPOSIXStdbuf(tokens)
+	case "time":
+		return stripPOSIXTime(tokens)
+	}
+	return tokens
+}
+
+// stripPOSIXTime exposes the command run by the shell `time` keyword or the
+// time(1) utility. Only reporting options are skipped; an unknown option
+// leaves the tokens unchanged.
+func stripPOSIXTime(tokens []string) []string {
+	i := 1
+	for i < len(tokens) {
+		token := tokens[i]
+		switch {
+		case token == "--":
+			i++
+			if i < len(tokens) {
+				return tokens[i:]
+			}
+			return tokens
+		case token == "-p" || token == "-l" || token == "-v" || token == "-a" || token == "-q" ||
+			token == "--portability" || token == "--verbose" || token == "--append" || token == "--quiet":
+			i++
+		case token == "-o" || token == "-f" || token == "--output" || token == "--format":
+			if i+1 >= len(tokens) {
+				return tokens
+			}
+			i += 2
+		case strings.HasPrefix(token, "--output=") || strings.HasPrefix(token, "--format="):
+			i++
+		case strings.HasPrefix(token, "-"):
+			return tokens
+		default:
+			return tokens[i:]
+		}
 	}
 	return tokens
 }

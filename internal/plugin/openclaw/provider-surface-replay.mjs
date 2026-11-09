@@ -342,6 +342,24 @@ for (const [name, params, expectedConsequence, expectedDomain] of [
     'github.com',
   ],
   [
+    'browser-open-conflicting-url-alias-uses-target-url',
+    { action: 'open', targetUrl: 'https://example.invalid/marker', url: 'https://github.com/peg/rampart' },
+    'openclaw:browser-navigation',
+    'example.invalid',
+  ],
+  [
+    'browser-navigate-conflicting-url-alias-uses-target-url',
+    { action: 'navigate', targetUrl: 'https://example.invalid/marker', url: 'https://github.com/peg/rampart' },
+    'openclaw:browser-navigation',
+    'example.invalid',
+  ],
+  [
+    'browser-open-agent-domain-cannot-override-url',
+    { action: 'open', url: 'https://example.invalid/marker', domain: 'github.com', scheme: 'https' },
+    'openclaw:browser-navigation',
+    'example.invalid',
+  ],
+  [
     'browser-click-is-mutation-even-on-safe-domain',
     { action: 'act', request: { kind: 'click', ref: 'button-1' }, targetUrl: 'https://github.com/peg/rampart' },
     'openclaw:browser-mutation',
@@ -359,6 +377,8 @@ for (const [name, params, expectedConsequence, expectedDomain] of [
       );
       if (expectedDomain !== undefined) {
         assert(body.params.domain === expectedDomain, `expected domain ${expectedDomain}, got ${JSON.stringify(body.params)}`);
+        assert(new URL(body.params.url).hostname === expectedDomain,
+          `policy url must be the executed destination, got ${JSON.stringify(body.params)}`);
       }
       assert(
         !Object.prototype.hasOwnProperty.call(params, 'rampart_consequence'),

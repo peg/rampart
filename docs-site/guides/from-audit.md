@@ -79,4 +79,4 @@ rampart serve --mode enforce
 
 **Version control your policies.** Policy YAML belongs in your repo alongside the code it protects. Review policy changes in PRs just like code changes.
 
-**Combine with the policy registry.** Start with a community policy from `rampart init --registry`, then layer your generated policy on top for agent-specific rules.
+**Combine with the policy registry.** Start with a community policy from `rampart policy list` and `rampart policy fetch <name>`, then layer your generated policy on top for agent-specific rules.

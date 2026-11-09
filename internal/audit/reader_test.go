@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -96,11 +97,20 @@ func TestReadEventsFromOffset_OnlyRealHeadersAreSkipped(t *testing.T) {
 	mention := `{"id":"01JEVENT0000000000000000A","timestamp":"2026-10-13T00:00:01Z","tool":"exec","request":{"command":"echo \"chain_continue\" prev_file"},"decision":{"action":"allow"}}` + "\n"
 	// The verifier requires both top-level fields; one alone is not a header.
 	onlyOne := `{"chain_continue":"sha256:aaa","id":"01JEVENT0000000000000000B","timestamp":"2026-10-13T00:00:02Z","tool":"exec","decision":{"action":"allow"}}` + "\n"
-	require.NoError(t, os.WriteFile(path, []byte(mention+onlyOne), 0o600))
+	// An event carrying both header fields is still an event: the verifier
+	// classifies by event id, and the reader must not hide what it counts.
+	both := `{"chain_continue":"sha256:aaa","prev_file":"x.jsonl","id":"01JEVENT0000000000000000C","timestamp":"2026-10-13T00:00:03Z","tool":"exec","decision":{"action":"deny"}}` + "\n"
+	// Escaped key spellings decode to the same fields.
+	escaped := `{"chain_continue":"sha256:aaa","prev_file":"x.jsonl","id":"01JEVENT0000000000000000D","timestamp":"2026-10-13T00:00:04Z","tool":"exec","decision":{"action":"deny"}}` + "\n"
+	// A header-shaped record later in a file is bookkeeping, never an event.
+	lateHeader := `{"chain_continue":"sha256:bbb","prev_file":"y.jsonl"}` + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(mention+onlyOne+both+escaped+lateHeader), 0o600))
 
 	events, _, err := ReadEventsFromOffset(path, 0)
 	require.NoError(t, err)
-	require.Len(t, events, 2)
+	require.Len(t, events, 4)
+	assert.Equal(t, "01JEVENT0000000000000000C", events[2].ID)
+	assert.Equal(t, "01JEVENT0000000000000000D", events[3].ID)
 }
 
 func TestReadEventsFromOffset_AfterRotationReturnsOnlyWrittenEvents(t *testing.T) {

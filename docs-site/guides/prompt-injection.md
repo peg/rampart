@@ -17,9 +17,9 @@ Prompt injection also appears in issue trackers, README files, chat transcripts,
 
 ## Rampart's Detection Policy
 
-Rampart's `watch-prompt-injection` policy monitors tool responses and records suspicious patterns in the audit stream. It is designed to flag likely instruction-hijack attempts while keeping false positives manageable.
+Rampart's `watch-prompt-injection` policy checks tool responses for high-confidence instruction-hijack patterns and records each match in the audit stream.
 
-The default action is `watch`, not `deny`, because detection quality improves when teams can observe real traffic first. Once patterns are tuned for your environment, you can escalate selected matches to enforcement.
+The default action is `deny`. Response checks run after the tool, so there is no approval point left: on integrations with post-tool hooks, a matching response is blocked before it reaches the model. The tool itself has already run.
 
 ## The Patterns Detected
 
@@ -34,15 +34,15 @@ These patterns are evaluated against fetch output and other tool response conten
 
 ## Setting Up
 
-The standard profile includes prompt injection monitoring by default in `~/.rampart/policies/standard.yaml`.
+The built-in standard profile includes this policy. A simplified version looks like this:
 
 ```yaml
 policies:
   - name: watch-prompt-injection
     match:
-      tool: ["fetch", "web_search", "read"]
+      tool: ["fetch", "web_search", "read", "exec", "mcp"]
     rules:
-      - action: watch
+      - action: deny
         when:
           response_matches:
             - '(?i)ignore\s+previous\s+instructions'
