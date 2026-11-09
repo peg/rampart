@@ -848,6 +848,12 @@ func restrictiveCommandCandidates(command string) ([]string, bool) {
 		if body, wrapped := literalShellPayload(tokens); wrapped {
 			appendCandidate(body, depth+1)
 		}
+		for _, nested := range launcherPayloads(tokens) {
+			appendCandidate(nested, depth+1)
+		}
+		for _, target := range redirectWriteTargets(tokens) {
+			appendCandidate("tee "+joinPOSIXWords([]string{target}), depth+1)
+		}
 	}
 	appendCandidate(command, 0)
 	for _, subcommand := range ExtractSubcommands(command) {
@@ -1043,6 +1049,128 @@ func mayNeedCanonicalCommandAliases(command string) bool {
 	}
 	return platformUsesCaseInsensitiveNames(runtime.GOOS) && strings.IndexFunc(command, unicode.IsUpper) >= 0 &&
 		(containsFold(command, "rm") || containsFold(command, "find"))
+}
+
+// launcherPayloads returns the literal commands that xargs and find's
+// -exec/-execdir/-ok/-okdir actions run. They are deny/ask candidates only:
+// a launcher is not transparent (xargs appends input, find substitutes {}),
+// so these payloads never grant an allow. Parsing is deliberately lenient,
+// because a misparse here can only add a restrictive candidate.
+func launcherPayloads(tokens []string) []string {
+	if len(tokens) < 2 {
+		return nil
+	}
+	switch shellWrapperBasename(tokens[0]) {
+	case "xargs":
+		if start := xargsCommandStart(tokens); start > 0 && start < len(tokens) {
+			return []string{joinPOSIXWords(tokens[start:])}
+		}
+	case "find":
+		var payloads []string
+		for i := 1; i < len(tokens); i++ {
+			switch tokens[i] {
+			case "-exec", "-execdir", "-ok", "-okdir":
+			default:
+				continue
+			}
+			end := i + 1
+			for end < len(tokens) && tokens[end] != ";" && tokens[end] != "+" {
+				end++
+			}
+			if end > i+1 {
+				payloads = append(payloads, joinPOSIXWords(tokens[i+1:end]))
+			}
+			i = end
+		}
+		return payloads
+	}
+	return nil
+}
+
+// redirectWriteTargets returns the files that output redirections write. Each
+// one becomes a "tee <target>" deny/ask candidate, so a rule written for tee
+// also covers `cmd > target` in every path spelling. Duplications such as
+// 2>&1 and the /dev sinks are not file writes.
+func redirectWriteTargets(tokens []string) []string {
+	var targets []string
+	add := func(target string) {
+		switch {
+		case target == "", strings.HasPrefix(target, "&"),
+			target == "/dev/null", target == "/dev/stdout", target == "/dev/stderr":
+			return
+		}
+		targets = append(targets, target)
+	}
+	for i, token := range tokens {
+		op := strings.TrimLeft(token, "0123456789&")
+		var rest string
+		switch {
+		case strings.HasPrefix(op, ">>"):
+			rest = op[2:]
+		case strings.HasPrefix(op, ">|"):
+			rest = op[2:]
+		case strings.HasPrefix(op, ">"):
+			rest = op[1:]
+		default:
+			continue
+		}
+		if len(token)-len(op) > 0 && strings.Trim(token[:len(token)-len(op)], "0123456789") != "" &&
+			token[:len(token)-len(op)] != "&" {
+			continue // not a redirection prefix
+		}
+		if rest != "" {
+			add(rest)
+		} else if i+1 < len(tokens) {
+			add(tokens[i+1])
+		}
+	}
+	return targets
+}
+
+// xargsCommandStart returns the index of the utility xargs runs, or 0 when
+// xargs falls back to echo.
+func xargsCommandStart(tokens []string) int {
+	withValue := map[string]bool{
+		"-I": true, "-L": true, "-n": true, "-P": true, "-s": true, "-E": true, "-d": true, "-a": true,
+		"--arg-file": true, "--delimiter": true, "--eof": true, "--replace": true, "--max-lines": true,
+		"--max-args": true, "--max-procs": true, "--max-chars": true, "--process-slot-var": true,
+	}
+	i := 1
+	for i < len(tokens) {
+		token := tokens[i]
+		switch {
+		case token == "--":
+			if i+1 < len(tokens) {
+				return i + 1
+			}
+			return 0
+		case withValue[token]:
+			i += 2
+		case strings.HasPrefix(token, "-") && len(token) > 1:
+			i++ // flags, attached values (-I{}, -n1, --max-args=1) and unknown options
+		default:
+			return i
+		}
+	}
+	return 0
+}
+
+// joinPOSIXWords rebuilds a command from tokens, single-quoting any word the
+// tokenizer would otherwise split or reinterpret.
+func joinPOSIXWords(tokens []string) string {
+	words := make([]string, len(tokens))
+	for i, token := range tokens {
+		if token != "" && strings.IndexFunc(token, func(r rune) bool {
+			return !(r == '-' || r == '_' || r == '.' || r == '/' || r == '~' || r == '=' || r == ':' ||
+				r == ',' || r == '+' || r == '@' || r == '%' || r == '{' || r == '}' ||
+				(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'))
+		}) < 0 {
+			words[i] = token
+			continue
+		}
+		words[i] = "'" + strings.ReplaceAll(token, "'", `'\''`) + "'"
+	}
+	return strings.Join(words, " ")
 }
 
 func unwrapRestrictiveExecutor(tokens []string) []string {

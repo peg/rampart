@@ -284,6 +284,31 @@ func TestStandardPolicyDecisions(t *testing.T) {
 		{name: "allow rampart doctor", tool: "exec", command: "rampart doctor", expected: engine.ActionAllow},
 		{name: "allow rampart version", tool: "exec", command: "rampart version", expected: engine.ActionAllow},
 		{name: "allow rampart status", tool: "exec", command: "rampart status", expected: engine.ActionAllow},
+		// Rampart's own files are protected from shell file utilities in any path spelling.
+		{name: "deny rm managed guard", tool: "exec", command: "rm ~/.rampart/policies/guard.yaml", expected: engine.ActionDeny},
+		{name: "deny cp over managed guard", tool: "exec", command: "cp /tmp/benign.yaml ~/.rampart/policies/guard.yaml", expected: engine.ActionDeny},
+		{name: "deny mv over managed guard", tool: "exec", command: "mv /tmp/x /Users/alice/.rampart/policies/guard.yaml", expected: engine.ActionDeny},
+		{name: "deny sed in place on policy", tool: "exec", command: "sed -i '' s/ask/allow/ /home/alice/.rampart/policies/standard.yaml", expected: engine.ActionDeny},
+		{name: "deny truncate policy", tool: "exec", command: "truncate -s0 ~/.rampart/policies/guard.yaml", expected: engine.ActionDeny},
+		{name: "deny symlink over policy", tool: "exec", command: "ln -sf /dev/null ~/.rampart/policies/guard.yaml", expected: engine.ActionDeny},
+		{name: "deny rm after cd into rampart dir", tool: "exec", command: "cd ~/.rampart/policies && rm guard.yaml", expected: engine.ActionDeny},
+		{name: "deny absolute redirect into policy", tool: "exec", command: "echo x > /Users/alice/.rampart/policies/standard.yaml", expected: engine.ActionDeny},
+		{name: "deny attached redirect into policy", tool: "exec", command: "echo x >>/home/alice/.rampart/policies/guard.yaml", expected: engine.ActionDeny},
+		{name: "allow cat policy", tool: "exec", command: "cat ~/.rampart/policies/guard.yaml", expected: engine.ActionAllow},
+		{name: "allow ls policy dir", tool: "exec", command: "ls -la ~/.rampart/policies", expected: engine.ActionAllow},
+		{name: "allow grep mentioning policy dir", tool: "exec", command: "grep -rn .rampart/policies internal/", expected: engine.ActionAllow},
+		{name: "allow commit message mentioning policy dir", tool: "exec", command: "git commit -m 'docs: explain ~/.rampart/policies'", expected: engine.ActionAllow},
+		{name: "allow redirect to dev null", tool: "exec", command: "rampart status > /dev/null", expected: engine.ActionAllow},
+		// Launchers expose the command they run to deny and ask rules.
+		{name: "deny find exec rampart setup", tool: "exec", command: `find /tmp -prune -exec rampart setup claude-code --remove \;`, expected: engine.ActionDeny},
+		{name: "deny find execdir rampart setup", tool: "exec", command: `find . -execdir rampart setup claude-code --remove \;`, expected: engine.ActionDeny},
+		{name: "deny xargs rampart setup", tool: "exec", command: "printf x | xargs rampart setup claude-code --remove", expected: engine.ActionDeny},
+		{name: "deny xargs with options rampart setup", tool: "exec", command: "xargs -0 -n 1 rampart setup claude-code --remove", expected: engine.ActionDeny},
+		{name: "deny time rampart setup", tool: "exec", command: "time rampart setup claude-code --remove", expected: engine.ActionDeny},
+		{name: "deny time rm root", tool: "exec", command: "time -p rm -rf /", expected: engine.ActionDeny},
+		{name: "allow find exec gofmt", tool: "exec", command: "find . -name '*.go' -exec gofmt -l {} +", expected: engine.ActionAllow},
+		{name: "allow xargs echo", tool: "exec", command: "printf 'a b' | xargs -n1 echo", expected: engine.ActionAllow},
+		{name: "allow time go test", tool: "exec", command: "time go test ./...", expected: engine.ActionAllow},
 	}
 
 	for _, tc := range tests {
