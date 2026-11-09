@@ -403,14 +403,22 @@ function classifyBrowserConsequence(params) {
   return "mutation";
 }
 
+// OpenClaw's browser dispatcher navigates to targetUrl and only falls back to
+// url when targetUrl is absent. Policy must judge exactly that destination, so
+// every agent-supplied destination fact (url, domain, scheme) is replaced with
+// one derived from the URL the host will use. A second, conflicting alias can
+// therefore never make a different, safer-looking destination win.
 function addBrowserURLFacts(policyParams) {
   const rawURL = policyParams?.targetUrl ?? policyParams?.url;
+  delete policyParams.url;
+  delete policyParams.domain;
+  delete policyParams.scheme;
   if (typeof rawURL !== "string" || !rawURL.trim()) return;
+  policyParams.url = rawURL;
   try {
     const parsed = new URL(rawURL);
-    if (!policyParams.url) policyParams.url = rawURL;
-    if (!policyParams.domain) policyParams.domain = parsed.hostname;
-    if (!policyParams.scheme) policyParams.scheme = parsed.protocol.replace(/:$/, "");
+    policyParams.domain = parsed.hostname;
+    policyParams.scheme = parsed.protocol.replace(/:$/, "");
   } catch {
     // A malformed URL has no derived safe-domain fact and therefore cannot
     // inherit the safe-navigation allow rule.
