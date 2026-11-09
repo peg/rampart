@@ -80,6 +80,9 @@ Run 'rampart setup codex --remove' to uninstall.`,
 			wrapperPath := filepath.Join(wrapperDir, "codex")
 
 			if remove {
+				if err := clearVerificationReceipt("codex"); err != nil {
+					return fmt.Errorf("setup codex: %w", err)
+				}
 				removedHooks, err := removeCodexHooks(hooksPath)
 				if err != nil {
 					return err

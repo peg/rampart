@@ -289,6 +289,9 @@ existing installation is left unchanged and told how to opt in. Use
 Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if remove {
+				if err := clearVerificationReceipt("claude-code"); err != nil {
+					return fmt.Errorf("setup: %w", err)
+				}
 				return removeClaudeCodeHooks(cmd)
 			}
 			home, err := os.UserHomeDir()

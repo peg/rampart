@@ -462,6 +462,23 @@ func TestDoctorHooksUnprotectedAgentWarnsOnceAnotherIsProtected(t *testing.T) {
 		}
 	})
 
+	t.Run("previously protected, hooks file gone", func(t *testing.T) {
+		setup(t, true, "")
+		receiptDir := filepath.Join(os.Getenv("HOME"), ".rampart", "verification")
+		requireNoErr(t, os.MkdirAll(receiptDir, 0o700))
+		requireNoErr(t, os.WriteFile(filepath.Join(receiptDir, "codex.json"), []byte("{}"), 0o600))
+		issues, _, codex := codexStatus(t)
+		if issues != 1 || codex.Status != "fail" || !strings.Contains(codex.Message, "was protected") {
+			t.Fatalf("issues=%d codex=%+v, want a lost managed boundary to fail", issues, codex)
+		}
+		// A deliberate removal forgets the receipt, so doctor goes back to a warning.
+		requireNoErr(t, clearVerificationReceipt("codex"))
+		issues, warnings, codex := codexStatus(t)
+		if issues != 0 || warnings != 1 || codex.Status != "warn" {
+			t.Fatalf("issues=%d warnings=%d codex=%+v, want a warning after --remove", issues, warnings, codex)
+		}
+	})
+
 	t.Run("nothing protected", func(t *testing.T) {
 		setup(t, false, "")
 		issues, _, codex := codexStatus(t)
