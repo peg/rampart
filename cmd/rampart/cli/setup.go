@@ -325,10 +325,13 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			hookCommand := currentClaudeHookCommand()
 
 			// Decide whether the PreToolUse hook fails closed. An existing
-			// installation keeps its current mode unless the user asks.
+			// enforcement hook keeps its current mode unless the user asks.
+			// Leftover Rampart Post hooks without a PreToolUse hook enforced
+			// nothing, so that case is planned as a fresh installation.
+			_, preToolUseInstalled := claudeRampartPreToolUseHook(settings)
 			failurePlan, err := planClaudeHookFailure(
 				hookFailure,
-				claudeRampartHooksInstalled(settings),
+				preToolUseInstalled,
 				claudePreToolUseBlocksOnFailure(settings),
 				detectClaudeVersion,
 			)

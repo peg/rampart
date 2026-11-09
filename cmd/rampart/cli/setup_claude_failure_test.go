@@ -204,6 +204,36 @@ func TestSetupClaudeCodeFreshInstallFailsClosedOnSupportedVersion(t *testing.T) 
 	}
 }
 
+func TestSetupClaudeCodeLeftoverPostHookIsPlannedAsFreshEnforcement(t *testing.T) {
+	home := claudeFailureTestHome(t)
+	stubClaudeVersion(t, claudeVersion{2, 1, 295}, true)
+	// Only a legacy Rampart PostToolUse hook: nothing enforced before setup.
+	legacy := map[string]any{"hooks": map[string]any{
+		"PostToolUse": []any{map[string]any{"matcher": ".*", "hooks": []any{
+			map[string]any{"type": "command", "command": currentClaudeHookCommand()},
+		}}},
+	}}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runClaudeSetup(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := readClaudeSettings(t, home)
+	if got := rampartHookIn(t, settings, "PreToolUse")["onFailure"]; got != "block" {
+		t.Fatalf("PreToolUse onFailure = %v, want block for a new enforcement hook; output: %s", got, out)
+	}
+}
+
 func TestSetupClaudeCodeFreshInstallDoesNotWriteOnFailureWhenUnsupported(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

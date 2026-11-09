@@ -206,35 +206,6 @@ func claudeRampartPreToolUseHook(settings claudeSettings) (map[string]any, bool)
 	return nil, false
 }
 
-// claudeRampartHooksInstalled reports whether any lifecycle event already
-// carries a Rampart-owned command hook.
-func claudeRampartHooksInstalled(settings claudeSettings) bool {
-	hooks, ok := settings["hooks"].(map[string]any)
-	if !ok {
-		return false
-	}
-	for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure"} {
-		entries, _ := hooks[event].([]any)
-		for _, rawMatcher := range entries {
-			matcher, ok := rawMatcher.(map[string]any)
-			if !ok {
-				continue
-			}
-			rawHooks, _ := matcher["hooks"].([]any)
-			for _, rawHook := range rawHooks {
-				hook, ok := rawHook.(map[string]any)
-				if !ok {
-					continue
-				}
-				if command, _ := hook["command"].(string); isRampartClaudeHookCommand(command) {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
 // claudePreToolUseBlocksOnFailure reports whether Rampart's PreToolUse hook
 // is configured with onFailure "block".
 func claudePreToolUseBlocksOnFailure(settings claudeSettings) bool {
