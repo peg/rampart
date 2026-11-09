@@ -126,29 +126,18 @@ func ReadEventsFromOffset(path string, offset int64) ([]Event, int64, error) {
 			continue
 		}
 
-		// The first record of a rotated file links back to the previous file's
-		// chain head. It is chain bookkeeping, not an event, and would otherwise
-		// decode into a zero-valued Event.
-		if isChainContinuationHeader(trimmed) {
+		var evt Event
+		if unmarshalErr := json.Unmarshal(trimmed, &evt); unmarshalErr != nil {
 			continue
 		}
-
-		var evt Event
-		if unmarshalErr := json.Unmarshal(trimmed, &evt); unmarshalErr == nil {
-			events = append(events, evt)
+		// Classify exactly as the chain verifier does: a record with an event
+		// id is an event, whatever other fields it carries. Only an id-less
+		// record, such as the continuation header that starts a rotated file,
+		// is chain bookkeeping and would otherwise decode into a zero-valued
+		// Event. Extra header-shaped fields must never hide a real event.
+		if evt.ID == "" {
+			continue
 		}
+		events = append(events, evt)
 	}
-}
-
-// isChainContinuationHeader recognizes the same two top-level fields the chain
-// verifier requires, so a rotated file's header is never returned as an event.
-func isChainContinuationHeader(record []byte) bool {
-	if !bytes.Contains(record, []byte(`"chain_continue"`)) {
-		return false
-	}
-	var header struct {
-		ChainContinue *string `json:"chain_continue"`
-		PrevFile      *string `json:"prev_file"`
-	}
-	return json.Unmarshal(record, &header) == nil && header.ChainContinue != nil && header.PrevFile != nil
 }
