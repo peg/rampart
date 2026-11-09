@@ -7,18 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.10.0] - 2026-11-08
+## [1.10.0] - 2026-11-09
 
 ### Security
 
-- **Rampart's own files are protected from shell file utilities** — the
-  standard and OpenClaw profiles now deny shell commands such as `rm`, `cp`,
-  `mv`, `ln`, `sed`, `truncate` and output redirections that change files
-  under `~/.rampart`, in any path spelling, so an agent cannot remove or
-  replace the managed Guard policy. Read-only commands (`cat`, `ls`, `grep`)
-  still work.
-- **Launchers no longer hide the command they run** — `time` is treated as a
-  transparent executor, and the commands run by `xargs` and by `find -exec`,
+- **Rampart's own files are protected from common shell writes** — the
+  standard and OpenClaw profiles now deny a simple shell command that changes a
+  `.rampart` path through an output redirection, a file utility such as `rm`,
+  `cp`, `mv`, `ln`, `mkdir`, `truncate` or `chmod`, an in-place `sed` or `perl`
+  edit, `dd of=`, `find -delete`, `cd`, `env -C` or `time -o`, so an agent
+  cannot remove or replace the managed Guard policy that way. This is a deny
+  list, not a complete boundary: a glob or variable that stands in for the
+  `.rampart` name, and utilities it does not know, are not covered. Reading or mentioning `.rampart`
+  (`cat`, `ls`, `grep`, commit messages) and files such as `.rampartrc` are
+  not affected.
+- **Launchers no longer hide the command they run** — `time` is unwrapped like
+  `env` and `nohup`, so `time <command>` gets the decision of `<command>`.
+  When `time` writes an output file (`-o`/`--output`) it is not unwrapped for
+  allow rules, and the output file is checked as a write. The commands run by
+  `xargs` (including `-I`, `-J` and `--replace`) and by `find -exec`,
   `-execdir`, `-ok` and `-okdir` are checked by deny and ask rules. These
   payloads never create a new allow.
 - **OpenClaw browser navigation is judged by the URL OpenClaw opens** — the
@@ -104,9 +111,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   After `rampart protect claude-code` on a machine that also has Codex or
   Cline, doctor exited 1 and told the user to run `rampart setup`. Once at
   least one agent is protected, an installed agent without Rampart hooks is now
-  a warning naming `rampart protect <agent>`; doctor cannot tell an agent that
-  was never protected from one whose hooks were deleted, so it does not stay
-  quiet. Stale Rampart hooks, and a machine where nothing is protected, still
+  a warning naming `rampart protect <agent>`, unless protect or verify recorded
+  that agent as protected (see Changed). Without that record doctor cannot tell
+  an agent that was never protected from one whose hooks were deleted, so it
+  does not stay quiet. Stale Rampart hooks, and a machine where nothing is protected, still
   fail. Hook hints and the summary now point to `rampart protect`, and notes
   print with `ℹ` instead of a checkmark.
 - `rampart setup claude-code`, `verify` and `doctor` no longer accept fields on
@@ -127,8 +135,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error" carrying Rampart's reason.
 - `rampart serve` no longer suggests `rampart init` when it runs on the
   embedded standard policy, which is the normal state after `protect`.
-- The README installer snippet uses `sh`, matching the installer and the
-  quickstart.
+- The README installer snippet uses `sh`, matching the installer script and
+  the installation guide.
+- `rampart setup claude-code` keeps fail-closed mode when settings contain
+  several Rampart PreToolUse hooks and any of them has `onFailure: "block"`.
+  Previously only the first was checked, so re-running setup could merge the
+  duplicates into a hook that fails open.
 
 ## [1.9.7] - 2026-10-30
 

@@ -238,11 +238,10 @@ rampart upgrade --no-binary # Refresh managed policies without replacing the bin
 ```
 
 Custom `serve --background` launches do not retain their original options or
-working directory through automatic restart. This includes the incoming
-v1.9.1 updater: the destination binary cannot repair a restart already performed
-by the old executable. Stop the service, install the new binary, and restart
+working directory through automatic restart, and a new binary cannot repair a
+restart already performed by the old executable that ran the upgrade. Stop the service, install the new binary, and restart
 with the original options and CWD using the [manual migration](../getting-started/upgrade.md#custom-background-services-manual-migration).
-Automatic background preservation and recovery remain outside this release.
+Automatic background preservation and recovery are not supported.
 
 After upgrade, standard policy profiles (`standard.yaml`, `paranoid.yaml`, `yolo.yaml`) in `~/.rampart/policies/` are refreshed automatically. Custom policy files are never modified. Run `rampart protect` once afterward to refresh Rampart-managed hooks and plugins and verify every detected agent boundary; unrelated host configuration is preserved.
 

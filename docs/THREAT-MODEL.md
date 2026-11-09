@@ -140,7 +140,7 @@ An agent could encode commands to bypass pattern matching:
 - Common obfuscation patterns (`base64 *`, `eval *`, `xxd -r | bash`) trigger deny rules in standard policy
 - The semantic verification sidecar classifies intent regardless of encoding
 
-**Coverage:** The two-layer approach (pattern matching + LLM classification) significantly reduces the obfuscation surface. Pattern matching catches known encodings; the LLM layer catches intent regardless of how the command is formatted. v0.6.9 closed 10 specific bypass vectors identified in a security audit.
+**Coverage:** Pattern matching catches the encodings and shell forms it knows. The optional semantic verification layer can classify ambiguous or obfuscated commands, but it is probabilistic and does not cover every encoding. Treat both layers as reducing the obfuscation surface, not closing it.
 
 ### 5. OpenClaw Integration Boundaries
 
@@ -340,12 +340,12 @@ v0.7.4 introduced temporal allows (`--for`, `--once`). Expired rules are
 
 Rampart protects its own configuration from agent tampering through two layers:
 
-1. **Exec-level:** The standard policy blocks `rampart allow`, `rampart block`, `rampart init`, and shell redirects to `.rampart/` directories. These rules match the command text the agent reports, so they cover the listed forms rather than every way to reach the same effect.
+1. **Exec-level:** The standard policy blocks `rampart allow`, `rampart block`, `rampart init`, and simple shell commands that change a `.rampart` path: output redirections, file utilities such as `rm`, `cp`, `mv`, `ln`, `mkdir`, `truncate` and `chmod`, in-place `sed` and `perl` edits, `dd of=`, `find -delete`, `cd`, `env -C` and `time -o`. This is a deny list over the command text the agent reports. A glob or variable that stands in for the `.rampart` name, and utilities it does not know, are not covered, so it raises the cost of tampering rather than preventing every way to reach the same effect.
 2. **Write/Edit-level:** The standard policy blocks write and edit tool calls targeting `**/.rampart/**`. This stops file tools from overwriting policy files, config, or audit logs; shell writes rely on the exec-level rules above.
 
 Both layers are active by default in the `standard` and `paranoid` profiles. The `yolo` profile disables these protections — it's named that way for a reason.
 
-**Remaining surface:** An agent with exec access could modify Rampart's binary on disk (if file permissions allow), or kill the `rampart serve` process (triggering fail-open). User separation mitigates both: run `rampart serve` as a different user than the agent.
+**Remaining surface:** An agent with exec access could modify Rampart's binary on disk (if file permissions allow), write `.rampart` through a form the deny list does not cover, or stop the `rampart serve` process. Hooks evaluate policy locally, so deny rules still apply without `rampart serve`, but decisions that need its approval queue fall back to the host's own prompt. User separation mitigates these: run `rampart serve` as a different user than the agent.
 
 ## Philosophy
 
