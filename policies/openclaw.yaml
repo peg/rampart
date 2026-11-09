@@ -193,30 +193,17 @@ policies:
             - ">> .rampart/"
             - ">> ~/.rampart/"
         message: "Direct writes to .rampart/ directory blocked"
-      # Same shell file-utility protection as the standard profile; output
-      # redirections are also checked as "tee <target>".
+      # Same shell write protection as the standard profile: the engine offers
+      # each file a simple command changes as "tee <path>".
       - action: deny
         when:
           command_matches:
-            - "rm **.rampart**"
-            - "unlink **.rampart**"
-            - "mv **.rampart**"
-            - "cp **.rampart**"
-            - "ln **.rampart**"
-            - "install **.rampart**"
-            - "truncate **.rampart**"
-            - "shred **.rampart**"
-            - "touch **.rampart**"
-            - "chmod **.rampart**"
-            - "chown **.rampart**"
-            - "chflags **.rampart**"
-            - "rsync **.rampart**"
-            - "dd **.rampart**"
-            - "tee **.rampart**"
-            - "sed **.rampart**"
-            - "perl **.rampart**"
-            - "cd **.rampart**"
-            - "pushd **.rampart**"
+            - "tee .rampart"
+            - "tee .rampart/**"
+            - "tee '.rampart/**"
+            - "tee **/.rampart"
+            - "tee **/.rampart'"
+            - "tee **/.rampart/**"
         message: "Changing Rampart's own files from the shell is not allowed"
       # Shell references fail closed because redirection and wrapper syntax can
       # disguise a write. The read tool remains available for inspection.

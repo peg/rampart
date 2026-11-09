@@ -558,8 +558,9 @@ func stripPOSIXTransparentExecutorOnce(tokens []string) []string {
 }
 
 // stripPOSIXTime exposes the command run by the shell `time` keyword or the
-// time(1) utility. Only reporting options are skipped; an unknown option
-// leaves the tokens unchanged.
+// time(1) utility. Only reporting options are skipped; an unknown option or
+// an output file (-o, --output) leaves the tokens unchanged, because writing
+// that file is an effect of its own and must not be allowed as the command.
 func stripPOSIXTime(tokens []string) []string {
 	i := 1
 	for i < len(tokens) {
@@ -574,12 +575,14 @@ func stripPOSIXTime(tokens []string) []string {
 		case token == "-p" || token == "-l" || token == "-v" || token == "-a" || token == "-q" ||
 			token == "--portability" || token == "--verbose" || token == "--append" || token == "--quiet":
 			i++
-		case token == "-o" || token == "-f" || token == "--output" || token == "--format":
+		case token == "-o" || token == "--output" || strings.HasPrefix(token, "--output="):
+			return tokens
+		case token == "-f" || token == "--format":
 			if i+1 >= len(tokens) {
 				return tokens
 			}
 			i += 2
-		case strings.HasPrefix(token, "--output=") || strings.HasPrefix(token, "--format="):
+		case strings.HasPrefix(token, "--format="):
 			i++
 		case strings.HasPrefix(token, "-"):
 			return tokens

@@ -851,7 +851,19 @@ func restrictiveCommandCandidates(command string) ([]string, bool) {
 		for _, nested := range launcherPayloads(tokens) {
 			appendCandidate(nested, depth+1)
 		}
-		for _, target := range redirectWriteTargets(tokens) {
+		// Files a command writes, and directories it moves into, are offered
+		// as "tee <path>" so one tee rule covers every way of naming the same
+		// change. Redirections are read from the quote-masked text so a quoted
+		// ">" is prose, not a write. Utility operands are taken only from a
+		// simple command; a compound candidate's components are candidates in
+		// their own right, so an operand of one never borrows another's verb.
+		writes := redirectWriteTargets(tokenizeForOS(maskLiteralRedirects(candidate), "posix"))
+		if len(SplitCompoundCommand(candidate)) <= 1 {
+			raw := stripLeadingEnvAssignments(tokenizeForOS(candidate, "posix"))
+			writes = append(writes, executorWriteTargets(raw)...)
+			writes = append(writes, pathChangeTargets(tokens)...)
+		}
+		for _, target := range writes {
 			appendCandidate("tee "+joinPOSIXWords([]string{target}), depth+1)
 		}
 	}
@@ -1051,8 +1063,8 @@ func mayNeedCanonicalCommandAliases(command string) bool {
 		(containsFold(command, "rm") || containsFold(command, "find"))
 }
 
-// launcherPayloads returns the literal commands that xargs and find's
-// -exec/-execdir/-ok/-okdir actions run. They are deny/ask candidates only:
+// launcherPayloads returns the literal commands that xargs, find's
+// -exec/-execdir/-ok/-okdir actions, and time with an output file run. They are deny/ask candidates only:
 // a launcher is not transparent (xargs appends input, find substitutes {}),
 // so these payloads never grant an allow. Parsing is deliberately lenient,
 // because a misparse here can only add a restrictive candidate.
@@ -1061,6 +1073,23 @@ func launcherPayloads(tokens []string) []string {
 		return nil
 	}
 	switch shellWrapperBasename(tokens[0]) {
+	case "time":
+		// time with an output file is not transparent (it writes the file),
+		// so its command is exposed here for deny and ask rules only.
+		for i := 1; i < len(tokens); i++ {
+			switch token := tokens[i]; {
+			case token == "--":
+				if i+1 < len(tokens) {
+					return []string{joinPOSIXWords(tokens[i+1:])}
+				}
+				return nil
+			case token == "-o" || token == "-f" || token == "--output" || token == "--format":
+				i++
+			case strings.HasPrefix(token, "-") && len(token) > 1:
+			default:
+				return []string{joinPOSIXWords(tokens[i:])}
+			}
+		}
 	case "xargs":
 		if start := xargsCommandStart(tokens); start > 0 && start < len(tokens) {
 			return []string{joinPOSIXWords(tokens[start:])}
@@ -1091,48 +1120,202 @@ func launcherPayloads(tokens []string) []string {
 // one becomes a "tee <target>" deny/ask candidate, so a rule written for tee
 // also covers `cmd > target` in every path spelling. Duplications such as
 // 2>&1 and the /dev sinks are not file writes.
+//
+// The tokens must come from quote-masked text (maskLiteralRedirects), so every
+// remaining ">" is a shell operator, including one attached to the previous
+// word (echo x>file). ">&word" writes a file unless word is a descriptor
+// number or "-", and "<>" opens its target for writing.
 func redirectWriteTargets(tokens []string) []string {
 	var targets []string
 	add := func(target string) {
-		switch {
-		case target == "", strings.HasPrefix(target, "&"),
-			target == "/dev/null", target == "/dev/stdout", target == "/dev/stderr":
+		switch target {
+		case "", "/dev/null", "/dev/stdout", "/dev/stderr":
 			return
 		}
 		targets = append(targets, target)
 	}
 	for i, token := range tokens {
-		op := strings.TrimLeft(token, "0123456789&")
-		var rest string
-		switch {
-		case strings.HasPrefix(op, ">>"):
-			rest = op[2:]
-		case strings.HasPrefix(op, ">|"):
-			rest = op[2:]
-		case strings.HasPrefix(op, ">"):
-			rest = op[1:]
-		default:
+		at := strings.IndexByte(token, '>')
+		if at < 0 {
 			continue
 		}
-		if len(token)-len(op) > 0 && strings.Trim(token[:len(token)-len(op)], "0123456789") != "" &&
-			token[:len(token)-len(op)] != "&" {
-			continue // not a redirection prefix
-		}
+		rest := token[at+1:]
+		duplicate := false
 		if rest != "" {
-			add(rest)
-		} else if i+1 < len(tokens) {
-			add(tokens[i+1])
+			switch rest[0] {
+			case '>', '|':
+				rest = rest[1:]
+			case '&':
+				rest = rest[1:]
+				duplicate = true
+			}
 		}
+		if rest == "" && i+1 < len(tokens) {
+			rest = tokens[i+1]
+		}
+		if duplicate && (rest == "-" || strings.Trim(rest, "0123456789") == "") {
+			continue // 2>&1, >&- and similar move descriptors, not files
+		}
+		add(rest)
 	}
 	return targets
+}
+
+// executorWriteTargets returns the paths that transparent executors change
+// before running their command: env -C/--chdir moves into a directory and
+// time -o/--output writes its report to a file.
+func executorWriteTargets(tokens []string) []string {
+	var targets []string
+	for len(tokens) > 1 {
+		switch shellWrapperBasename(tokens[0]) {
+		case "env":
+			targets = append(targets, leadingOptionValues(tokens, "-C", "--chdir",
+				map[string]bool{"-u": true, "--unset": true, "-S": true, "--split-string": true, "--argv0": true})...)
+		case "time":
+			targets = append(targets, leadingOptionValues(tokens, "-o", "--output",
+				map[string]bool{"-f": true, "--format": true})...)
+		}
+		next := stripPOSIXTransparentExecutorOnce(tokens)
+		if strSlicesEqual(next, tokens) {
+			break
+		}
+		tokens = next
+	}
+	return targets
+}
+
+// leadingOptionValues returns the values given to one option before a
+// command's first operand, in its separate (-C dir), attached (-Cdir) and
+// long (--chdir=dir, --chdir dir) forms. other lists options that consume
+// the next word, so their values are not mistaken for the first operand.
+func leadingOptionValues(tokens []string, short, long string, other map[string]bool) []string {
+	var values []string
+	for i := 1; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--":
+			return values
+		case token == short || token == long:
+			if i+1 < len(tokens) {
+				values = append(values, tokens[i+1])
+			}
+			i++
+		case strings.HasPrefix(token, long+"="):
+			values = append(values, strings.TrimPrefix(token, long+"="))
+		case len(short) == 2 && strings.HasPrefix(token, short) && len(token) > 2:
+			values = append(values, token[2:])
+		case other[token]:
+			i++
+		case strings.HasPrefix(token, "-") && len(token) > 1, strings.Contains(token, "="):
+		default:
+			return values
+		}
+	}
+	return values
+}
+
+// pathChangingUtilities are the commands whose path operands are created,
+// replaced, removed, re-permissioned, or (for cd) become the working
+// directory for relative paths that follow.
+var pathChangingUtilities = map[string]bool{
+	"rm": true, "unlink": true, "rmdir": true, "mkdir": true, "mv": true, "cp": true, "ln": true,
+	"install": true, "truncate": true, "shred": true, "touch": true, "chmod": true, "chown": true,
+	"chgrp": true, "chflags": true, "rsync": true, "tee": true, "cd": true, "pushd": true,
+}
+
+// rsyncOptionValues lists rsync options whose next word is a pattern or
+// command rather than a path rsync changes.
+var rsyncOptionValues = map[string]bool{
+	"--exclude": true, "--include": true, "--filter": true, "-f": true, "--exclude-from": true,
+	"--include-from": true, "-e": true, "--rsh": true, "--rsync-path": true,
+}
+
+// pathChangeTargets returns the operands a simple command may change. It is
+// lenient in the restrictive direction: an operand it cannot rule out is
+// returned, and the caller only uses the result for deny and ask rules.
+func pathChangeTargets(tokens []string) []string {
+	if len(tokens) < 2 {
+		return nil
+	}
+	for i, token := range tokens {
+		if strings.HasPrefix(token, "#") {
+			tokens = tokens[:i] // an unquoted # starts a shell comment
+			break
+		}
+	}
+	head := shellWrapperBasename(tokens[0])
+	operands := func() []string {
+		var out []string
+		options := true
+		for i := 1; i < len(tokens); i++ {
+			token := tokens[i]
+			switch {
+			case options && token == "--":
+				options = false
+			case options && head == "rsync" && rsyncOptionValues[token]:
+				i++
+			case options && strings.HasPrefix(token, "-") && len(token) > 1:
+			default:
+				out = append(out, token)
+			}
+		}
+		return out
+	}
+	switch head {
+	case "sed", "perl":
+		for _, token := range tokens[1:] {
+			if strings.HasPrefix(token, "--in-place") || (len(token) > 1 && token[0] == '-' && token[1] != '-' &&
+				strings.IndexByte(strings.SplitN(token[1:], "e", 2)[0], 'i') >= 0) {
+				return operands() // in-place edit
+			}
+		}
+		return nil
+	case "dd":
+		var out []string
+		for _, token := range tokens[1:] {
+			if strings.HasPrefix(token, "of=") {
+				out = append(out, strings.TrimPrefix(token, "of="))
+			}
+		}
+		return out
+	case "find":
+		var out []string
+		changes := false
+		for i := 1; i < len(tokens); i++ {
+			switch tokens[i] {
+			case "-delete":
+				changes = true
+			case "-fprint", "-fprint0", "-fls", "-fprintf":
+				changes = true
+				if i+1 < len(tokens) {
+					out = append(out, tokens[i+1])
+				}
+			}
+		}
+		if changes {
+			for _, token := range tokens[1:] {
+				if strings.HasPrefix(token, "-") || token == "(" || token == "!" {
+					break
+				}
+				out = append(out, token) // starting points that -delete may remove
+			}
+		}
+		return out
+	}
+	if pathChangingUtilities[head] {
+		return operands()
+	}
+	return nil
 }
 
 // xargsCommandStart returns the index of the utility xargs runs, or 0 when
 // xargs falls back to echo.
 func xargsCommandStart(tokens []string) int {
 	withValue := map[string]bool{
-		"-I": true, "-L": true, "-n": true, "-P": true, "-s": true, "-E": true, "-d": true, "-a": true,
-		"--arg-file": true, "--delimiter": true, "--eof": true, "--replace": true, "--max-lines": true,
+		// BSD -J, -R and -S take a value; GNU --eof and --replace take one
+		// only when attached with "=", so they are plain flags here.
+		"-I": true, "-J": true, "-L": true, "-n": true, "-P": true, "-R": true, "-S": true, "-s": true,
+		"-E": true, "-d": true, "-a": true, "--arg-file": true, "--delimiter": true, "--max-lines": true,
 		"--max-args": true, "--max-procs": true, "--max-chars": true, "--process-slot-var": true,
 	}
 	i := 1
