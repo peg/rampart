@@ -101,7 +101,10 @@ Rampart uses glob patterns for matching:
 
 For exec calls, Rampart also normalizes common shell wrappers and transparent
 launchers such as `env`, `command`, `exec`, `nohup`, `nice`, `timeout`,
-`setsid`, and `stdbuf`, then checks compound command components independently.
+`setsid`, `stdbuf`, and `time`, then checks compound command components
+independently. Deny and ask rules additionally see the command run by `xargs`
+and by `find -exec`/`-execdir`/`-ok`/`-okdir`, and treat each output
+redirection target as `tee <target>`; these extra forms never grant an allow.
 This is deliberate defense in depth, not a complete parser for every shell or
 an operating-system security boundary.
 

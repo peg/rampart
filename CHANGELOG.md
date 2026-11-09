@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.10.0] - 2026-11-08
 
+### Security
+
+- **Rampart's own files are protected from shell file utilities** — the
+  standard and OpenClaw profiles now deny shell commands such as `rm`, `cp`,
+  `mv`, `ln`, `sed`, `truncate` and output redirections that change files
+  under `~/.rampart`, in any path spelling, so an agent cannot remove or
+  replace the managed Guard policy. Read-only commands (`cat`, `ls`, `grep`)
+  still work.
+- **Launchers no longer hide the command they run** — `time` is treated as a
+  transparent executor, and the commands run by `xargs` and by `find -exec`,
+  `-execdir`, `-ok` and `-okdir` are checked by deny and ask rules. These
+  payloads never create a new allow.
+- **OpenClaw browser navigation is judged by the URL OpenClaw opens** — the
+  adapter derives `url`, `domain` and `scheme` from `targetUrl` (or `url` when
+  it is absent), so a second, conflicting alias cannot decide the policy.
+- **Audit readers count every event the verifier counts** — views, reports and
+  exports classify records by event id, as chain verification does, so extra
+  fields on a real event cannot hide it from them.
+- **`rampart protect` suggests a canary that is harmless without Rampart** —
+  the first test is now `echo rampart-canary`, which the managed Guard denies.
+  The previous canary read a plausible SSH key path, which a host that never
+  loaded the hook would have read.
+
 ### Added
 
 - `rampart setup claude-code --hook-failure=auto|block|continue` controls what
@@ -37,6 +60,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (Hermes 0.21.5, `v2026.9.24`) instead of the rolling latest, so upstream
   releases no longer turn scheduled CI red. Hermes releases after 0.21.5 are not
   claimed compatible until reviewed.
+- `rampart setup claude-code` now fails closed by default for a new PreToolUse
+  hook on a supported host even when an older Rampart PostToolUse hook was
+  left behind; previously that leftover made setup treat it as an existing
+  installation.
+- `rampart doctor` fails when an agent that protect or verify recorded as
+  protected has lost its Rampart hooks, instead of warning as if it had never
+  been set up. `rampart setup <agent> --remove` clears that record for Claude
+  Code, Codex and Cline.
+- The scheduled Hermes compatibility gate installs the reviewed release by
+  commit and fails if its tag is moved upstream.
 - The threat model, docs site description and Homebrew formula description no
   longer call Rampart a firewall or say it catches misbehaving agents reliably.
   Self-protection is described as covering the listed command and file-tool
