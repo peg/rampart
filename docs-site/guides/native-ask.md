@@ -72,8 +72,10 @@ or the `ci` profile. See [CI/Headless Agents](ci-headless.md).
 ## Host limits
 
 Keep Claude's own permission and sandbox settings appropriate to the work.
-Rampart cannot turn a host hook launch failure or timeout into a veto; normal
-host permissions apply. Native prompt rendering, permission modes, and resume
+A hook launch failure or timeout follows the host's failure setting. By
+default normal host permissions apply; with
+`rampart setup claude-code --hook-failure=block` on a supported Claude Code
+version, the failure blocks the tool call instead. Native prompt rendering, permission modes, and resume
 semantics belong to the installed Claude version. Consult the
 [Claude integration guide](../integrations/claude-code.md#failure-boundary)
 for the current reviewed boundary.

@@ -926,6 +926,61 @@ func TestRestrictiveCanonicalOperands(t *testing.T) {
 	}
 }
 
+func TestRestrictiveWriteTargets(t *testing.T) {
+	cond := Condition{CommandMatches: []string{"tee /guard", "tee /guard/**", "rm -rf /"}}
+	tests := []struct {
+		name, command string
+		want          bool
+	}{
+		{"attached redirect", `echo x>/guard/p`, true},
+		{"append redirect", `echo x >> /guard/p`, true},
+		{"ampersand redirect", `echo x &> /guard/p`, true},
+		{"read-write redirect", `echo x 1<> /guard/p`, true},
+		{"duplicate redirect to file", `echo x >& /guard/p`, true},
+		{"duplicate redirect to fd", `echo x >&2`, false},
+		{"quoted redirect is literal", `echo '>' /guard/p`, false},
+		{"utility operand", `rm -f /guard/p`, true},
+		{"cd operand", `cd /guard && rm -f p`, true},
+		{"env chdir", `env -C /guard rm -f p`, true},
+		{"env attached chdir", `env --chdir=/guard rm -f p`, true},
+		{"time output file", `time -o /guard/p true`, true},
+		{"time payload", `time -o /tmp/t rm -rf /`, true},
+		{"sed in-place", `sed -i s/a/b/ /guard/p`, true},
+		{"sed print", `sed -n p /guard/p`, false},
+		{"dd output", `dd if=/dev/zero of=/guard/p`, true},
+		{"find delete", `find /guard -delete`, true},
+		{"find read", `find /guard -name p`, false},
+		{"rsync option value", `rsync -a src/ dst/ --exclude /guard`, false},
+		{"comment", `cp a b # /guard/p`, false},
+		{"xargs -J payload", `echo a | xargs -J % mv % /guard/p`, true},
+		{"xargs --replace payload", `echo a | xargs --replace mv {} /guard/p`, true},
+		{"read after cd elsewhere", `cd /work && cat /guard/p`, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			call := ToolCall{Tool: "exec", Params: map[string]any{"command": test.command}}
+			if got := matchConditionForAction(cond, call, nil, ActionDeny); got != test.want {
+				t.Fatalf("matchConditionForAction(%q) = %v, want %v", test.command, got, test.want)
+			}
+		})
+	}
+}
+
+func TestTimeOutputIsNotUnwrappedForAllow(t *testing.T) {
+	cond := Condition{CommandMatches: []string{"git status"}}
+	for command, want := range map[string]bool{
+		"time git status":                   true,
+		"time -p git status":                true,
+		"time -o /tmp/out git status":       false,
+		"time --output=/tmp/out git status": false,
+	} {
+		call := ToolCall{Tool: "exec", Params: map[string]any{"command": command}}
+		if got := matchConditionForAction(cond, call, nil, ActionAllow); got != want {
+			t.Errorf("allow match %q = %v, want %v", command, got, want)
+		}
+	}
+}
+
 func TestRestrictiveCommandContainsNormalization(t *testing.T) {
 	cond := Condition{CommandContains: []string{".ssh/id_"}}
 	for _, test := range []struct {

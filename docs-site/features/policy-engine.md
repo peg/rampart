@@ -101,10 +101,12 @@ Rampart uses glob patterns for matching:
 
 For exec calls, Rampart also normalizes common shell wrappers and transparent
 launchers such as `env`, `command`, `exec`, `nohup`, `nice`, `timeout`,
-`setsid`, `stdbuf`, and `time`, then checks compound command components
-independently. Deny and ask rules additionally see the command run by `xargs`
-and by `find -exec`/`-execdir`/`-ok`/`-okdir`, and treat each output
-redirection target as `tee <target>`; these extra forms never grant an allow.
+`setsid`, `stdbuf`, and `time` (except `time -o`/`--output`, which writes a
+file and is not unwrapped for allow rules), then checks compound command
+components independently. Deny and ask rules additionally see the command run by `xargs`
+and by `find -exec`/`-execdir`/`-ok`/`-okdir`, and treat each file a simple
+command writes or removes (redirection targets, file-utility operands, in-place
+edits) as `tee <target>`; these extra forms never grant an allow.
 This is deliberate defense in depth, not a complete parser for every shell or
 an operating-system security boundary.
 
@@ -299,7 +301,7 @@ You can also match specific MCP tool names:
 policies:
   - name: block-vm-deletion
     match:
-      tool: ["mcp__proxmox__vm_delete"]
+      tool: ["mcp__infra__vm_delete"]
     rules:
       - action: deny
         message: "VM deletion blocked"
@@ -470,7 +472,7 @@ The wildcard variant is only suggested when it's safe (not for `rm`, `shred`, `d
 
 ### Self-modification protection
 
-Commands that change Rampart's policy, approvals, credentials or installation are blocked when an AI agent tries to run them: `allow`, `block`, `rules`, `init`, `setup`, `serve`, `upgrade`, `token`, `approve`, `deny`, `uninstall`, `protect`, `quickstart`, and the mutating `policy` subcommands. Read-only commands such as `status`, `doctor`, `pending` and `policy explain` stay available. The `block-self-modification` rule in `standard.yaml` matches direct, absolute-path, `./` and global-flag invocations. An excerpt:
+Commands that change Rampart's policy, approvals, credentials or installation are blocked when an AI agent tries to run them: `allow`, `block`, `rules`, `init`, `setup`, `serve`, `upgrade`, `token`, `approve`, `deny`, `uninstall`, `protect`, and the mutating `policy` subcommands. Read-only commands such as `status`, `doctor`, `pending` and `policy explain` stay available. The `block-self-modification` rule in `standard.yaml` matches direct, absolute-path, `./` and global-flag invocations. An excerpt:
 
 ```yaml
 - name: block-self-modification
@@ -492,6 +494,16 @@ Commands that change Rampart's policy, approvals, credentials or installation ar
 ```
 
 Run these commands yourself in a terminal, not via your AI agent.
+
+The same profiles also deny a simple shell command that changes a `.rampart`
+path: output redirections, file utilities such as `rm`, `cp`, `mv`, `ln`,
+`mkdir`, `truncate` and `chmod`, in-place `sed` and `perl` edits, `dd of=`,
+`find -delete`, `cd`, `env -C` and `time -o`. The engine offers each file such
+a command changes to deny and ask rules as `tee <path>`, and the rule matches a
+whole `.rampart` path segment, so reading or searching `.rampart` and files
+such as `.rampartrc` stay usable. This is a deny list: a glob or variable that
+stands in for the `.rampart` name, and utilities it does not know, are not
+covered.
 
 ## Policy Reload API
 

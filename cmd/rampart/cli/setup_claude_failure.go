@@ -175,17 +175,18 @@ func planClaudeHookFailure(
 	}
 }
 
-// claudeRampartPreToolUseHook returns the Rampart-owned PreToolUse command
-// hook in settings, if one exists.
-func claudeRampartPreToolUseHook(settings claudeSettings) (map[string]any, bool) {
+// claudeRampartPreToolUseHooks returns every Rampart-owned PreToolUse
+// command hook in settings, in file order.
+func claudeRampartPreToolUseHooks(settings claudeSettings) []map[string]any {
 	hooks, ok := settings["hooks"].(map[string]any)
 	if !ok {
-		return nil, false
+		return nil
 	}
 	entries, ok := hooks["PreToolUse"].([]any)
 	if !ok {
-		return nil, false
+		return nil
 	}
+	var found []map[string]any
 	for _, rawMatcher := range entries {
 		matcher, ok := rawMatcher.(map[string]any)
 		if !ok {
@@ -199,22 +200,33 @@ func claudeRampartPreToolUseHook(settings claudeSettings) (map[string]any, bool)
 			}
 			command, _ := hook["command"].(string)
 			if isRampartClaudeHookCommand(command) {
-				return hook, true
+				found = append(found, hook)
 			}
 		}
 	}
-	return nil, false
+	return found
 }
 
-// claudePreToolUseBlocksOnFailure reports whether Rampart's PreToolUse hook
-// is configured with onFailure "block".
-func claudePreToolUseBlocksOnFailure(settings claudeSettings) bool {
-	hook, ok := claudeRampartPreToolUseHook(settings)
-	if !ok {
-		return false
+// claudeRampartPreToolUseHook returns the first Rampart-owned PreToolUse
+// command hook in settings, if one exists.
+func claudeRampartPreToolUseHook(settings claudeSettings) (map[string]any, bool) {
+	hooks := claudeRampartPreToolUseHooks(settings)
+	if len(hooks) == 0 {
+		return nil, false
 	}
-	value, _ := hook["onFailure"].(string)
-	return value == claudeHookFailureBlock
+	return hooks[0], true
+}
+
+// claudePreToolUseBlocksOnFailure reports whether any Rampart PreToolUse hook
+// is configured with onFailure "block". Setup collapses duplicates into one
+// entry, so a single blocking duplicate must keep the merged entry blocking.
+func claudePreToolUseBlocksOnFailure(settings claudeSettings) bool {
+	for _, hook := range claudeRampartPreToolUseHooks(settings) {
+		if value, _ := hook["onFailure"].(string); value == claudeHookFailureBlock {
+			return true
+		}
+	}
+	return false
 }
 
 // buildClaudePreToolUseHook returns Rampart's PreToolUse hook entry. A safe

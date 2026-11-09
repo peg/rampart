@@ -567,3 +567,41 @@ func TestSetupClaudeCodeKeepsSafeUserHookFields(t *testing.T) {
 		t.Errorf("setup dropped the timeout: %+v", got)
 	}
 }
+
+func TestSetupClaudeCodeAutoKeepsFailClosedFromAnyDuplicateHook(t *testing.T) {
+	home := claudeFailureTestHome(t)
+	forbidClaudeDetection(t)
+	command := currentClaudeHookCommand()
+	settings := map[string]any{"hooks": map[string]any{"PreToolUse": []any{
+		map[string]any{"matcher": "Bash", "hooks": []any{
+			map[string]any{"type": "command", "command": command},
+		}},
+		map[string]any{"matcher": ".*", "hooks": []any{
+			map[string]any{"type": "command", "command": command, "onFailure": "block"},
+		}},
+	}}}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := runClaudeSetup(t); err != nil {
+		t.Fatal(err)
+	}
+	written := readClaudeSettings(t, home)
+	hooks := claudeRampartPreToolUseHooks(written)
+	if len(hooks) == 0 {
+		t.Fatalf("no Rampart PreToolUse hook after setup: %#v", written["hooks"])
+	}
+	for _, hook := range hooks {
+		if hook["onFailure"] != "block" {
+			t.Fatalf("duplicate without onFailure weakened the installation: %#v", written["hooks"])
+		}
+	}
+}
