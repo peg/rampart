@@ -217,10 +217,10 @@ func runProtectionPlan(cmd *cobra.Command, rootOpts *rootOptions, drivers []inte
 // printProtectNextSteps tells a newcomer how to see the boundary work in the
 // host. Hook hosts load hooks at session start, and adapter verification does
 // not prove the running host picked them up, so the steps say to restart and
-// try a harmless canary. The canary path is denied by the credential rules
-// and does not need to exist, so it is safe even if the host never loaded
-// the hook.
-const protectCanaryCommand = "cat ~/.ssh/id_rampart_test"
+// try a harmless canary. The managed Guard denies it, and it only prints a
+// word when a host never loaded the hook, so trying it can never expose a
+// file even on an unprotected host.
+const protectCanaryCommand = "echo rampart-canary"
 
 func printProtectNextSteps(w io.Writer, hosts []string) {
 	if len(hosts) == 0 {
@@ -234,7 +234,7 @@ func printProtectNextSteps(w io.Writer, hosts []string) {
 	fmt.Fprintln(w, "\nNext steps:")
 	fmt.Fprintf(w, "  1. Restart %s, or start a new session, so it loads the Rampart hooks.\n", names)
 	fmt.Fprintf(w, "  2. Try a harmless block: ask %s to run `%s`.\n", ask, protectCanaryCommand)
-	fmt.Fprintln(w, "     The file does not need to exist. Rampart denies the read before it runs.")
+	fmt.Fprintln(w, "     Rampart denies it with a \"Rampart canary\" reason. If it just prints rampart-canary, the hook is not active.")
 	for _, host := range hosts {
 		if host == "Claude Code" {
 			fmt.Fprintln(w, "     Claude Code shows the denial as a \"PreToolUse hook error\" with Rampart's reason; that is expected.")

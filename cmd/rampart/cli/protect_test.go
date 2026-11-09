@@ -366,6 +366,19 @@ func TestProtectionPlanConfiguresVerifiesAndRecordsCodex(t *testing.T) {
 	}
 }
 
+// On a host that never loaded the hook the canary really runs, so it must be
+// a plain echo of a literal word: no file, path, expansion or redirection that
+// could put real data into the agent's transcript.
+func TestProtectCanaryIsHarmlessWhenUnprotected(t *testing.T) {
+	fields := strings.Fields(protectCanaryCommand)
+	if len(fields) != 2 || fields[0] != "echo" {
+		t.Fatalf("canary %q must be `echo <word>`", protectCanaryCommand)
+	}
+	if strings.ContainsAny(fields[1], "/~$`'\"\\<>|;&*?[]{}()") {
+		t.Fatalf("canary argument %q must be a literal word", fields[1])
+	}
+}
+
 // The canary that protect tells newcomers to try must stay denied by the
 // managed policies protect installs, for every hook host, or the first thing
 // a new user tries would appear to show Rampart doing nothing.

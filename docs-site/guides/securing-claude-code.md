@@ -106,7 +106,7 @@ rampart doctor
 rampart watch
 ```
 
-Then ask Claude Code to run the harmless canary `cat ~/.ssh/id_rampart_test`. The file does not need to exist. Confirm you see a deny event and reason in `rampart watch` and the audit log.
+Then ask Claude Code to run the harmless canary `echo rampart-canary`. With protection active, Rampart denies it with a "Rampart canary" reason; if it just prints `rampart-canary`, the hook is not loaded. Confirm you see the deny event in `rampart watch` and the audit log.
 
 ## Common Questions
 
