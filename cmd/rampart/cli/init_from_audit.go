@@ -14,6 +14,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -34,6 +35,9 @@ type fromAuditOptions struct {
 	dryRun    bool
 	output    string
 	merge     bool
+	// allowUnverified learns from history that failed or skipped hash
+	// verification. Off by default: forged history would become allow rules.
+	allowUnverified bool
 }
 
 // runInitFromAudit generates policy YAML from audit log events.
@@ -60,6 +64,9 @@ func runInitFromAudit(w io.Writer, opts fromAuditOptions) error {
 
 	rules := generateRulesFromEvents(allowed)
 	content := marshalGeneratedPolicy(rules, opts.auditPath)
+	if opts.allowUnverified {
+		content = "# WARNING: generated from audit history that was not verified (--allow-unverified).\n" + content
+	}
 
 	printAuditSummary(w, events, allowed, rules)
 
@@ -74,7 +81,11 @@ func runInitFromAudit(w io.Writer, opts fromAuditOptions) error {
 
 // loadAndFilterEvents reads audit events and applies --since filtering.
 func loadAndFilterEvents(opts fromAuditOptions) ([]audit.Event, error) {
-	events, err := readAuditPath(opts.auditPath)
+	read := readVerifiedAuditPath
+	if opts.allowUnverified {
+		read = readAuditPath
+	}
+	events, err := read(opts.auditPath)
 	if err != nil {
 		return nil, err
 	}
@@ -114,16 +125,77 @@ func writeGeneratedPolicy(w io.Writer, content, output string) error {
 	return nil
 }
 
-// readAuditPath reads all events from a JSONL audit file or directory.
+// readVerifiedAuditPath reads the events to learn from and proves them first.
+// A directory must pass the same checks as `rampart audit verify`; a single
+// file, which may be an excerpt of a chain, must have a valid hash on every
+// record. Each event returned must carry the hash that verification accepted,
+// so the rules come from exactly the verified history. Any malformed record,
+// unreadable file or failed check generates nothing.
+func readVerifiedAuditPath(path string) ([]audit.Event, error) {
+	const hint = " (rerun with --allow-unverified to learn from it anyway)"
+	fail := func(err error) ([]audit.Event, error) {
+		return nil, fmt.Errorf("init: from-audit: %w%s", err, hint)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("init: from-audit: %w", err)
+	}
+	files := []string{path}
+	var verifiedHashes map[string]string // chain event ID -> verified hash
+	chain := map[string]bool{}
+	if info.IsDir() {
+		if files, err = listAuditFiles(path); err != nil {
+			return nil, fmt.Errorf("init: from-audit: %w", err)
+		}
+		chainFiles, standaloneFiles := partitionAuditFiles(files)
+		if len(chainFiles) > 0 {
+			if _, verifiedHashes, err = verifyAuditChain(chainFiles); err != nil {
+				return fail(err)
+			}
+		}
+		if _, err := verifyStandaloneAuditRecords(standaloneFiles); err != nil {
+			return fail(err)
+		}
+		for _, file := range chainFiles {
+			chain[file] = true
+		}
+	}
+
+	var events []audit.Event
+	for _, file := range files {
+		err := scanAuditEvents(file, func(event audit.Event) error {
+			if chain[file] && verifiedHashes[event.ID] != event.Hash {
+				return fmt.Errorf("event %s in %s changed after chain verification", event.ID, filepath.Base(file))
+			}
+			ok, err := event.VerifyHash()
+			if err != nil {
+				return fmt.Errorf("verify hash for event %s in %s: %w", event.ID, filepath.Base(file), err)
+			}
+			if !ok {
+				return fmt.Errorf("event %s in %s failed hash verification", event.ID, filepath.Base(file))
+			}
+			events = append(events, event)
+			return nil
+		})
+		if err != nil {
+			return fail(err)
+		}
+	}
+	return events, nil
+}
+
+// readAuditPath reads all events from a JSONL audit file or directory
+// without verifying them. Only --allow-unverified uses it.
 func readAuditPath(path string) ([]audit.Event, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("init: from-audit: %w", err)
 	}
 
+	var malformed *audit.MalformedRecordsError
 	if !info.IsDir() {
 		events, _, err := audit.ReadEventsFromOffset(path, 0)
-		if err != nil {
+		if err != nil && !errors.As(err, &malformed) {
 			return nil, fmt.Errorf("init: from-audit: read %s: %w", path, err)
 		}
 		return events, nil
@@ -141,7 +213,7 @@ func readAuditPath(path string) ([]audit.Event, error) {
 		}
 		fp := filepath.Join(path, entry.Name())
 		events, _, err := audit.ReadEventsFromOffset(fp, 0)
-		if err != nil {
+		if err != nil && !errors.As(err, &malformed) {
 			continue // skip unreadable files
 		}
 		allEvents = append(allEvents, events...)

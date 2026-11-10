@@ -424,3 +424,94 @@ func assertRampartCodexHook(t *testing.T, settings map[string]any, event string)
 		t.Fatalf("%s Rampart entries = %d, want 1", event, found)
 	}
 }
+
+func TestCodexConfiguredRejectsBehaviorChangingHandlerFields(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	if err := testExecuteRoot(t, "setup", "codex"); err != nil {
+		t.Fatal(err)
+	}
+	if !codexHooksConfiguredForHome(home) {
+		t.Fatal("a fresh Codex setup must be reported as configured")
+	}
+	hooksPath := filepath.Join(home, ".codex", "hooks.json")
+	clean, err := os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, value := range map[string]any{
+		"async":         true,
+		"if":            "Bash(git *)",
+		"unknownField":  "x",
+		"timeout":       "330",
+		"statusMessage": 7,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var settings map[string]any
+			if err := json.Unmarshal(clean, &settings); err != nil {
+				t.Fatal(err)
+			}
+			pre := settings["hooks"].(map[string]any)["PreToolUse"].([]any)[0].(map[string]any)
+			pre["hooks"].([]any)[0].(map[string]any)[name] = value
+			data, err := json.Marshal(settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(hooksPath, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if codexHooksConfiguredForHome(home) {
+				t.Fatalf("Rampart handler with %s=%v must not be reported as configured", name, value)
+			}
+			if check := verifyCodexHooksInstalled(); check.Status == verificationPass {
+				t.Fatalf("verification passed with %s=%v: %#v", name, value, check)
+			}
+			if err := testExecuteRoot(t, "setup", "codex"); err != nil {
+				t.Fatal(err)
+			}
+			if !codexHooksConfiguredForHome(home) {
+				t.Fatalf("setup did not repair the handler after %s was added", name)
+			}
+		})
+	}
+}
+
+func TestCodexManagedHooksOnlyMeansNotConfigured(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	if err := testExecuteRoot(t, "setup", "codex"); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	for name, tc := range map[string]struct {
+		config   string
+		disabled bool
+	}{
+		"bare key":          {"model = \"x\"\nallow_managed_hooks_only = true\n", true},
+		"quoted key":        {"\"allow_managed_hooks_only\" = true # managed only\n", true},
+		"false":             {"allow_managed_hooks_only = false\n", false},
+		"commented out":     {"# allow_managed_hooks_only = true\n", false},
+		"inside a table":    {"[profiles.work]\nallow_managed_hooks_only = true\n", false},
+		"unrelated setting": {"model = \"x\"\n", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := os.WriteFile(configPath, []byte(tc.config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got := codexUserHooksDisabled(home); got != tc.disabled {
+				t.Fatalf("codexUserHooksDisabled = %v, want %v", got, tc.disabled)
+			}
+			if got := codexHooksConfiguredForHome(home); got == tc.disabled {
+				t.Fatalf("codexHooksConfiguredForHome = %v with disabled=%v", got, tc.disabled)
+			}
+			check := verifyCodexHooksInstalled()
+			if tc.disabled && (check.Status != verificationFail || !strings.Contains(check.Actual, "allow_managed_hooks_only")) {
+				t.Fatalf("verify must name the managed-only setting: %#v", check)
+			}
+			if !tc.disabled && check.Status != verificationPass {
+				t.Fatalf("verify should pass: %#v", check)
+			}
+		})
+	}
+}

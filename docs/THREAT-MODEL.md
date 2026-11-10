@@ -340,12 +340,12 @@ v0.7.4 introduced temporal allows (`--for`, `--once`). Expired rules are
 
 Rampart protects its own configuration from agent tampering through two layers:
 
-1. **Exec-level:** The standard policy blocks `rampart allow`, `rampart block`, `rampart init`, and simple shell commands that change a `.rampart` path: output redirections, file utilities such as `rm`, `cp`, `mv`, `ln`, `mkdir`, `truncate` and `chmod`, in-place `sed` and `perl` edits, `dd of=`, `find -delete`, `cd`, `env -C` and `time -o`. This is a deny list over the command text the agent reports. A glob or variable that stands in for the `.rampart` name, and utilities it does not know, are not covered, so it raises the cost of tampering rather than preventing every way to reach the same effect.
+1. **Exec-level:** The standard policy blocks `rampart allow`, `rampart block`, `rampart init`, and simple shell commands that change a `.rampart` path: output redirections, file utilities such as `rm`, `cp`, `mv`, `ln`, `mkdir`, `truncate` and `chmod`, in-place `sed` and `perl` edits, `dd of=`, `find -delete`, `cd`, `pushd`, `env -C` and `time -o`. This is a deny list over the command text the agent reports. A glob or variable that stands in for the `.rampart` name, and utilities it does not know, are not covered, so it raises the cost of tampering rather than preventing every way to reach the same effect.
 2. **Write/Edit-level:** The standard policy blocks write and edit tool calls targeting `**/.rampart/**`. This stops file tools from overwriting policy files, config, or audit logs; shell writes rely on the exec-level rules above.
 
 Both layers are active by default in the `standard` and `paranoid` profiles. The `yolo` profile disables these protections — it's named that way for a reason.
 
-**Remaining surface:** An agent with exec access could modify Rampart's binary on disk (if file permissions allow), write `.rampart` through a form the deny list does not cover, or stop the `rampart serve` process. Hooks evaluate policy locally, so deny rules still apply without `rampart serve`, but decisions that need its approval queue fall back to the host's own prompt. User separation mitigates these: run `rampart serve` as a different user than the agent.
+**Remaining surface:** An agent with exec access could modify Rampart's binary on disk (if file permissions allow), write `.rampart` through a form the deny list does not cover, or stop the `rampart serve` process. Hooks evaluate policy locally, so deny rules still apply without `rampart serve`, but decisions that need its approval queue (`headless_only` asks) are denied while it is unreachable. User separation mitigates these: run `rampart serve` as a different user than the agent.
 
 ## Philosophy
 

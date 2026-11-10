@@ -25,11 +25,15 @@ The goal is not to disable Claude Code automation. The goal is to add guardrails
 brew install peg/tap/rampart
 ```
 
-2. Wire Rampart into Claude Code.
+2. Protect Claude Code. This installs the native hooks and the managed Guard
+   rules, then verifies the installed boundary.
 
 ```bash
-rampart setup claude-code
+rampart protect claude-code
 ```
+
+`rampart setup claude-code` installs only the hooks; use it when you manage
+your own policies.
 
 3. Verify health and policy status.
 
@@ -106,7 +110,7 @@ rampart doctor
 rampart watch
 ```
 
-Then ask Claude Code to run the harmless canary `echo rampart-canary`. With protection active, Rampart denies it with a "Rampart canary" reason; if it just prints `rampart-canary`, the hook is not loaded. Confirm you see the deny event in `rampart watch` and the audit log.
+Then ask Claude Code to run the harmless canary `echo rampart-canary`. With `rampart protect` active, the managed Guard denies it with a "Rampart canary" reason; if it just prints `rampart-canary`, the hook or the Guard is not loaded. `rampart setup` alone does not install the Guard, so the canary runs. Confirm you see the deny event in `rampart watch` and the audit log.
 
 ## Common Questions
 

@@ -29,7 +29,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
+	"unicode"
 )
 
 const EventSchemaVersion = "rampart.audit.v1"
@@ -98,6 +100,11 @@ type Event struct {
 	// Hash is the SHA-256 hash of this event (excluding the hash field itself).
 	// Computed by ComputeHash after all other fields are set.
 	Hash string `json:"hash"`
+
+	// hashUncovered is set when the decoded record carried content the hash
+	// cannot cover: a field the schema does not define, a repeated key, or a
+	// schema key in another letter case. VerifyHash then fails.
+	hashUncovered bool
 }
 
 // UnmarshalJSON preserves the numeric representation hashed by the writer.
@@ -105,11 +112,117 @@ type Event struct {
 // must avoid float64 rounding or exponent normalization in dynamic fields.
 // Previously rounded values remain exactly as stored; verification never
 // retries against a lossy representation of a different event.
+//
+// ComputeHash hashes the typed event, not the stored bytes, so a record is
+// marked hashUncovered when its bytes hold anything the typed event drops.
+// Dynamic request and approval-owner maps keep every key and stay covered.
 func (e *Event) UnmarshalJSON(data []byte) error {
 	type eventJSON Event
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	return decoder.Decode((*eventJSON)(e))
+	decode := func(strict bool) error {
+		*e = Event{}
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
+		if strict {
+			decoder.DisallowUnknownFields()
+		}
+		return decoder.Decode((*eventJSON)(e))
+	}
+	unknown := false
+	err := decode(true)
+	if err != nil && strings.HasPrefix(err.Error(), "json: unknown field ") {
+		unknown = true
+		err = decode(false)
+	}
+	if err != nil {
+		return err
+	}
+	e.hashUncovered = unknown || !eventKeysCanonical(data)
+	return nil
+}
+
+// eventKeysCanonical reports whether no JSON object in an event record
+// repeats a key and every schema-defined object uses the schema's lowercase
+// keys. encoding/json matches struct fields case-insensitively and keeps the
+// last duplicate, so either would let stored bytes differ from what was hashed
+// while other parsers read a different value. data must already have decoded
+// successfully, so it is valid JSON.
+func eventKeysCanonical(data []byte) bool {
+	const (
+		dynamic = iota
+		typed
+		typedValues // a map whose values are schema objects
+	)
+	type frame struct {
+		object    bool
+		kind      int
+		expectKey bool
+		child     int // kind of the value after the current key
+		keysFrom  int // this object's keys start here in keys
+	}
+	stack := make([]frame, 0, 8)
+	keys := make([][]byte, 0, 32)
+	for i := 0; i < len(data); i++ {
+		switch c := data[i]; c {
+		case '{', '[':
+			kind := typed // the record itself
+			if n := len(stack); n > 0 {
+				parent := &stack[n-1]
+				kind = dynamic
+				if parent.object {
+					kind = parent.child
+				}
+			}
+			stack = append(stack, frame{object: c == '{', kind: kind, expectKey: c == '{', keysFrom: len(keys)})
+		case '}', ']':
+			keys = keys[:stack[len(stack)-1].keysFrom]
+			stack = stack[:len(stack)-1]
+		case ',':
+			if top := &stack[len(stack)-1]; top.object {
+				top.expectKey = true
+			}
+		case '"':
+			start := i
+			escaped := false
+			for i++; data[i] != '"'; i++ {
+				if data[i] == '\\' {
+					escaped = true
+					i++
+				}
+			}
+			top := &stack[len(stack)-1]
+			if !top.object || !top.expectKey {
+				continue
+			}
+			top.expectKey = false
+			key := data[start+1 : i]
+			if escaped {
+				var decoded string
+				if json.Unmarshal(data[start:i+1], &decoded) != nil {
+					return false
+				}
+				key = []byte(decoded)
+			}
+			for _, seen := range keys[top.keysFrom:] {
+				if bytes.Equal(seen, key) {
+					return false
+				}
+			}
+			keys = append(keys, key)
+			if top.kind == typed && bytes.ContainsFunc(key, unicode.IsUpper) {
+				return false
+			}
+			top.child = dynamic
+			switch {
+			case top.kind == typedValues:
+				top.child = typed
+			case len(stack) == 1 && (string(key) == "host" || string(key) == "decision" || string(key) == "response"):
+				top.child = typed
+			case len(stack) == 1 && string(key) == "compacted_fields":
+				top.child = typedValues
+			}
+		}
+	}
+	return true
 }
 
 // FieldCompaction describes an audit field that was replaced, dropped, or
@@ -192,6 +305,9 @@ func (e *Event) ComputeHash() error {
 // VerifyHash checks whether the event's hash is correct.
 // Returns true if the hash matches the computed value.
 func (e *Event) VerifyHash() (bool, error) {
+	if e.hashUncovered {
+		return false, nil
+	}
 	expected := e.Hash
 
 	if err := e.ComputeHash(); err != nil {

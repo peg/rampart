@@ -773,7 +773,7 @@ func executedFileOperand(args []string, stdin string) string {
 				}
 				return stdin
 			}
-			if arg == "-o" || arg == "+o" {
+			if shellOptionTakesValue(arg) {
 				i++
 				continue
 			}
@@ -833,12 +833,15 @@ func literalShellPayload(args []string) (string, bool) {
 	}
 	for i := 1; i < len(args); i++ {
 		arg := args[i]
-		if arg == "-o" || arg == "+o" {
+		if shellOptionTakesValue(arg) {
 			if i+1 < len(args) && arg == "-o" && args[i+1] == "noexec" {
 				return "", true
 			}
 			i++
 			continue
+		}
+		if strings.HasPrefix(arg, "+") {
+			continue // +x and similar unset an option
 		}
 		if !strings.HasPrefix(arg, "-") || arg == "--" {
 			return "", false

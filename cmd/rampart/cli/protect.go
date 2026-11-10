@@ -37,7 +37,9 @@ func newProtectCmd(rootOpts *rootOptions) *cobra.Command {
 
 No policy file or rule authoring is required. Protect installs the native
 integration, starts Rampart's policy service, enables fail-closed behavior
-where the host supports it, and verifies the installed boundary. Native-hook integrations use
+on a new installation where the host supports it, and verifies the installed
+boundary. An existing Claude Code hook keeps its failure mode; setup reports
+how to change it. Native-hook integrations use
 non-destructive adapter canaries; OpenClaw exercises its live plugin path.
 
 Without an agent argument, Rampart detects installed supported agents and

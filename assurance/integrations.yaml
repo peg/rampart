@@ -1,6 +1,6 @@
 schema_version: rampart.assurance.v2
 baseline_release: v1.10.0
-reviewed_at: "2026-08-17"
+reviewed_at: "2026-11-09"
 
 # Version 2 uses the canonical Rampart command target as each integration id
 # and requires an explicit declaration of bare `rampart protect` eligibility.
@@ -213,6 +213,7 @@ integrations:
       - Rampart approval does not authorize Codex sandbox escalation or native permission requests; the host may require a separate approval.
       - Codex controls hook timeout behavior; a host timeout cannot be claimed fail-closed.
       - Physical Windows host ingestion remains unverified.
+      - Codex hook trust in /hooks and managed-layer allow_managed_hooks_only are not visible to Rampart; only the user config.toml setting is detected.
 
   - id: hermes
     display_name: Hermes Agent

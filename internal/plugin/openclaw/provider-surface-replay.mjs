@@ -279,6 +279,24 @@ for (const [name, params, context, expectedConsequence] of [
     'openclaw:external-message',
   ],
   [
+    'message-explicit-other-provider-is-external',
+    { action: 'send', channel: 'telegram', target: '12345', message: 'harmless marker' },
+    { ...ctx, channelId: '12345', messageProvider: 'discord' },
+    'openclaw:external-message',
+  ],
+  [
+    'message-explicit-provider-without-origin-is-external',
+    { action: 'send', channel: 'discord', target: '12345', message: 'harmless marker' },
+    { ...ctx, channelId: '12345', messageProvider: undefined, channel: undefined, requester: undefined },
+    'openclaw:external-message',
+  ],
+  [
+    'message-explicit-same-provider-is-reply',
+    { action: 'send', channel: 'Discord', target: 'channel:12345', message: 'Routine reply' },
+    { ...ctx, channelId: '12345', messageProvider: 'discord' },
+    'openclaw:routine-reply',
+  ],
+  [
     'message-read-is-read-only',
     { action: 'read', target: 'channel:12345' },
     { ...ctx, channelId: '12345', messageProvider: 'discord' },

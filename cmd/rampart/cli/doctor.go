@@ -16,8 +16,10 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
@@ -390,7 +392,7 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 			if issues > 1 {
 				noun = "issues"
 			}
-			fmt.Fprintf(w, "%d %s found. Each ✗ line above names the command that fixes it.\n", issues, noun)
+			fmt.Fprintf(w, "%d %s found. See the ✗ lines above.\n", issues, noun)
 		}
 		if warnings > 0 {
 			fmt.Fprintf(w, "%d warning(s) — not blocking but worth reviewing.\n", warnings)
@@ -594,10 +596,15 @@ func doctorPolicies(emit emitFn) int {
 	}
 	policyDir := filepath.Join(home, ".rampart", "policies")
 
+	// The hook and serve always load the built-in standard profile, so policy
+	// files are optional additions.
 	entries, err := os.ReadDir(policyDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		emit("Policy", "ok", "built-in standard profile (no files in "+policyDir+")")
+		return 0
+	}
 	if err != nil {
-		emit("Policy", "fail", fmt.Sprintf("%s (not found)", policyDir)+hintSep+
-			"rampart init --profile standard")
+		emit("Policy", "fail", fmt.Sprintf("%s (%s)", policyDir, err))
 		return 1
 	}
 
@@ -658,10 +665,7 @@ func doctorPolicies(emit emitFn) int {
 		}
 	}
 	if !found {
-		emit("Policy", "fail",
-			fmt.Sprintf("no .yaml files in %s", policyDir)+hintSep+
-				"rampart init --profile standard")
-		issues++
+		emit("Policy", "ok", "built-in standard profile (no files in "+policyDir+")")
 	}
 	return issues
 }
@@ -958,8 +962,12 @@ func doctorHooks(emit emitFn) (issues, warnings int) {
 	codexBinary, _ := exec.LookPath("codex")
 	if codexDirErr == nil || codexBinary != "" {
 		hooksPath := filepath.Join(codexDir, "hooks.json")
-		if codexHooksConfiguredForHome(home) {
-			emit("Hooks", "ok", "Codex (current PreToolUse and PostToolUse in hooks.json)")
+		if codexUserHooksDisabled(home) {
+			emit("Hooks", "fail", "Codex config.toml sets allow_managed_hooks_only = true, so Codex skips Rampart's hooks"+
+				hintSep+"remove that setting, or install Rampart as a managed Codex hook")
+			issues++
+		} else if codexHooksConfiguredForHome(home) {
+			emit("Hooks", "ok", "Codex (current PreToolUse and PostToolUse in hooks.json; trust in Codex /hooks not checked)")
 		} else {
 			n, w := doctorHookGap(emit, anyProtected, codexRampartIntegrationPresent(home), "Codex", "codex",
 				fmt.Sprintf("Codex lifecycle hooks missing, stale, incomplete, or unsafe (expected current Rampart hooks in %s)", hooksPath))
@@ -974,15 +982,15 @@ func doctorHooks(emit emitFn) (issues, warnings int) {
 // doctorHookGap reports an installed agent without current Rampart hooks and
 // returns the issue and warning counts. Rampart-owned hooks that no longer
 // match the current install are always a failure: the user believes that agent
-// is protected. So is a verification receipt for an agent whose hooks are now
-// gone: protect or verify recorded it as protected, and only
+// is protected. So is a setup record or verification receipt for an agent whose
+// hooks are now gone: setup, protect or verify recorded it as protected, and only
 // `rampart setup <agent> --remove` forgets that. With nothing protected it also
 // fails, so doctor never reports a healthy install that protects nothing.
 // Otherwise the agent was most likely never protected, and doctor warns.
 func doctorHookGap(emit emitFn, anyProtected, rampartOwned bool, name, id, failMsg string) (issues, warnings int) {
 	fix := hintSep + "rampart protect " + id
-	if !rampartOwned && hasVerificationReceipt(id) {
-		emit("Hooks", "fail", name+" was protected (verification receipt found) but its Rampart hooks are missing. "+
+	if !rampartOwned && integrationProtectionRecorded(id) {
+		emit("Hooks", "fail", name+" was protected (setup or verification record found) but its Rampart hooks are missing. "+
 			"Re-protect it, or run `rampart setup "+id+" --remove` if you removed it on purpose"+fix)
 		return 1, 0
 	}

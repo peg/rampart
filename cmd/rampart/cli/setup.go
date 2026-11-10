@@ -329,9 +329,10 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 
 			// Decide whether the PreToolUse hook fails closed. An existing
 			// enforcement hook keeps its current mode unless the user asks.
-			// Leftover Rampart Post hooks without a PreToolUse hook enforced
-			// nothing, so that case is planned as a fresh installation.
-			_, preToolUseInstalled := claudeRampartPreToolUseHook(settings)
+			// Leftover Rampart Post hooks, or a PreToolUse hook that Claude Code
+			// never waited for, enforced nothing, so those cases are planned as
+			// a fresh installation.
+			preToolUseInstalled := claudeRampartPreToolUseEnforced(settings)
 			failurePlan, err := planClaudeHookFailure(
 				hookFailure,
 				preToolUseInstalled,
@@ -343,6 +344,9 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			}
 			if claudeHooksUseCommand(settings, hookCommand) && !force &&
 				failurePlan.Block == claudePreToolUseBlocksOnFailure(settings) {
+				if err := recordIntegrationSetup("claude-code"); err != nil {
+					return fmt.Errorf("setup: %w", err)
+				}
 				fmt.Fprintln(cmd.OutOrStdout(), "Rampart hook already configured in Claude Code settings.")
 				if failurePlan.Notice != "" {
 					fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", failurePlan.Notice)
@@ -439,6 +443,9 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			if err := atomicWritePrivateFile(settingsPath, data); err != nil {
 				return fmt.Errorf("setup: write settings: %w", err)
 			}
+			if err := recordIntegrationSetup("claude-code"); err != nil {
+				return fmt.Errorf("setup: %w", err)
+			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ Rampart hook installed in %s\n", settingsPath)
 			fmt.Fprintf(cmd.OutOrStdout(), "  Hook command: %s\n", hookCommand)
@@ -466,9 +473,6 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			}
 
 			fmt.Fprintln(cmd.OutOrStdout(), "Tip: export RAMPART_SESSION=my-project in your shell profile to tag audit events with a project name.")
-			if !hasInstalledPolicy() {
-				fmt.Fprintln(cmd.OutOrStdout(), "💡 No policy found — run 'rampart init --profile standard' to install the standard policy")
-			}
 
 			// Check if rampart is in system PATH.
 			if _, err := execLookPath("rampart"); err != nil {

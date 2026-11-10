@@ -43,6 +43,15 @@ func TestStandardPolicyDecisions(t *testing.T) {
 	}{
 		// Must block (deny)
 		{name: "deny rm root", tool: "exec", command: "rm -rf /", expected: engine.ActionDeny},
+		// Wrapper options are skipped, not taken as the end of the wrapper.
+		{name: "deny bash option value before -c", tool: "exec", command: "bash -O extglob -c 'rm -rf /'", expected: engine.ActionDeny},
+		{name: "deny bash rcfile before -c", tool: "exec", command: "bash --rcfile /dev/null -c 'rm -rf /'", expected: engine.ActionDeny},
+		{name: "deny env option cluster", tool: "exec", command: "env -iu X rm -rf /", expected: engine.ActionDeny},
+		{name: "deny env altpath", tool: "exec", command: "env -i -P /bin rm -rf /", expected: engine.ActionDeny},
+		{name: "deny builtin exec", tool: "exec", command: "builtin exec rm -rf /", expected: engine.ActionDeny},
+		{name: "deny time subshell", tool: "exec", command: "time ( rm -rf / )", expected: engine.ActionDeny},
+		{name: "allow bash option value with safe script", tool: "exec", command: "bash -O extglob -c 'echo hi'", expected: engine.ActionAllow},
+		{name: "allow time subshell tests", tool: "exec", command: "time ( go test ./... )", expected: engine.ActionAllow},
 		{name: "deny rm home", tool: "exec", command: "rm -rf /home", expected: engine.ActionDeny},
 		{name: "deny rm HOME", tool: "exec", command: "rm -rf $HOME", expected: engine.ActionDeny},
 		{name: "deny rm braced HOME", tool: "exec", command: "rm -rf ${HOME}", expected: engine.ActionDeny},
@@ -195,7 +204,37 @@ func TestStandardPolicyDecisions(t *testing.T) {
 		{name: "allow rsync excluding .rampart", tool: "exec", command: "rsync -a src/ dst/ --exclude .rampart", expected: engine.ActionAllow},
 		{name: "allow sed print .rampart pattern", tool: "exec", command: `sed -n '/\.rampart/p' README.md`, expected: engine.ActionAllow},
 		{name: "allow cp with .rampart comment", tool: "exec", command: "cp README.md docs/ # .rampart", expected: engine.ActionAllow},
-		{name: "allow time go test", tool: "exec", command: "time go test ./...", expected: engine.ActionAllow},
+		// A quoted or escaped "#" is an operand, not a comment.
+		{name: "deny cp after quoted hash", tool: "exec", command: "cp '#' ~/.rampart/policies/guard.yaml", expected: engine.ActionDeny},
+		{name: "deny truncate after escaped hash", tool: "exec", command: `truncate -s0 \# ~/.rampart/policies/guard.yaml`, expected: engine.ActionDeny},
+		// Target directories given as options, and modes that change every operand.
+		{name: "deny cp long target directory", tool: "exec", command: `cp x.yaml --target-directory="$HOME/.rampart/policies"`, expected: engine.ActionDeny},
+		{name: "deny mv attached target directory", tool: "exec", command: "mv -t/home/alice/.rampart/policies x.yaml", expected: engine.ActionDeny},
+		{name: "deny install -d under .rampart", tool: "exec", command: "install -d ~/.rampart/policies/extra", expected: engine.ActionDeny},
+		{name: "deny rsync removing .rampart sources", tool: "exec", command: "rsync -a --remove-source-files ~/.rampart/policies/ /tmp/p/", expected: engine.ActionDeny},
+		{name: "deny find exec rm in .rampart", tool: "exec", command: "find ~/.rampart -type f -exec rm {} +", expected: engine.ActionDeny},
+		// An in-place edit changes its files, not its script.
+		{name: "deny bsd sed in-place .rampart", tool: "exec", command: "sed -i '' 's/ask/allow/' ~/.rampart/policies/standard.yaml", expected: engine.ActionDeny},
+		{name: "deny sed expression in-place .rampart", tool: "exec", command: "sed -i -e 's/ask/allow/' ~/.rampart/policies/standard.yaml", expected: engine.ActionDeny},
+		{name: "allow sed in-place script naming .rampart", tool: "exec", command: "sed -i 's|/home/u/.rampart/|~/.rampart/|g' docs/install.md", expected: engine.ActionAllow},
+		{name: "allow perl in-place script naming .rampart", tool: "exec", command: "perl -pi -e 's|/.rampart/old|/.rampart/new|g' docs/guide.md", expected: engine.ActionAllow},
+		{name: "allow perl module read of .rampart", tool: "exec", command: "perl -Mstrict -ne 'print if /deny/' ~/.rampart/audit/today.jsonl", expected: engine.ActionAllow},
+		{name: "deny bsd sed -I .rampart", tool: "exec", command: "sed -I '' 's/ask/allow/' ~/.rampart/policies/standard.yaml", expected: engine.ActionDeny},
+		// Redirections and assignments may come before the command word.
+		{name: "deny leading redirect before rm .rampart", tool: "exec", command: "2>/dev/null rm ~/.rampart/policies/standard.yaml", expected: engine.ActionDeny},
+		{name: "deny assignment and redirect before chmod .rampart", tool: "exec", command: "X=1 < /dev/null chmod 777 ~/.rampart/policies", expected: engine.ActionDeny},
+		// A redirection written against an operand does not hide it.
+		{name: "deny rm .rampart with attached redirect", tool: "exec", command: "rm -r ~/.rampart>/dev/null", expected: engine.ActionDeny},
+		{name: "deny wrapper then redirect before rm .rampart", tool: "exec", command: "nice 2>/dev/null rm -r ~/.rampart", expected: engine.ActionDeny},
+		{name: "deny rm root with attached redirect", tool: "exec", command: "rm -rf />/dev/null", expected: engine.ActionDeny},
+		{name: "allow cp out of .rampart with redirect", tool: "exec", command: "cp ~/.rampart/policies/standard.yaml /tmp/b.yaml 2>/dev/null", expected: engine.ActionAllow},
+		// A line that is only a comment is not a command.
+		{name: "allow comment line before command", tool: "exec", command: "# run the tests\ngo test ./...", expected: engine.ActionAllow},
+		{name: "allow trailing comment component", tool: "exec", command: "echo a; # trailing note", expected: engine.ActionAllow},
+		// Copying out of .rampart changes only the destination.
+		{name: "allow cp policy out of .rampart", tool: "exec", command: "cp ~/.rampart/policies/standard.yaml /tmp/b.yaml", expected: engine.ActionAllow},
+		{name: "allow rsync backup of .rampart", tool: "exec", command: "rsync -a ~/.rampart/policies/ /tmp/policies-backup/", expected: engine.ActionAllow},
+		{name: "allow find exec cp out of .rampart", tool: "exec", command: `find ~/.rampart/policies -name '*.yaml' -exec cp {} /tmp/p/ \;`, expected: engine.ActionAllow},
 		// Fix 4: Cron — cp/mv/install
 		{name: "deny cp to cron.d", tool: "exec", command: "cp /tmp/evil.cron /etc/cron.d/evil", expected: engine.ActionDeny},
 		{name: "deny mv to cron.d", tool: "exec", command: "mv /tmp/evil.cron /etc/cron.d/evil", expected: engine.ActionDeny},

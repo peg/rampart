@@ -323,6 +323,7 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 	cmd.Flags().BoolVar(&auditOpts.dryRun, "dry-run", false, "Preview generated policy without writing")
 	cmd.Flags().StringVar(&auditOpts.output, "output", "", "Output path for generated policy (default: ~/.rampart/policies/generated.yaml)")
 	cmd.Flags().BoolVar(&auditOpts.merge, "merge", false, "Merge into existing policy file instead of overwriting")
+	cmd.Flags().BoolVar(&auditOpts.allowUnverified, "allow-unverified", false, "With --from-audit, learn from audit history that fails or lacks hash verification")
 
 	return cmd
 }

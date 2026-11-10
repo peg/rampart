@@ -479,6 +479,24 @@ func TestDoctorHooksUnprotectedAgentWarnsOnceAnotherIsProtected(t *testing.T) {
 		}
 	})
 
+	t.Run("set up without verification, hooks file gone", func(t *testing.T) {
+		setup(t, true, "")
+		requireNoErr(t, testExecuteRoot(t, "setup", "codex"))
+		if hasVerificationReceipt("codex") {
+			t.Fatal("setup alone must not write a verification receipt")
+		}
+		requireNoErr(t, os.Remove(filepath.Join(os.Getenv("HOME"), ".codex", "hooks.json")))
+		issues, _, codex := codexStatus(t)
+		if issues != 1 || codex.Status != "fail" || !strings.Contains(codex.Message, "was protected") {
+			t.Fatalf("issues=%d codex=%+v, want hooks removed after setup to fail", issues, codex)
+		}
+		requireNoErr(t, testExecuteRoot(t, "setup", "codex", "--remove"))
+		issues, warnings, codex := codexStatus(t)
+		if issues != 0 || warnings != 1 || codex.Status != "warn" {
+			t.Fatalf("issues=%d warnings=%d codex=%+v, want a warning after --remove", issues, warnings, codex)
+		}
+	})
+
 	t.Run("nothing protected", func(t *testing.T) {
 		setup(t, false, "")
 		issues, _, codex := codexStatus(t)
@@ -486,6 +504,29 @@ func TestDoctorHooksUnprotectedAgentWarnsOnceAnotherIsProtected(t *testing.T) {
 			t.Fatalf("issues=%d codex=%+v, want a failure naming protect", issues, codex)
 		}
 	})
+}
+
+// The hook and serve use the built-in standard profile without policy files,
+// so their absence is not a failure.
+func TestDoctorPoliciesWithoutFilesUsesBuiltInProfile(t *testing.T) {
+	for name, setup := range map[string]func(dir string){
+		"no directory":  func(string) {},
+		"no yaml files": func(dir string) { requireNoErr(t, os.MkdirAll(dir, 0o755)) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			testSetHome(t, home)
+			setup(filepath.Join(home, ".rampart", "policies"))
+			var results []checkResult
+			issues := doctorPolicies(func(name, status, msg string) {
+				results = append(results, checkResult{Name: name, Status: status, Message: msg})
+			})
+			if issues != 0 || len(results) != 1 || results[0].Status != "ok" ||
+				!strings.Contains(results[0].Message, "built-in standard profile") {
+				t.Fatalf("issues=%d results=%+v, want one ok naming the built-in profile", issues, results)
+			}
+		})
+	}
 }
 
 func TestDoctorPolicies_EmptyCustomPlaceholderIsNotWarn(t *testing.T) {

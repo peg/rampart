@@ -478,6 +478,11 @@ func TestVerifyClaudeHooksReportsFailureMode(t *testing.T) {
 			if !strings.Contains(check.Message, tc.want) {
 				t.Errorf("message %q does not contain %q", check.Message, tc.want)
 			}
+			var human bytes.Buffer
+			printVerificationResult(&human, verificationReport{Checks: []verificationCheck{check}})
+			if !strings.Contains(human.String(), tc.want) {
+				t.Errorf("human report %q does not contain %q", human.String(), tc.want)
+			}
 		})
 	}
 }
@@ -603,5 +608,46 @@ func TestSetupClaudeCodeAutoKeepsFailClosedFromAnyDuplicateHook(t *testing.T) {
 		if hook["onFailure"] != "block" {
 			t.Fatalf("duplicate without onFailure weakened the installation: %#v", written["hooks"])
 		}
+	}
+}
+
+// A Rampart PreToolUse hook that Claude Code never waited for enforced
+// nothing, so setup plans it like a fresh install: fail closed when the
+// installed Claude Code supports it.
+func TestSetupClaudeCodeTreatsNonBlockingHookAsFreshInstall(t *testing.T) {
+	cases := map[string]map[string]any{
+		"async":       {"async": true},
+		"asyncRewake": {"asyncRewake": true},
+		"if":          {"if": "Bash(git *)"},
+	}
+	for name, extra := range cases {
+		t.Run(name, func(t *testing.T) {
+			home := claudeFailureTestHome(t)
+			stubClaudeVersion(t, claudeVersion{2, 1, 295}, true)
+			hook := map[string]any{"type": "command", "command": currentClaudeHookCommand()}
+			for key, value := range extra {
+				hook[key] = value
+			}
+			settings := map[string]any{"hooks": map[string]any{"PreToolUse": []any{
+				map[string]any{"matcher": ".*", "hooks": []any{hook}},
+			}}}
+			data, err := json.Marshal(settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := runClaudeSetup(t); err != nil {
+				t.Fatal(err)
+			}
+			got := rampartHookIn(t, readClaudeSettings(t, home), "PreToolUse")
+			if got["onFailure"] != "block" {
+				t.Fatalf("hook with %v kept fail-open: %#v", extra, got)
+			}
+		})
 	}
 }

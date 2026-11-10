@@ -106,7 +106,11 @@ file and is not unwrapped for allow rules), then checks compound command
 components independently. Deny and ask rules additionally see the command run by `xargs`
 and by `find -exec`/`-execdir`/`-ok`/`-okdir`, and treat each file a simple
 command writes or removes (redirection targets, file-utility operands, in-place
-edits) as `tee <target>`; these extra forms never grant an allow.
+edits) as `tee <target>`, so a custom deny or ask rule for `tee <path>` also
+matches those writes. Only the destination of a copy (`cp`, `install`, `ln`,
+`rsync`) counts. These extra forms never grant an allow. Heredoc lines are
+checked as commands, and arguments that `xargs` reads from standard input are
+not known.
 This is deliberate defense in depth, not a complete parser for every shell or
 an operating-system security boundary.
 

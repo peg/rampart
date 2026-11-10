@@ -304,7 +304,7 @@ function parseConversationTarget(value) {
   return { provider, id: target };
 }
 
-function sameConversation(target, ctx) {
+function sameConversation(target, explicitProvider, ctx) {
   const normalizedTarget = parseConversationTarget(target);
   if (!normalizedTarget.id) return false;
 
@@ -317,6 +317,14 @@ function sameConversation(target, ctx) {
     normalizedTarget.provider !== originProvider
   ) {
     return false;
+  }
+  // OpenClaw delivers through the explicit `channel` parameter when it is set,
+  // so an ID that matches the origin conversation can still belong to another
+  // provider. A reply needs that provider to match a known origin provider.
+  const destinationProvider = String(explicitProvider ?? "").trim().toLowerCase();
+  if (destinationProvider) {
+    if (!originProvider || destinationProvider !== originProvider) return false;
+    if (normalizedTarget.provider && normalizedTarget.provider !== destinationProvider) return false;
   }
 
   const candidates = [
@@ -345,7 +353,7 @@ function classifyMessageConsequence(params, ctx) {
     params?.recipient ??
     params?.destination;
 
-  if (ROUTINE_REPLY_ACTIONS.has(action) && sameConversation(target, ctx)) {
+  if (ROUTINE_REPLY_ACTIONS.has(action) && sameConversation(target, params?.channel, ctx)) {
     return "routine-reply";
   }
   if (ROUTINE_REPLY_ACTIONS.has(action) || action === "broadcast" || action === "poll") {
