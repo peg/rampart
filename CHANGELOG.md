@@ -51,6 +51,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the first test is now `echo rampart-canary`, which the managed Guard denies.
   The previous canary read a plausible SSH key path, which a host that never
   loaded the hook would have read.
+- **Audit hashes cover every stored field** — a record with a field the
+  schema does not define, a repeated key, or a schema key in another letter
+  case now fails `rampart audit verify` and every other hash check. Before, such
+  a record could be changed while its hash still verified.
+- **Malformed audit records are reported, not skipped silently** — `audit
+  tail`, `watch`, the dashboard and the HTML report warn about them; the
+  compliance report and export fail.
+- **`init --from-audit` learns only from verified history** — a directory must
+  pass `rampart audit verify` and a single file must have a valid hash on every
+  record, or no rules are generated. `--allow-unverified` opts out and marks the
+  generated policy.
+- **OpenClaw replies must stay on the originating provider** — a send whose
+  explicit `channel` names another provider, or names one when the origin
+  provider is unknown, needs approval even when its target ID matches the
+  originating conversation.
+- **Codex hooks that cannot run are not reported as installed** — `doctor` and
+  `verify` fail when the Rampart hook entry carries fields that change how
+  Codex runs it, such as `async`, or when the user `config.toml` sets
+  `allow_managed_hooks_only = true`. `rampart setup codex` repairs the entry.
+  Rampart cannot see whether you trusted the hooks in Codex `/hooks`, so it
+  reports them as configured, not active.
+- **Doctor remembers setup** — removing hooks that `rampart setup` installed is
+  now a failure even if verification never ran. `rampart setup <agent>
+  --remove` clears the record.
+- **Release images are built from the tagged commit and published as tested** —
+  the container workflow checks out the release commit, re-checks the tag
+  before publishing, pins its base images by digest, and publishes only the
+  digest that passed the smoke test.
 
 ### Added
 
