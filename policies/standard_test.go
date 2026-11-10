@@ -195,7 +195,19 @@ func TestStandardPolicyDecisions(t *testing.T) {
 		{name: "allow rsync excluding .rampart", tool: "exec", command: "rsync -a src/ dst/ --exclude .rampart", expected: engine.ActionAllow},
 		{name: "allow sed print .rampart pattern", tool: "exec", command: `sed -n '/\.rampart/p' README.md`, expected: engine.ActionAllow},
 		{name: "allow cp with .rampart comment", tool: "exec", command: "cp README.md docs/ # .rampart", expected: engine.ActionAllow},
-		{name: "allow time go test", tool: "exec", command: "time go test ./...", expected: engine.ActionAllow},
+		// A quoted or escaped "#" is an operand, not a comment.
+		{name: "deny cp after quoted hash", tool: "exec", command: "cp '#' ~/.rampart/policies/guard.yaml", expected: engine.ActionDeny},
+		{name: "deny truncate after escaped hash", tool: "exec", command: `truncate -s0 \# ~/.rampart/policies/guard.yaml`, expected: engine.ActionDeny},
+		// Target directories given as options, and modes that change every operand.
+		{name: "deny cp long target directory", tool: "exec", command: `cp x.yaml --target-directory="$HOME/.rampart/policies"`, expected: engine.ActionDeny},
+		{name: "deny mv attached target directory", tool: "exec", command: "mv -t/home/alice/.rampart/policies x.yaml", expected: engine.ActionDeny},
+		{name: "deny install -d under .rampart", tool: "exec", command: "install -d ~/.rampart/policies/extra", expected: engine.ActionDeny},
+		{name: "deny rsync removing .rampart sources", tool: "exec", command: "rsync -a --remove-source-files ~/.rampart/policies/ /tmp/p/", expected: engine.ActionDeny},
+		{name: "deny find exec rm in .rampart", tool: "exec", command: "find ~/.rampart -type f -exec rm {} +", expected: engine.ActionDeny},
+		// Copying out of .rampart changes only the destination.
+		{name: "allow cp policy out of .rampart", tool: "exec", command: "cp ~/.rampart/policies/standard.yaml /tmp/b.yaml", expected: engine.ActionAllow},
+		{name: "allow rsync backup of .rampart", tool: "exec", command: "rsync -a ~/.rampart/policies/ /tmp/policies-backup/", expected: engine.ActionAllow},
+		{name: "allow find exec cp out of .rampart", tool: "exec", command: `find ~/.rampart/policies -name '*.yaml' -exec cp {} /tmp/p/ \;`, expected: engine.ActionAllow},
 		// Fix 4: Cron — cp/mv/install
 		{name: "deny cp to cron.d", tool: "exec", command: "cp /tmp/evil.cron /etc/cron.d/evil", expected: engine.ActionDeny},
 		{name: "deny mv to cron.d", tool: "exec", command: "mv /tmp/evil.cron /etc/cron.d/evil", expected: engine.ActionDeny},

@@ -859,9 +859,11 @@ func restrictiveCommandCandidates(command string) ([]string, bool) {
 		// their own right, so an operand of one never borrows another's verb.
 		writes := redirectWriteTargets(tokenizeForOS(maskLiteralRedirects(candidate), "posix"))
 		if len(SplitCompoundCommand(candidate)) <= 1 {
-			raw := stripLeadingEnvAssignments(tokenizeForOS(candidate, "posix"))
+			// Comments are found in the quoted text, so a quoted or escaped
+			// "#" operand is still an operand.
+			raw := stripLeadingEnvAssignments(tokenizeForOS(stripUnquotedShellComment(candidate), "posix"))
 			writes = append(writes, executorWriteTargets(raw)...)
-			writes = append(writes, pathChangeTargets(tokens)...)
+			writes = append(writes, pathChangeTargets(unwrapRestrictiveExecutor(raw))...)
 		}
 		for _, target := range writes {
 			appendCandidate("tee "+joinPOSIXWords([]string{target}), depth+1)
@@ -1223,27 +1225,48 @@ var pathChangingUtilities = map[string]bool{
 	"chgrp": true, "chflags": true, "rsync": true, "tee": true, "cd": true, "pushd": true,
 }
 
+// copyingUtilities change only their destination: the last operand, or the
+// directory named by -t/--target-directory. Their sources are only read.
+var copyingUtilities = map[string]bool{"cp": true, "install": true, "ln": true, "rsync": true}
+
+// shortOptionValues lists, per utility, the short options that take a value,
+// either the rest of the option cluster or the next word.
+var shortOptionValues = map[string]string{
+	"cp": "St", "mv": "St", "ln": "St", "install": "BSgmot", "rsync": "efT",
+}
+
 // rsyncOptionValues lists rsync options whose next word is a pattern or
 // command rather than a path rsync changes.
 var rsyncOptionValues = map[string]bool{
-	"--exclude": true, "--include": true, "--filter": true, "-f": true, "--exclude-from": true,
-	"--include-from": true, "-e": true, "--rsh": true, "--rsync-path": true,
+	"--exclude": true, "--include": true, "--filter": true, "--exclude-from": true,
+	"--include-from": true, "--rsh": true, "--rsync-path": true,
+}
+
+// rsyncWriteOptions are rsync options whose value is a path rsync writes.
+var rsyncWriteOptions = map[string]bool{
+	"--backup-dir": true, "--log-file": true, "--write-batch": true, "--only-write-batch": true,
+	"--temp-dir": true, "--partial-dir": true,
 }
 
 // pathChangeTargets returns the operands a simple command may change. It is
 // lenient in the restrictive direction: an operand it cannot rule out is
-// returned, and the caller only uses the result for deny and ask rules.
+// returned, and the caller only uses the result for deny and ask rules. The
+// tokens must already have shell comments removed.
 func pathChangeTargets(tokens []string) []string {
 	if len(tokens) < 2 {
 		return nil
 	}
-	for i, token := range tokens {
-		if strings.HasPrefix(token, "#") {
-			tokens = tokens[:i] // an unquoted # starts a shell comment
-			break
-		}
-	}
 	head := shellWrapperBasename(tokens[0])
+	var targetDirs []string // -t/--target-directory values
+	var optionWrites []string
+	allOperands := false // a mode in which every operand changes
+	optionValue := func(i *int, value string, attached bool) string {
+		if !attached && *i+1 < len(tokens) {
+			*i++
+			return tokens[*i]
+		}
+		return value
+	}
 	operands := func() []string {
 		var out []string
 		options := true
@@ -1252,9 +1275,35 @@ func pathChangeTargets(tokens []string) []string {
 			switch {
 			case options && token == "--":
 				options = false
-			case options && head == "rsync" && rsyncOptionValues[token]:
-				i++
+			case options && strings.HasPrefix(token, "--"):
+				name, value, attached := strings.Cut(token, "=")
+				switch {
+				case name == "--target-directory" && head != "rsync":
+					targetDirs = append(targetDirs, optionValue(&i, value, attached))
+				case head == "rsync" && rsyncWriteOptions[name]:
+					optionWrites = append(optionWrites, optionValue(&i, value, attached))
+				case head == "rsync" && name == "--remove-source-files", head == "install" && name == "--directory":
+					allOperands = true
+				case head == "rsync" && rsyncOptionValues[name]:
+					optionValue(&i, value, attached)
+				}
 			case options && strings.HasPrefix(token, "-") && len(token) > 1:
+				for at, flag := range token[1:] {
+					if head == "install" && flag == 'd' {
+						allOperands = true // install -d creates every operand
+					}
+					if !strings.ContainsRune(shortOptionValues[head], flag) {
+						continue
+					}
+					value := optionValue(&i, token[2+at:], token[2+at:] != "")
+					switch {
+					case flag == 't':
+						targetDirs = append(targetDirs, value)
+					case head == "rsync" && flag == 'T':
+						optionWrites = append(optionWrites, value)
+					}
+					break
+				}
 			default:
 				out = append(out, token)
 			}
@@ -1290,6 +1339,17 @@ func pathChangeTargets(tokens []string) []string {
 				if i+1 < len(tokens) {
 					out = append(out, tokens[i+1])
 				}
+			case "-exec", "-execdir", "-ok", "-okdir":
+				end := i + 1
+				for end < len(tokens) && tokens[end] != ";" && tokens[end] != "+" {
+					end++
+				}
+				// An action that changes the found path changes the tree
+				// under every starting point.
+				for _, target := range pathChangeTargets(unwrapRestrictiveExecutor(tokens[i+1 : end])) {
+					changes = changes || strings.Contains(target, "{}")
+				}
+				i = end
 			}
 		}
 		if changes {
@@ -1297,15 +1357,22 @@ func pathChangeTargets(tokens []string) []string {
 				if strings.HasPrefix(token, "-") || token == "(" || token == "!" {
 					break
 				}
-				out = append(out, token) // starting points that -delete may remove
+				out = append(out, token) // starting points the actions may change
 			}
 		}
 		return out
 	}
-	if pathChangingUtilities[head] {
-		return operands()
+	if !pathChangingUtilities[head] {
+		return nil
 	}
-	return nil
+	out := operands()
+	switch {
+	case copyingUtilities[head] && !allOperands && len(targetDirs) > 0:
+		out = nil
+	case copyingUtilities[head] && !allOperands && len(out) > 0:
+		out = out[len(out)-1:]
+	}
+	return append(append(out, targetDirs...), optionWrites...)
 }
 
 // xargsCommandStart returns the index of the utility xargs runs, or 0 when
