@@ -390,7 +390,7 @@ rampart init --from-audit ~/.rampart/audit/ --dry-run           # Preview withou
 rampart init --from-audit ~/.rampart/audit/ --output policy.yaml  # Custom output path
 ```
 
-Only allowed events are used for rule generation — denied events represent behavior you don't want to codify.
+Only allowed events are used for rule generation — denied events represent behavior you don't want to codify. The history must pass hash verification first; `--allow-unverified` skips that and marks the generated policy.
 
 ## Service Management
 

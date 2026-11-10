@@ -3,8 +3,11 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,7 +20,7 @@ func writeTestAuditFile(t *testing.T, dir string, events []audit.Event) string {
 	t.Helper()
 	path := filepath.Join(dir, "audit.jsonl")
 	var buf bytes.Buffer
-	for _, e := range events {
+	for _, e := range chainTestEvents(t, "", events) {
 		data, err := json.Marshal(e)
 		require.NoError(t, err)
 		buf.Write(data)
@@ -25,6 +28,23 @@ func writeTestAuditFile(t *testing.T, dir string, events []audit.Event) string {
 	}
 	require.NoError(t, os.WriteFile(path, buf.Bytes(), 0o644))
 	return path
+}
+
+var testAuditEventSeq atomic.Int64
+
+// chainTestEvents gives events unique IDs and a valid hash chain that
+// continues from prevHash, as the audit writer would.
+func chainTestEvents(t *testing.T, prevHash string, events []audit.Event) []audit.Event {
+	t.Helper()
+	chained := make([]audit.Event, len(events))
+	for i, e := range events {
+		e.ID = fmt.Sprintf("%s-%d", e.ID, testAuditEventSeq.Add(1))
+		e.PrevHash = prevHash
+		require.NoError(t, e.ComputeHash())
+		prevHash = e.Hash
+		chained[i] = e
+	}
+	return chained
 }
 
 func makeTestEvent(tool, command, path, action string, ts time.Time) audit.Event {
@@ -210,11 +230,11 @@ func TestInitFromAudit_Directory(t *testing.T) {
 	now := time.Now().UTC()
 
 	// Write two separate JSONL files.
-	e1 := makeTestEvent("exec", "git status", "", "allow", now)
+	e1 := chainTestEvents(t, "", []audit.Event{makeTestEvent("exec", "git status", "", "allow", now)})[0]
 	d1, _ := json.Marshal(e1)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "audit1.jsonl"), append(d1, '\n'), 0o644))
 
-	e2 := makeTestEvent("exec", "go test ./...", "", "allow", now)
+	e2 := chainTestEvents(t, e1.Hash, []audit.Event{makeTestEvent("exec", "go test ./...", "", "allow", now)})[0]
 	d2, _ := json.Marshal(e2)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "audit2.jsonl"), append(d2, '\n'), 0o644))
 
@@ -232,4 +252,72 @@ func TestInitFromAudit_Directory(t *testing.T) {
 	content := string(data)
 	assert.Contains(t, content, "git status")
 	assert.Contains(t, content, "go test*")
+}
+
+// History that fails verification must never become allow rules unless the
+// operator opts in, and then the policy says so.
+func TestInitFromAudit_RejectsUnverifiedHistory(t *testing.T) {
+	now := time.Now().UTC()
+	valid := chainTestEvents(t, "", []audit.Event{
+		makeTestEvent("exec", "git status", "", "allow", now),
+		makeTestEvent("exec", "go test ./...", "", "allow", now),
+	})
+	encode := func(events ...audit.Event) string {
+		var lines []string
+		for _, e := range events {
+			data, err := json.Marshal(e)
+			require.NoError(t, err)
+			lines = append(lines, string(data))
+		}
+		return strings.Join(lines, "\n") + "\n"
+	}
+	forged := valid[1]
+	forged.Request = map[string]any{"command": "rampart setup claude-code --remove"}
+	clean := encode(valid...)
+
+	for name, content := range map[string]string{
+		"forged record":    encode(valid[0], forged),
+		"unhashed record":  encode(makeTestEvent("exec", "git status", "", "allow", now)),
+		"malformed record": clean + "{\"id\":\"broken\",\n",
+		"unknown field":    strings.Replace(clean, `"tool":"exec"`, `"tool":"exec","note":"x"`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, asDir := range []bool{false, true} {
+				dir := t.TempDir()
+				path := filepath.Join(dir, "audit.jsonl")
+				require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+				source := path
+				if asDir {
+					source = dir
+				}
+				output := filepath.Join(t.TempDir(), "generated.yaml")
+				var buf bytes.Buffer
+				err := runInitFromAudit(&buf, fromAuditOptions{auditPath: source, output: output})
+				require.Error(t, err, "dir=%v", asDir)
+				assert.Contains(t, err.Error(), "--allow-unverified")
+				assert.NoFileExists(t, output)
+			}
+		})
+	}
+
+	t.Run("broken linkage across files", func(t *testing.T) {
+		dir := t.TempDir()
+		first := chainTestEvents(t, "", []audit.Event{makeTestEvent("exec", "git status", "", "allow", now)})
+		second := chainTestEvents(t, "", []audit.Event{makeTestEvent("exec", "go test ./...", "", "allow", now)})
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "audit1.jsonl"), []byte(encode(first...)), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "audit2.jsonl"), []byte(encode(second...)), 0o600))
+		var buf bytes.Buffer
+		err := runInitFromAudit(&buf, fromAuditOptions{auditPath: dir, dryRun: true})
+		require.Error(t, err)
+		assert.NotContains(t, buf.String(), "go test")
+	})
+
+	t.Run("allow-unverified opts in and marks the policy", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "audit.jsonl")
+		require.NoError(t, os.WriteFile(path, []byte(encode(valid[0], forged)), 0o600))
+		var buf bytes.Buffer
+		require.NoError(t, runInitFromAudit(&buf, fromAuditOptions{auditPath: path, dryRun: true, allowUnverified: true}))
+		assert.Contains(t, buf.String(), "WARNING: generated from audit history that was not verified")
+	})
 }
