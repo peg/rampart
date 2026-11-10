@@ -479,6 +479,24 @@ func TestDoctorHooksUnprotectedAgentWarnsOnceAnotherIsProtected(t *testing.T) {
 		}
 	})
 
+	t.Run("set up without verification, hooks file gone", func(t *testing.T) {
+		setup(t, true, "")
+		requireNoErr(t, testExecuteRoot(t, "setup", "codex"))
+		if hasVerificationReceipt("codex") {
+			t.Fatal("setup alone must not write a verification receipt")
+		}
+		requireNoErr(t, os.Remove(filepath.Join(os.Getenv("HOME"), ".codex", "hooks.json")))
+		issues, _, codex := codexStatus(t)
+		if issues != 1 || codex.Status != "fail" || !strings.Contains(codex.Message, "was protected") {
+			t.Fatalf("issues=%d codex=%+v, want hooks removed after setup to fail", issues, codex)
+		}
+		requireNoErr(t, testExecuteRoot(t, "setup", "codex", "--remove"))
+		issues, warnings, codex := codexStatus(t)
+		if issues != 0 || warnings != 1 || codex.Status != "warn" {
+			t.Fatalf("issues=%d warnings=%d codex=%+v, want a warning after --remove", issues, warnings, codex)
+		}
+	})
+
 	t.Run("nothing protected", func(t *testing.T) {
 		setup(t, false, "")
 		issues, _, codex := codexStatus(t)

@@ -982,15 +982,15 @@ func doctorHooks(emit emitFn) (issues, warnings int) {
 // doctorHookGap reports an installed agent without current Rampart hooks and
 // returns the issue and warning counts. Rampart-owned hooks that no longer
 // match the current install are always a failure: the user believes that agent
-// is protected. So is a verification receipt for an agent whose hooks are now
-// gone: protect or verify recorded it as protected, and only
+// is protected. So is a setup record or verification receipt for an agent whose
+// hooks are now gone: setup, protect or verify recorded it as protected, and only
 // `rampart setup <agent> --remove` forgets that. With nothing protected it also
 // fails, so doctor never reports a healthy install that protects nothing.
 // Otherwise the agent was most likely never protected, and doctor warns.
 func doctorHookGap(emit emitFn, anyProtected, rampartOwned bool, name, id, failMsg string) (issues, warnings int) {
 	fix := hintSep + "rampart protect " + id
-	if !rampartOwned && hasVerificationReceipt(id) {
-		emit("Hooks", "fail", name+" was protected (verification receipt found) but its Rampart hooks are missing. "+
+	if !rampartOwned && integrationProtectionRecorded(id) {
+		emit("Hooks", "fail", name+" was protected (setup or verification record found) but its Rampart hooks are missing. "+
 			"Re-protect it, or run `rampart setup "+id+" --remove` if you removed it on purpose"+fix)
 		return 1, 0
 	}

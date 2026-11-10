@@ -79,6 +79,13 @@ Use --remove to uninstall Rampart-managed hook files.`,
 			if err != nil {
 				return err
 			}
+			// Doctor checks only the user-level hook directories, so only
+			// that install is recorded.
+			if installScope == "user-level" {
+				if err := recordIntegrationSetup("cline"); err != nil {
+					return fmt.Errorf("setup cline: %w", err)
+				}
+			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ Cline hooks installed (%s)\n", installScope)
 			fmt.Fprintf(cmd.OutOrStdout(), "  PreToolUse:  %s\n", paths[0])

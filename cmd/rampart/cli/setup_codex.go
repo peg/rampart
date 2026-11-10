@@ -109,6 +109,9 @@ Run 'rampart setup codex --remove' to uninstall.`,
 			if err := installCodexHooks(hooksPath, hookCommand, hookCommandWindows, force); err != nil {
 				return err
 			}
+			if err := recordIntegrationSetup("codex"); err != nil {
+				return fmt.Errorf("setup codex: %w", err)
+			}
 			removedWrapper, err := removeManagedCodexWrapper(wrapperPath)
 			if err != nil {
 				return err

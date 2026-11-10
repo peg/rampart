@@ -154,6 +154,15 @@ func writeVerificationReceipt(report verificationReport) error {
 	if err != nil {
 		return err
 	}
+	if err := writeVerificationStateFile(path, append(data, '\n')); err != nil {
+		return fmt.Errorf("write verification receipt: %w", err)
+	}
+	return nil
+}
+
+// writeVerificationStateFile atomically writes a private file in the
+// verification state directory, refusing symlinked or non-regular targets.
+func writeVerificationStateFile(path string, data []byte) error {
 	verificationDir := filepath.Dir(path)
 	if info, statErr := os.Lstat(verificationDir); statErr == nil {
 		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
@@ -166,12 +175,31 @@ func writeVerificationReceipt(report verificationReport) error {
 		return fmt.Errorf("inspect verification receipt directory: %w", statErr)
 	}
 	if info, statErr := os.Lstat(path); statErr == nil && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
-		return fmt.Errorf("verification receipt path is not a regular file")
+		return fmt.Errorf("%s is not a regular file", path)
 	} else if statErr != nil && !os.IsNotExist(statErr) {
-		return fmt.Errorf("inspect verification receipt: %w", statErr)
+		return fmt.Errorf("inspect %s: %w", path, statErr)
 	}
-	if err := atomicWriteRecoverablePrivateFile(path, append(data, '\n')); err != nil {
-		return fmt.Errorf("write verification receipt: %w", err)
+	return atomicWriteRecoverablePrivateFile(path, data)
+}
+
+func integrationSetupMarkerPath(integrationID string) (string, error) {
+	receipt, err := verificationReceiptPath(integrationID)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(receipt, ".json") + ".setup", nil
+}
+
+// recordIntegrationSetup notes that setup installed this integration's hooks,
+// so doctor can tell hooks that were removed from hooks that never existed even
+// when verification never ran. `rampart setup <agent> --remove` clears it.
+func recordIntegrationSetup(integrationID string) error {
+	path, err := integrationSetupMarkerPath(integrationID)
+	if err != nil {
+		return err
+	}
+	if err := writeVerificationStateFile(path, []byte(integrationID+"\n")); err != nil {
+		return fmt.Errorf("record %s setup: %w", integrationID, err)
 	}
 	return nil
 }
@@ -189,7 +217,22 @@ func hasVerificationReceipt(integrationID string) bool {
 	return err == nil
 }
 
-// clearVerificationReceipt forgets an integration's receipt when the user
+// integrationProtectionRecorded reports whether setup, protect or verify has
+// recorded this integration as protected on this machine.
+func integrationProtectionRecorded(integrationID string) bool {
+	if hasVerificationReceipt(integrationID) {
+		return true
+	}
+	path, err := integrationSetupMarkerPath(integrationID)
+	if err != nil {
+		return false
+	}
+	_, err = os.Lstat(path)
+	return err == nil
+}
+
+// clearVerificationReceipt forgets an integration's receipt and setup record
+// when the user
 // deliberately removes that integration, so doctor stops expecting it.
 func clearVerificationReceipt(integrationID string) error {
 	path, err := verificationReceiptPath(integrationID)
@@ -198,6 +241,13 @@ func clearVerificationReceipt(integrationID string) error {
 	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove verification receipt: %w", err)
+	}
+	marker, err := integrationSetupMarkerPath(integrationID)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(marker); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove setup record: %w", err)
 	}
 	return nil
 }

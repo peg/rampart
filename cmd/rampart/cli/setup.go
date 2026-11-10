@@ -344,6 +344,9 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			}
 			if claudeHooksUseCommand(settings, hookCommand) && !force &&
 				failurePlan.Block == claudePreToolUseBlocksOnFailure(settings) {
+				if err := recordIntegrationSetup("claude-code"); err != nil {
+					return fmt.Errorf("setup: %w", err)
+				}
 				fmt.Fprintln(cmd.OutOrStdout(), "Rampart hook already configured in Claude Code settings.")
 				if failurePlan.Notice != "" {
 					fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", failurePlan.Notice)
@@ -439,6 +442,9 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 
 			if err := atomicWritePrivateFile(settingsPath, data); err != nil {
 				return fmt.Errorf("setup: write settings: %w", err)
+			}
+			if err := recordIntegrationSetup("claude-code"); err != nil {
+				return fmt.Errorf("setup: %w", err)
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ Rampart hook installed in %s\n", settingsPath)
