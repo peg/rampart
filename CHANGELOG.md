@@ -15,19 +15,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   standard and OpenClaw profiles now deny a simple shell command that changes a
   `.rampart` path through an output redirection, a file utility such as `rm`,
   `cp`, `mv`, `ln`, `mkdir`, `truncate` or `chmod`, an in-place `sed` or `perl`
-  edit, `dd of=`, `find -delete`, `cd`, `env -C` or `time -o`, so an agent
-  cannot remove or replace the managed Guard policy that way. This is a deny
-  list, not a complete boundary: a glob or variable that stands in for the
-  `.rampart` name, and utilities it does not know, are not covered. Reading or mentioning `.rampart`
-  (`cat`, `ls`, `grep`, commit messages) and files such as `.rampartrc` are
-  not affected.
+  edit, `dd of=`, `find -delete`, `cd`, `pushd`, `env -C` or `time -o`, so an
+  agent cannot remove or replace the managed Guard policy that way. Only the
+  destination of `cp`, `install`, `ln` and `rsync` counts, so copying a policy
+  out of `.rampart` is allowed. This is a deny list, not a complete boundary: a
+  glob or variable that stands in for the `.rampart` name, and utilities it
+  does not know, are not covered. Reading or mentioning `.rampart` (`cat`,
+  `ls`, `grep`, commit messages) and files such as `.rampartrc` are not
+  affected, but heredoc lines are checked as commands, so a heredoc line that
+  is itself such a command is denied.
+- **Custom `tee` rules also match the same writes made other ways** — a deny or
+  ask rule for `tee <path>` now also matches a redirection to `<path>` and the
+  file utilities above changing it. Review custom `tee` rules for new matches.
 - **Launchers no longer hide the command they run** — `time` is unwrapped like
   `env` and `nohup`, so `time <command>` gets the decision of `<command>`.
   When `time` writes an output file (`-o`/`--output`) it is not unwrapped for
   allow rules, and the output file is checked as a write. The commands run by
   `xargs` (including `-I`, `-J` and `--replace`) and by `find -exec`,
   `-execdir`, `-ok` and `-okdir` are checked by deny and ask rules. These
-  payloads never create a new allow.
+  payloads never create a new allow. Arguments that `xargs` reads from
+  standard input are not known to Rampart.
+- **Shell wrappers are unwrapped through more of their options** — a shell
+  option that takes a value (`bash -O extglob -c`, `--rcfile FILE`), a cluster
+  of `env` options (`env -iu NAME`, `env -P PATH`), `builtin`, and `time` before
+  a `( … )` or `{ … }` group no longer hide the command they run. A
+  redirection written against an operand (`path>/dev/null`) no longer hides the
+  operand.
 - **OpenClaw browser navigation is judged by the URL OpenClaw opens** — the
   adapter derives `url`, `domain` and `scheme` from `targetUrl` (or `url` when
   it is absent), so a second, conflicting alias cannot decide the policy.
@@ -69,7 +82,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   claimed compatible until reviewed.
 - `rampart setup claude-code` now fails closed by default for a new PreToolUse
   hook on a supported host even when an older Rampart PostToolUse hook was
-  left behind; previously that leftover made setup treat it as an existing
+  left behind, or when Rampart's PreToolUse hook was `async`, `asyncRewake` or
+  conditional (`if`); previously setup treated either as an existing
   installation.
 - `rampart doctor` fails when an agent that protect or verify recorded as
   protected has lost its Rampart hooks, instead of warning as if it had never
@@ -133,8 +147,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   try a harmless blocked command, and review decisions with `rampart log`. For
   Claude Code it also explains that a denial appears as a "PreToolUse hook
   error" carrying Rampart's reason.
-- `rampart serve` no longer suggests `rampart init` when it runs on the
-  embedded standard policy, which is the normal state after `protect`.
+- `rampart serve` and `rampart setup claude-code` no longer suggest
+  `rampart init` when Rampart runs on the embedded standard policy, which is
+  the normal state after `protect`. `rampart doctor` reports that state as
+  healthy instead of failing when `~/.rampart/policies` has no policy files.
+- `rampart verify` now prints the Claude Code PreToolUse failure mode in its
+  human report, not only in `--json`.
+- When `rampart serve` cannot take a `headless_only` approval, the hook's
+  warning now says approval could not be requested; the call is denied. It
+  previously said Rampart was running without enforcement or falling back to
+  the native prompt.
 - The README installer snippet uses `sh`, matching the installer script and
   the installation guide.
 - `rampart setup claude-code` keeps fail-closed mode when settings contain
