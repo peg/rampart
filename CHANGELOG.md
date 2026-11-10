@@ -56,8 +56,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   case now fails `rampart audit verify` and every other hash check. Before, such
   a record could be changed while its hash still verified.
 - **Malformed audit records are reported, not skipped silently** — `audit
-  tail`, `watch`, the dashboard and the HTML report warn about them; the
-  compliance report and export fail.
+  tail`, `watch` and the HTML report warn about them, `rampart serve` logs a
+  warning when its audit API reads them, and the compliance report and export
+  fail.
 - **`init --from-audit` learns only from verified history** — a directory must
   pass `rampart audit verify` and a single file must have a valid hash on every
   record, or no rules are generated. `--allow-unverified` opts out and marks the

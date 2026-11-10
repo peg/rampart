@@ -1005,8 +1005,6 @@ func shellWrapperBasename(token string) string {
 	return strings.ToLower(filepath.Base(strings.ReplaceAll(token, "\\", "/")))
 }
 
-// hasCFlag checks if a flag token contains -c, either standalone or combined
-// (e.g. -lc, -ic). Returns true for any single-dash flag containing 'c'.
 // shellOptionTakesValue reports whether a POSIX shell option consumes the
 // next word (bash -O extglob, --rcfile FILE), so that word is not mistaken
 // for a script operand.
@@ -1018,6 +1016,8 @@ func shellOptionTakesValue(token string) bool {
 	return false
 }
 
+// hasCFlag checks if a flag token contains -c, either standalone or combined
+// (e.g. -lc, -ic). Returns true for any single-dash flag containing 'c'.
 func hasCFlag(token string) bool {
 	if !strings.HasPrefix(token, "-") || strings.HasPrefix(token, "--") {
 		return false
