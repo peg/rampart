@@ -204,6 +204,15 @@ func TestStandardPolicyDecisions(t *testing.T) {
 		{name: "deny install -d under .rampart", tool: "exec", command: "install -d ~/.rampart/policies/extra", expected: engine.ActionDeny},
 		{name: "deny rsync removing .rampart sources", tool: "exec", command: "rsync -a --remove-source-files ~/.rampart/policies/ /tmp/p/", expected: engine.ActionDeny},
 		{name: "deny find exec rm in .rampart", tool: "exec", command: "find ~/.rampart -type f -exec rm {} +", expected: engine.ActionDeny},
+		// An in-place edit changes its files, not its script.
+		{name: "deny bsd sed in-place .rampart", tool: "exec", command: "sed -i '' 's/ask/allow/' ~/.rampart/policies/standard.yaml", expected: engine.ActionDeny},
+		{name: "deny sed expression in-place .rampart", tool: "exec", command: "sed -i -e 's/ask/allow/' ~/.rampart/policies/standard.yaml", expected: engine.ActionDeny},
+		{name: "allow sed in-place script naming .rampart", tool: "exec", command: "sed -i 's|/home/u/.rampart/|~/.rampart/|g' docs/install.md", expected: engine.ActionAllow},
+		{name: "allow perl in-place script naming .rampart", tool: "exec", command: "perl -pi -e 's|/.rampart/old|/.rampart/new|g' docs/guide.md", expected: engine.ActionAllow},
+		{name: "allow perl module read of .rampart", tool: "exec", command: "perl -Mstrict -ne 'print if /deny/' ~/.rampart/audit/today.jsonl", expected: engine.ActionAllow},
+		// A line that is only a comment is not a command.
+		{name: "allow comment line before command", tool: "exec", command: "# run the tests\ngo test ./...", expected: engine.ActionAllow},
+		{name: "allow trailing comment component", tool: "exec", command: "echo a; # trailing note", expected: engine.ActionAllow},
 		// Copying out of .rampart changes only the destination.
 		{name: "allow cp policy out of .rampart", tool: "exec", command: "cp ~/.rampart/policies/standard.yaml /tmp/b.yaml", expected: engine.ActionAllow},
 		{name: "allow rsync backup of .rampart", tool: "exec", command: "rsync -a ~/.rampart/policies/ /tmp/policies-backup/", expected: engine.ActionAllow},

@@ -1312,13 +1312,7 @@ func pathChangeTargets(tokens []string) []string {
 	}
 	switch head {
 	case "sed", "perl":
-		for _, token := range tokens[1:] {
-			if strings.HasPrefix(token, "--in-place") || (len(token) > 1 && token[0] == '-' && token[1] != '-' &&
-				strings.IndexByte(strings.SplitN(token[1:], "e", 2)[0], 'i') >= 0) {
-				return operands() // in-place edit
-			}
-		}
-		return nil
+		return inPlaceEditTargets(head, tokens)
 	case "dd":
 		var out []string
 		for _, token := range tokens[1:] {
@@ -1373,6 +1367,74 @@ func pathChangeTargets(tokens []string) []string {
 		out = out[len(out)-1:]
 	}
 	return append(append(out, targetDirs...), optionWrites...)
+}
+
+// inPlaceEditTargets returns the files that sed -i or perl -i rewrites, and
+// nil when the command does not edit in place. The script, inline or named by
+// -e/-f (sed) or -e/-E (perl), is not one of the files.
+func inPlaceEditTargets(head string, tokens []string) []string {
+	// Short options whose value is the rest of the cluster or, for the
+	// script options, the next word.
+	rest, script := "efil", "ef"
+	if head == "perl" {
+		rest, script = "0CdDeEFiIlmMx", "eE"
+	}
+	inPlace, scriptGiven, options := false, false, true
+	var operands []string
+	for i := 1; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case !options || token == "-" || !strings.HasPrefix(token, "-"):
+			operands = append(operands, token)
+		case token == "--":
+			options = false
+		case head == "sed" && strings.HasPrefix(token, "--"):
+			name, _, attached := strings.Cut(token, "=")
+			switch name {
+			case "--in-place":
+				inPlace = true
+			case "--expression", "--file":
+				scriptGiven = true
+				if !attached {
+					i++
+				}
+			case "--line-length":
+				if !attached {
+					i++
+				}
+			}
+		default:
+			for at, flag := range token[1:] {
+				if !strings.ContainsRune(rest, flag) {
+					continue
+				}
+				attached := token[2+at:] != ""
+				switch {
+				case flag == 'i':
+					inPlace = true
+					// BSD sed -i takes a separate, possibly empty, suffix.
+					if !attached && head == "sed" && i+1 < len(tokens) && tokens[i+1] == "" {
+						i++
+					}
+				case strings.ContainsRune(script, flag):
+					scriptGiven = true
+					if !attached {
+						i++
+					}
+				case head == "sed" && !attached:
+					i++ // -l N
+				}
+				break
+			}
+		}
+	}
+	if !inPlace {
+		return nil
+	}
+	if !scriptGiven && len(operands) > 0 {
+		operands = operands[1:] // the inline script or perl program file
+	}
+	return operands
 }
 
 // xargsCommandStart returns the index of the utility xargs runs, or 0 when
