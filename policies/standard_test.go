@@ -43,6 +43,15 @@ func TestStandardPolicyDecisions(t *testing.T) {
 	}{
 		// Must block (deny)
 		{name: "deny rm root", tool: "exec", command: "rm -rf /", expected: engine.ActionDeny},
+		// Wrapper options are skipped, not taken as the end of the wrapper.
+		{name: "deny bash option value before -c", tool: "exec", command: "bash -O extglob -c 'rm -rf /'", expected: engine.ActionDeny},
+		{name: "deny bash rcfile before -c", tool: "exec", command: "bash --rcfile /dev/null -c 'rm -rf /'", expected: engine.ActionDeny},
+		{name: "deny env option cluster", tool: "exec", command: "env -iu X rm -rf /", expected: engine.ActionDeny},
+		{name: "deny env altpath", tool: "exec", command: "env -i -P /bin rm -rf /", expected: engine.ActionDeny},
+		{name: "deny builtin exec", tool: "exec", command: "builtin exec rm -rf /", expected: engine.ActionDeny},
+		{name: "deny time subshell", tool: "exec", command: "time ( rm -rf / )", expected: engine.ActionDeny},
+		{name: "allow bash option value with safe script", tool: "exec", command: "bash -O extglob -c 'echo hi'", expected: engine.ActionAllow},
+		{name: "allow time subshell tests", tool: "exec", command: "time ( go test ./... )", expected: engine.ActionAllow},
 		{name: "deny rm home", tool: "exec", command: "rm -rf /home", expected: engine.ActionDeny},
 		{name: "deny rm HOME", tool: "exec", command: "rm -rf $HOME", expected: engine.ActionDeny},
 		{name: "deny rm braced HOME", tool: "exec", command: "rm -rf ${HOME}", expected: engine.ActionDeny},

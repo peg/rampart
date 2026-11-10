@@ -735,7 +735,7 @@ func restrictivePOSIXBodyCandidates(component string) []string {
 		}
 		word, rest := leadingShellWord(candidate)
 		switch word {
-		case "if", "elif", "while", "until", "then", "do", "else", "!":
+		case "if", "elif", "while", "until", "then", "do", "else", "!", "time":
 			candidate = rest
 			changed = true
 			continue

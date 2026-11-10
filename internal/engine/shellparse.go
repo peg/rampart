@@ -539,6 +539,8 @@ func stripPOSIXTransparentExecutorOnce(tokens []string) []string {
 				return tokens[i:]
 			}
 		}
+	case "builtin":
+		return tokens[1:] // builtin NAME runs the shell builtin NAME
 	case "env":
 		return stripPOSIXEnvUtility(tokens)
 	case "nohup":
@@ -673,6 +675,18 @@ func stripPOSIXEnvUtility(tokens []string) []string {
 		case isEnvAssignment(token):
 			i++
 		default:
+			consumesNext, ok := envShortOptions(token)
+			if ok && consumesNext {
+				if i+1 >= len(tokens) {
+					return tokens
+				}
+				i += 2
+				continue
+			}
+			if ok {
+				i++
+				continue
+			}
 			if strings.HasPrefix(token, "-") {
 				return tokens
 			}
@@ -680,6 +694,25 @@ func stripPOSIXEnvUtility(tokens []string) []string {
 		}
 	}
 	return tokens
+}
+
+// envShortOptions parses a cluster of env short options such as -iv,
+// -iu NAME, or -P/bin (BSD altpath). It reports whether the cluster ends in
+// an option whose value is the next word, and ok=false for anything else.
+func envShortOptions(token string) (consumesNext, ok bool) {
+	if len(token) < 2 || token[0] != '-' || token[1] == '-' {
+		return false, false
+	}
+	for at := 1; at < len(token); at++ {
+		switch token[at] {
+		case 'i', '0', 'v':
+		case 'u', 'C', 'P':
+			return at == len(token)-1, true
+		default:
+			return false, false
+		}
+	}
+	return false, true
 }
 
 func stripPOSIXNohup(tokens []string) []string {
@@ -974,6 +1007,17 @@ func shellWrapperBasename(token string) string {
 
 // hasCFlag checks if a flag token contains -c, either standalone or combined
 // (e.g. -lc, -ic). Returns true for any single-dash flag containing 'c'.
+// shellOptionTakesValue reports whether a POSIX shell option consumes the
+// next word (bash -O extglob, --rcfile FILE), so that word is not mistaken
+// for a script operand.
+func shellOptionTakesValue(token string) bool {
+	switch token {
+	case "-o", "+o", "-O", "+O", "--rcfile", "--init-file":
+		return true
+	}
+	return false
+}
+
 func hasCFlag(token string) bool {
 	if !strings.HasPrefix(token, "-") || strings.HasPrefix(token, "--") {
 		return false
@@ -1018,7 +1062,11 @@ func stripShellWrapperOnceForOS(tokens []string, goos string) ([]string, string)
 		// Skip other flags like --norc, -l, etc.
 		for i := 1; i < len(tokens); i++ {
 			tok := tokens[i]
-			if !strings.HasPrefix(tok, "-") {
+			if shellOptionTakesValue(tok) {
+				i++
+				continue
+			}
+			if !strings.HasPrefix(tok, "-") && !strings.HasPrefix(tok, "+") {
 				// Reached a non-flag token without finding -c — not a wrapper.
 				return tokens, goos
 			}
