@@ -210,6 +210,10 @@ func TestStandardPolicyDecisions(t *testing.T) {
 		{name: "allow sed in-place script naming .rampart", tool: "exec", command: "sed -i 's|/home/u/.rampart/|~/.rampart/|g' docs/install.md", expected: engine.ActionAllow},
 		{name: "allow perl in-place script naming .rampart", tool: "exec", command: "perl -pi -e 's|/.rampart/old|/.rampart/new|g' docs/guide.md", expected: engine.ActionAllow},
 		{name: "allow perl module read of .rampart", tool: "exec", command: "perl -Mstrict -ne 'print if /deny/' ~/.rampart/audit/today.jsonl", expected: engine.ActionAllow},
+		{name: "deny bsd sed -I .rampart", tool: "exec", command: "sed -I '' 's/ask/allow/' ~/.rampart/policies/standard.yaml", expected: engine.ActionDeny},
+		// Redirections and assignments may come before the command word.
+		{name: "deny leading redirect before rm .rampart", tool: "exec", command: "2>/dev/null rm ~/.rampart/policies/standard.yaml", expected: engine.ActionDeny},
+		{name: "deny assignment and redirect before chmod .rampart", tool: "exec", command: "X=1 < /dev/null chmod 777 ~/.rampart/policies", expected: engine.ActionDeny},
 		// A line that is only a comment is not a command.
 		{name: "allow comment line before command", tool: "exec", command: "# run the tests\ngo test ./...", expected: engine.ActionAllow},
 		{name: "allow trailing comment component", tool: "exec", command: "echo a; # trailing note", expected: engine.ActionAllow},

@@ -861,7 +861,7 @@ func restrictiveCommandCandidates(command string) ([]string, bool) {
 		if len(SplitCompoundCommand(candidate)) <= 1 {
 			// Comments are found in the quoted text, so a quoted or escaped
 			// "#" operand is still an operand.
-			raw := stripLeadingEnvAssignments(tokenizeForOS(stripUnquotedShellComment(candidate), "posix"))
+			raw := stripLeadingWordPrefixes(tokenizeForOS(stripUnquotedShellComment(candidate), "posix"))
 			writes = append(writes, executorWriteTargets(raw)...)
 			writes = append(writes, pathChangeTargets(unwrapRestrictiveExecutor(raw))...)
 		}
@@ -1369,13 +1369,34 @@ func pathChangeTargets(tokens []string) []string {
 	return append(append(out, targetDirs...), optionWrites...)
 }
 
+// stripLeadingWordPrefixes removes the environment assignments and
+// redirections that may precede a command word (2>/dev/null rm file).
+func stripLeadingWordPrefixes(tokens []string) []string {
+	for len(tokens) > 0 {
+		switch {
+		case isEnvAssignment(tokens[0]):
+			tokens = tokens[1:]
+		case shellRedirectionConsumesNext(tokens[0]):
+			if len(tokens) < 2 {
+				return nil
+			}
+			tokens = tokens[2:]
+		case isShellRedirectionToken(tokens[0]):
+			tokens = tokens[1:]
+		default:
+			return tokens
+		}
+	}
+	return tokens
+}
+
 // inPlaceEditTargets returns the files that sed -i or perl -i rewrites, and
 // nil when the command does not edit in place. The script, inline or named by
 // -e/-f (sed) or -e/-E (perl), is not one of the files.
 func inPlaceEditTargets(head string, tokens []string) []string {
 	// Short options whose value is the rest of the cluster or, for the
 	// script options, the next word.
-	rest, script := "efil", "ef"
+	rest, script := "efiIl", "ef" // BSD -I is -i that edits each file separately
 	if head == "perl" {
 		rest, script = "0CdDeEFiIlmMx", "eE"
 	}
@@ -1410,7 +1431,7 @@ func inPlaceEditTargets(head string, tokens []string) []string {
 				}
 				attached := token[2+at:] != ""
 				switch {
-				case flag == 'i':
+				case flag == 'i' || (head == "sed" && flag == 'I'):
 					inPlace = true
 					// BSD sed -i takes a separate, possibly empty, suffix.
 					if !attached && head == "sed" && i+1 < len(tokens) && tokens[i+1] == "" {
