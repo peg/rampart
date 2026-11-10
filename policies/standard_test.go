@@ -214,6 +214,11 @@ func TestStandardPolicyDecisions(t *testing.T) {
 		// Redirections and assignments may come before the command word.
 		{name: "deny leading redirect before rm .rampart", tool: "exec", command: "2>/dev/null rm ~/.rampart/policies/standard.yaml", expected: engine.ActionDeny},
 		{name: "deny assignment and redirect before chmod .rampart", tool: "exec", command: "X=1 < /dev/null chmod 777 ~/.rampart/policies", expected: engine.ActionDeny},
+		// A redirection written against an operand does not hide it.
+		{name: "deny rm .rampart with attached redirect", tool: "exec", command: "rm -r ~/.rampart>/dev/null", expected: engine.ActionDeny},
+		{name: "deny wrapper then redirect before rm .rampart", tool: "exec", command: "nice 2>/dev/null rm -r ~/.rampart", expected: engine.ActionDeny},
+		{name: "deny rm root with attached redirect", tool: "exec", command: "rm -rf />/dev/null", expected: engine.ActionDeny},
+		{name: "allow cp out of .rampart with redirect", tool: "exec", command: "cp ~/.rampart/policies/standard.yaml /tmp/b.yaml 2>/dev/null", expected: engine.ActionAllow},
 		// A line that is only a comment is not a command.
 		{name: "allow comment line before command", tool: "exec", command: "# run the tests\ngo test ./...", expected: engine.ActionAllow},
 		{name: "allow trailing comment component", tool: "exec", command: "echo a; # trailing note", expected: engine.ActionAllow},

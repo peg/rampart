@@ -861,7 +861,7 @@ func restrictiveCommandCandidates(command string) ([]string, bool) {
 		if len(SplitCompoundCommand(candidate)) <= 1 {
 			// Comments are found in the quoted text, so a quoted or escaped
 			// "#" operand is still an operand.
-			raw := stripLeadingWordPrefixes(tokenizeForOS(stripUnquotedShellComment(candidate), "posix"))
+			raw := stripLeadingEnvAssignments(shellWords(stripUnquotedShellComment(candidate)))
 			writes = append(writes, executorWriteTargets(raw)...)
 			writes = append(writes, pathChangeTargets(unwrapRestrictiveExecutor(raw))...)
 		}
@@ -971,14 +971,7 @@ func restrictiveRMOperands(tokens []string) []string {
 	operands := make([]string, 0, len(tokens))
 	optionsEnded := false
 	for index := 1; index < len(tokens); index++ {
-		token := tokens[index]
-		if shellRedirectionConsumesNext(token) {
-			index++
-			continue
-		}
-		if isShellRedirectionToken(token) {
-			continue
-		}
+		token := tokens[index] // redirections were removed by shellWords
 		if optionsEnded {
 			operands = append(operands, token)
 			continue
@@ -1369,25 +1362,40 @@ func pathChangeTargets(tokens []string) []string {
 	return append(append(out, targetDirs...), optionWrites...)
 }
 
-// stripLeadingWordPrefixes removes the environment assignments and
-// redirections that may precede a command word (2>/dev/null rm file).
-func stripLeadingWordPrefixes(tokens []string) []string {
-	for len(tokens) > 0 {
-		switch {
-		case isEnvAssignment(tokens[0]):
-			tokens = tokens[1:]
-		case shellRedirectionConsumesNext(tokens[0]):
-			if len(tokens) < 2 {
-				return nil
-			}
-			tokens = tokens[2:]
-		case isShellRedirectionToken(tokens[0]):
-			tokens = tokens[1:]
-		default:
-			return tokens
+// shellWords tokenizes a simple command and removes its redirections, so a
+// redirection never stands in for an operand and an operand written against
+// one (rm dir>/dev/null) keeps its own spelling. Redirection operators are
+// found in the quote-masked text, so a quoted "<" or ">" stays in its word.
+func shellWords(text string) []string {
+	words := tokenizeForOS(text, "posix")
+	masked := tokenizeForOS(maskLiteralRedirects(text), "posix")
+	if len(masked) != len(words) {
+		return words // keep every word rather than guess which is a redirection
+	}
+	out := make([]string, 0, len(words))
+	for i := 0; i < len(words); i++ {
+		at := strings.IndexAny(masked[i], "<>")
+		if at < 0 || len(masked[i]) != len(words[i]) {
+			out = append(out, words[i])
+			continue
+		}
+		if prefix := words[i][:at]; !isRedirectionPrefix(prefix) {
+			out = append(out, prefix)
+		}
+		if strings.TrimLeft(masked[i][at:], "<>&|") == "" {
+			i++ // the operator's target is the next word
 		}
 	}
-	return tokens
+	return out
+}
+
+// isRedirectionPrefix reports whether text before a redirection operator is
+// part of the redirection (a file descriptor or &) rather than a word.
+func isRedirectionPrefix(prefix string) bool {
+	if prefix == "" || prefix == "&" {
+		return true
+	}
+	return strings.Trim(prefix, "0123456789") == ""
 }
 
 // inPlaceEditTargets returns the files that sed -i or perl -i rewrites, and
@@ -1582,7 +1590,7 @@ func visitCanonicalCommandAliases(command string, visit func(string) bool) bool 
 		return true
 	}
 	for _, segment := range SplitCompoundCommand(stripUnquotedShellComment(command)) {
-		tokens := unwrapRestrictiveExecutor(tokenizeForOS(maskLiteralRedirects(segment), "posix"))
+		tokens := unwrapRestrictiveExecutor(shellWords(segment))
 		if len(tokens) == 0 {
 			continue
 		}
@@ -1685,22 +1693,6 @@ func cleanRestrictivePOSIXPath(value string) string {
 		return cleaned
 	}
 	return value
-}
-
-func shellRedirectionConsumesNext(token string) bool {
-	switch token {
-	case ">", ">>", "<", "<<", "<<<", "1>", "1>>", "2>", "2>>":
-		return true
-	default:
-		return false
-	}
-}
-
-func isShellRedirectionToken(token string) bool {
-	if shellRedirectionConsumesNext(token) || strings.Contains(token, ">&") || strings.Contains(token, "<&") {
-		return true
-	}
-	return strings.ContainsAny(token, "><")
 }
 
 func matchRestrictiveCommandDialectFirst(patterns []string, command string, action Action, dialect string) string {
