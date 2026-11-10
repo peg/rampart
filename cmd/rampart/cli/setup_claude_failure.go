@@ -217,6 +217,25 @@ func claudeRampartPreToolUseHook(settings claudeSettings) (map[string]any, bool)
 	return hooks[0], true
 }
 
+// claudeRampartPreToolUseEnforced reports whether a Rampart PreToolUse hook
+// in settings could have enforced a decision. Claude Code does not wait for an
+// async hook, and an "if" condition can skip the hook, so neither counts.
+func claudeRampartPreToolUseEnforced(settings claudeSettings) bool {
+	for _, hook := range claudeRampartPreToolUseHooks(settings) {
+		if async, _ := hook["async"].(bool); async {
+			continue
+		}
+		if rewake, _ := hook["asyncRewake"].(bool); rewake {
+			continue
+		}
+		if _, conditional := hook["if"]; conditional {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // claudePreToolUseBlocksOnFailure reports whether any Rampart PreToolUse hook
 // is configured with onFailure "block". Setup collapses duplicates into one
 // entry, so a single blocking duplicate must keep the merged entry blocking.
