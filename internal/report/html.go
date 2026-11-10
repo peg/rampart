@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -121,7 +122,10 @@ func ReadEventsFromDir(auditDir string) ([]audit.Event, error) {
 
 	for _, file := range files {
 		events, _, err := audit.ReadEventsFromOffset(file, 0)
-		if err != nil {
+		var malformed *audit.MalformedRecordsError
+		if errors.As(err, &malformed) {
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		} else if err != nil {
 			// Skip files that can't be read, but log the error
 			fmt.Fprintf(os.Stderr, "Warning: could not read %s: %v\n", file, err)
 			continue

@@ -145,3 +145,22 @@ func TestReadEventsFromOffset_AfterRotationReturnsOnlyWrittenEvents(t *testing.T
 	}
 	require.Equal(t, written, total)
 }
+
+// A malformed complete record must not vanish: the reader keeps the good
+// events, advances past it and reports it.
+func TestReadEventsFromOffset_ReportsMalformedCompleteRecords(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mixed.jsonl")
+	good := `{"id":"01JTEST000000000000000001","timestamp":"2026-02-12T00:00:00Z","agent":"a","session":"s","tool":"exec","request":{},"decision":{"action":"allow","evaluation_time_us":1},"prev_hash":"","hash":"sha256:abc"}`
+	content := good + "\n" + `{"id":"01JTEST000000000000000002","tool":` + "\n" + `not json` + "\n" +
+		strings.Replace(good, "0001", "0003", 1) + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+	events, offset, err := ReadEventsFromOffset(path, 0)
+	var malformed *MalformedRecordsError
+	require.ErrorAs(t, err, &malformed)
+	assert.Equal(t, 2, malformed.Count)
+	assert.Equal(t, int64(len(good)+1), malformed.FirstOffset)
+	require.Len(t, events, 2)
+	assert.Equal(t, int64(len(content)), offset)
+}

@@ -14,6 +14,7 @@
 package proxy
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -96,7 +97,10 @@ func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
 	var allEvents []audit.Event
 	for _, f := range files {
 		events, _, err := audit.ReadEventsFromOffset(f, 0)
-		if err != nil {
+		var malformed *audit.MalformedRecordsError
+		if errors.As(err, &malformed) {
+			s.logger.Warn("proxy: audit file has malformed records", "file", f, "error", err)
+		} else if err != nil {
 			s.logger.Error("proxy: audit read failed", "file", f, "error", err)
 			continue
 		}
@@ -308,7 +312,10 @@ func (s *Server) handleAuditStats(w http.ResponseWriter, r *http.Request) {
 		files := s.auditFilesForDate(dateStr)
 		for _, f := range files {
 			events, _, err := audit.ReadEventsFromOffset(f, 0)
-			if err != nil {
+			var malformed *audit.MalformedRecordsError
+			if errors.As(err, &malformed) {
+				s.logger.Warn("proxy: audit file has malformed records", "file", f, "error", err)
+			} else if err != nil {
 				continue
 			}
 			for _, evt := range events {

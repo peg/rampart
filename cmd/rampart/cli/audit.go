@@ -14,6 +14,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -112,7 +113,10 @@ func followAuditFile(cmd *cobra.Command, auditDir, startFile string, noColor boo
 			}
 
 			events, newOffset, readErr := readAuditEventsFromOffset(currentFile, offset)
-			if readErr != nil {
+			var malformed *audit.MalformedRecordsError
+			if errors.As(readErr, &malformed) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %v\n", readErr)
+			} else if readErr != nil {
 				if os.IsNotExist(readErr) {
 					continue
 				}

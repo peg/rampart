@@ -130,7 +130,13 @@ func (t *fileTailer) start(ctx context.Context) <-chan tailerEvent {
 
 func (t *fileTailer) publishAvailable(ctx context.Context, out chan<- tailerEvent, offset int64) int64 {
 	newEvents, newOffset, err := audit.ReadEventsFromOffset(t.path, offset)
-	if err != nil {
+	var malformed *audit.MalformedRecordsError
+	if errors.As(err, &malformed) {
+		// Show the error but keep tailing past the bad records.
+		if !publishTailerEvent(ctx, out, tailerEvent{err: err}) {
+			return offset
+		}
+	} else if err != nil {
 		if os.IsNotExist(err) {
 			return 0
 		}
