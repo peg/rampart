@@ -125,7 +125,7 @@ With the native plugin, **supported OpenClaw tool calls are intercepted**. Polic
 | `web_fetch` | ✅ Native plugin | Domain allowlist/blocklist |
 | `web_search` | ✅ Native plugin | Always allowed by default |
 | `browser` | ✅ Native plugin | Read-only inspection is allowed; navigation uses domain rules; clicks, typing, uploads, and other mutations require approval |
-| `message` | ✅ Native plugin | Read actions always allowed; sends to unknown channels require approval |
+| `message` | ✅ Native plugin | Read actions always allowed; replies to the originating conversation on the same provider are allowed; other sends require approval |
 | `ask_user` | ✅ Native plugin | Structured questions to the originating user are classified as local interaction, not cross-conversation messaging |
 | `canvas` | ✅ Native plugin | Always allowed (UI only) |
 | `sessions_spawn` | ✅ Native plugin | Subagents cannot spawn further agents |
