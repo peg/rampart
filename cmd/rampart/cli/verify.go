@@ -962,6 +962,14 @@ func verifyCodexHooksInstalled() verificationCheck {
 			Hint:    "Run `rampart setup codex`, then rerun `rampart verify codex`",
 		}
 	}
+	if codexUserHooksDisabled(home) {
+		return verificationCheck{
+			ID: "codex-hook-installation", Name: "Codex lifecycle hooks are installed",
+			Status: verificationFail, Expected: "user hooks enabled", Actual: "allow_managed_hooks_only = true",
+			Message: "Codex config.toml makes Codex skip user hooks, so Rampart's hooks never run",
+			Hint:    "Remove allow_managed_hooks_only from Codex config.toml, or install Rampart as a managed Codex hook",
+		}
+	}
 	if !codexHooksConfiguredForHome(home) {
 		return verificationCheck{
 			ID: "codex-hook-installation", Name: "Codex lifecycle hooks are installed",
@@ -973,7 +981,8 @@ func verifyCodexHooksInstalled() verificationCheck {
 	return verificationCheck{
 		ID: "codex-hook-installation", Name: "Codex lifecycle hooks are installed",
 		Status: verificationPass, Expected: "current PreToolUse and PostToolUse commands", Actual: "configured",
-		Message: "The user-level Codex hook configuration contains both current Rampart lifecycle hooks",
+		Message: "The user-level Codex hook configuration contains both current Rampart lifecycle hooks. " +
+			"Whether Codex has trusted them in `/hooks` is not checked",
 	}
 }
 

@@ -117,7 +117,10 @@ Run 'rampart setup codex --remove' to uninstall.`,
 			fmt.Fprintf(out, "✓ Rampart lifecycle hooks installed in %s\n", hooksPath)
 			fmt.Fprintln(out, "  Covers Codex CLI, IDE extension, and desktop local tool calls.")
 			fmt.Fprintln(out, "  Codex will require review of this hook definition before first use.")
-			fmt.Fprintln(out, "  Open `/hooks` in Codex and trust the Rampart hooks.")
+			fmt.Fprintln(out, "  Open `/hooks` in Codex and trust the Rampart hooks. Rampart cannot check that you did.")
+			if codexUserHooksDisabled(home) {
+				fmt.Fprintln(out, "⚠ Codex config.toml sets allow_managed_hooks_only = true, so Codex skips these hooks.")
+			}
 			fmt.Fprintln(out, "  Rampart approvals do not replace Codex sandbox or permission approvals.")
 			fmt.Fprintln(out, "  Approval guidance: https://docs.rampart.sh/integrations/codex-cli/#decisions-and-approvals")
 			if removedWrapper {
@@ -187,6 +190,9 @@ func installCodexHooks(path, command, commandWindows string, force bool) error {
 }
 
 func codexHooksConfiguredForHome(home string) bool {
+	if codexUserHooksDisabled(home) {
+		return false // Codex skips hooks.json, so Rampart's hooks never run
+	}
 	path := filepath.Join(codexHomeDir(home), "hooks.json")
 	exists, err := regularConfigFileExists(path)
 	if err != nil || !exists {
@@ -234,7 +240,8 @@ func codexHooksUseCommands(settings map[string]any, command, commandWindows stri
 				}
 				owned++
 				if matcher["matcher"] != "*" || handler["type"] != "command" ||
-					handler["command"] != command || handler["commandWindows"] != commandWindows {
+					handler["command"] != command || handler["commandWindows"] != commandWindows ||
+					!codexRampartHandlerFieldsSafe(handler) {
 					return false
 				}
 			}
@@ -321,6 +328,76 @@ func isRampartCodexMatcher(matcher map[string]any) bool {
 		}
 	}
 	return false
+}
+
+// codexUserHooksDisabled reports whether the user's Codex config.toml sets
+// the top-level allow_managed_hooks_only = true, which makes Codex skip user
+// hooks, Rampart's included. Managed configuration layers can set it too and
+// are not read here, so false does not prove the hooks are active.
+func codexUserHooksDisabled(home string) bool {
+	path := filepath.Join(codexHomeDir(home), "config.toml")
+	exists, err := regularConfigFileExists(path)
+	if err != nil || !exists {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") {
+			return false // top-level keys precede the first table
+		}
+		if hash := strings.Index(line, "#"); hash >= 0 {
+			line = strings.TrimSpace(line[:hash])
+		}
+		key, value, found := strings.Cut(line, "=")
+		if !found {
+			continue
+		}
+		key = strings.Trim(strings.TrimSpace(key), `"'`)
+		if key == "allow_managed_hooks_only" && strings.TrimSpace(value) == "true" {
+			return true
+		}
+	}
+	return false
+}
+
+// codexRampartHandlerFieldsSafe reports whether a Rampart-owned Codex handler
+// holds only the fields setup writes. Codex does not wait for an async
+// handler, and fields such as "if" change when it runs, so any other field
+// (including unknown future ones) means the hook may not gate tool calls.
+func codexRampartHandlerFieldsSafe(handler map[string]any) bool {
+	for key, value := range handler {
+		switch key {
+		case "type", "command", "commandWindows":
+		case "statusMessage":
+			if _, ok := value.(string); !ok {
+				return false
+			}
+		case "timeout":
+			var seconds float64
+			ok := true
+			switch number := value.(type) {
+			case json.Number: // decodeUserJSON keeps numbers exact
+				parsed, err := number.Float64()
+				seconds, ok = parsed, err == nil
+			case float64:
+				seconds = number
+			case int:
+				seconds = float64(number)
+			default:
+				ok = false
+			}
+			if !ok || seconds <= 0 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func isRampartCodexHandler(handler map[string]any) bool {

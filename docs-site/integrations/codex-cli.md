@@ -24,7 +24,13 @@ evaluating shell commands twice.
 
 Codex treats user hooks as executable configuration. Open `/hooks` in Codex,
 review the exact Rampart command, and trust it. A changed hook definition must
-be reviewed again.
+be reviewed again. Rampart cannot see whether you trusted the hooks, so
+`rampart doctor` and `rampart verify` report them as configured, not active.
+
+If your Codex `config.toml` sets `allow_managed_hooks_only = true`, Codex skips
+user hooks, including Rampart's, and `doctor` and `verify` report a failure.
+Managed configuration can also set it, and Rampart does not read managed
+configuration.
 
 ## Coverage
 

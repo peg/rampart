@@ -962,8 +962,12 @@ func doctorHooks(emit emitFn) (issues, warnings int) {
 	codexBinary, _ := exec.LookPath("codex")
 	if codexDirErr == nil || codexBinary != "" {
 		hooksPath := filepath.Join(codexDir, "hooks.json")
-		if codexHooksConfiguredForHome(home) {
-			emit("Hooks", "ok", "Codex (current PreToolUse and PostToolUse in hooks.json)")
+		if codexUserHooksDisabled(home) {
+			emit("Hooks", "fail", "Codex config.toml sets allow_managed_hooks_only = true, so Codex skips Rampart's hooks"+
+				hintSep+"remove that setting, or install Rampart as a managed Codex hook")
+			issues++
+		} else if codexHooksConfiguredForHome(home) {
+			emit("Hooks", "ok", "Codex (current PreToolUse and PostToolUse in hooks.json; trust in Codex /hooks not checked)")
 		} else {
 			n, w := doctorHookGap(emit, anyProtected, codexRampartIntegrationPresent(home), "Codex", "codex",
 				fmt.Sprintf("Codex lifecycle hooks missing, stale, incomplete, or unsafe (expected current Rampart hooks in %s)", hooksPath))
