@@ -345,7 +345,7 @@ Rampart protects its own configuration from agent tampering through two layers:
 
 Both layers are active by default in the `standard` and `paranoid` profiles. The `yolo` profile disables these protections — it's named that way for a reason.
 
-**Remaining surface:** An agent with exec access could modify Rampart's binary on disk (if file permissions allow), write `.rampart` through a form the deny list does not cover, or stop the `rampart serve` process. Hooks evaluate policy locally, so deny rules still apply without `rampart serve`, but decisions that need its approval queue fall back to the host's own prompt. User separation mitigates these: run `rampart serve` as a different user than the agent.
+**Remaining surface:** An agent with exec access could modify Rampart's binary on disk (if file permissions allow), write `.rampart` through a form the deny list does not cover, or stop the `rampart serve` process. Hooks evaluate policy locally, so deny rules still apply without `rampart serve`, but decisions that need its approval queue (`headless_only` asks) are denied while it is unreachable. User separation mitigates these: run `rampart serve` as a different user than the agent.
 
 ## Philosophy
 

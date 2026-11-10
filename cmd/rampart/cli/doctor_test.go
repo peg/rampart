@@ -488,6 +488,29 @@ func TestDoctorHooksUnprotectedAgentWarnsOnceAnotherIsProtected(t *testing.T) {
 	})
 }
 
+// The hook and serve use the built-in standard profile without policy files,
+// so their absence is not a failure.
+func TestDoctorPoliciesWithoutFilesUsesBuiltInProfile(t *testing.T) {
+	for name, setup := range map[string]func(dir string){
+		"no directory":  func(string) {},
+		"no yaml files": func(dir string) { requireNoErr(t, os.MkdirAll(dir, 0o755)) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			testSetHome(t, home)
+			setup(filepath.Join(home, ".rampart", "policies"))
+			var results []checkResult
+			issues := doctorPolicies(func(name, status, msg string) {
+				results = append(results, checkResult{Name: name, Status: status, Message: msg})
+			})
+			if issues != 0 || len(results) != 1 || results[0].Status != "ok" ||
+				!strings.Contains(results[0].Message, "built-in standard profile") {
+				t.Fatalf("issues=%d results=%+v, want one ok naming the built-in profile", issues, results)
+			}
+		})
+	}
+}
+
 func TestDoctorPolicies_EmptyCustomPlaceholderIsNotWarn(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)

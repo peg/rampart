@@ -37,10 +37,10 @@ This split is deliberate. Secret stores are too dangerous to expose silently. Bu
 ## Setup
 
 ```bash
-rampart setup claude-code
+rampart protect claude-code
 ```
 
-That's it. This installs wildcard `PreToolUse`, `PostToolUse`, and
+That's it. This installs the managed Guard rules and wildcard `PreToolUse`, `PostToolUse`, and
 `PostToolUseFailure` hooks. Rampart currently classifies:
 
 - **Bash, PowerShell, and Monitor commands** (`exec`)
@@ -127,6 +127,10 @@ default and a scanning failure cannot hide tool output:
   `--hook-failure=continue` returns to Claude Code's default.
 - `rampart verify claude-code` reports the active mode.
 
+Setup checks the version of the `claude` command on your `PATH`. An IDE
+extension or desktop app that runs its own older Claude Code may ignore the
+field, or reject the settings file, so update those surfaces too.
+
 With fail-closed enabled, a Rampart crash or hang blocks tool calls until it is
 fixed or the mode is reverted. Run the setup command above from a terminal
 outside Claude Code, or edit the settings file, to revert. A hung hook is still
@@ -171,7 +175,8 @@ Claude Code hooks always start from Rampart's built-in `standard` profile. To
 customize it:
 
 - Use `rampart allow "<command>"` or `rampart block "<command>"` for a
-  durable rule. `allow` overrides `ask` rules; a matching deny still wins.
+  durable rule. A command `allow` without `--for` or `--once` overrides `ask`
+  rules; temporary and path allows do not, and a matching deny still wins.
 - Add your own policy file with new policy names in `~/.rampart/policies/`.
   It applies from the next tool call.
 

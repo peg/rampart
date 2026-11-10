@@ -16,8 +16,10 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
@@ -390,7 +392,7 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 			if issues > 1 {
 				noun = "issues"
 			}
-			fmt.Fprintf(w, "%d %s found. Each ✗ line above names the command that fixes it.\n", issues, noun)
+			fmt.Fprintf(w, "%d %s found. See the ✗ lines above.\n", issues, noun)
 		}
 		if warnings > 0 {
 			fmt.Fprintf(w, "%d warning(s) — not blocking but worth reviewing.\n", warnings)
@@ -594,10 +596,15 @@ func doctorPolicies(emit emitFn) int {
 	}
 	policyDir := filepath.Join(home, ".rampart", "policies")
 
+	// The hook and serve always load the built-in standard profile, so policy
+	// files are optional additions.
 	entries, err := os.ReadDir(policyDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		emit("Policy", "ok", "built-in standard profile (no files in "+policyDir+")")
+		return 0
+	}
 	if err != nil {
-		emit("Policy", "fail", fmt.Sprintf("%s (not found)", policyDir)+hintSep+
-			"rampart init --profile standard")
+		emit("Policy", "fail", fmt.Sprintf("%s (%s)", policyDir, err))
 		return 1
 	}
 
@@ -658,10 +665,7 @@ func doctorPolicies(emit emitFn) int {
 		}
 	}
 	if !found {
-		emit("Policy", "fail",
-			fmt.Sprintf("no .yaml files in %s", policyDir)+hintSep+
-				"rampart init --profile standard")
-		issues++
+		emit("Policy", "ok", "built-in standard profile (no files in "+policyDir+")")
 	}
 	return issues
 }

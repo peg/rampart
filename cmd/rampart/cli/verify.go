@@ -465,11 +465,13 @@ func verifyClaudeHooksInstalled() verificationCheck {
 			Hint:    "Run `/status` and `/hooks` inside Claude Code to confirm the active settings source and Rampart hook",
 		}
 	}
+	failureMode := claudeFailureModeSummaryForHome(home)
 	return verificationCheck{
 		ID: "claude-hook-installation", Name: "Claude Code lifecycle hooks are installed and loadable",
 		Status: verificationPass, Expected: "all required lifecycle hooks using the current binary", Actual: "configured",
 		Message: strings.TrimSpace("Claude Code settings contain the complete current Rampart lifecycle hook set, with no readable setting disabling user hooks. " +
-			claudeFailureModeSummaryForHome(home)),
+			failureMode),
+		Hint: failureMode, // the human report prints hints, not messages
 	}
 }
 

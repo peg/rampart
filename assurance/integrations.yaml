@@ -1,6 +1,6 @@
 schema_version: rampart.assurance.v2
 baseline_release: v1.10.0
-reviewed_at: "2026-08-17"
+reviewed_at: "2026-11-09"
 
 # Version 2 uses the canonical Rampart command target as each integration id
 # and requires an explicit declaration of bare `rampart protect` eligibility.

@@ -478,6 +478,11 @@ func TestVerifyClaudeHooksReportsFailureMode(t *testing.T) {
 			if !strings.Contains(check.Message, tc.want) {
 				t.Errorf("message %q does not contain %q", check.Message, tc.want)
 			}
+			var human bytes.Buffer
+			printVerificationResult(&human, verificationReport{Checks: []verificationCheck{check}})
+			if !strings.Contains(human.String(), tc.want) {
+				t.Errorf("human report %q does not contain %q", human.String(), tc.want)
+			}
 		})
 	}
 }
