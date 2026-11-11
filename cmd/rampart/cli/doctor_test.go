@@ -497,6 +497,48 @@ func TestDoctorHooksUnprotectedAgentWarnsOnceAnotherIsProtected(t *testing.T) {
 		}
 	})
 
+	t.Run("set up before setup records existed, hooks later removed", func(t *testing.T) {
+		setup(t, true, "")
+		requireNoErr(t, testExecuteRoot(t, "setup", "codex"))
+		marker, err := integrationSetupMarkerPath("codex")
+		requireNoErr(t, err)
+		requireNoErr(t, os.Remove(marker)) // as an install from an earlier release has it
+		if _, _, codex := codexStatus(t); codex.Status != "ok" {
+			t.Fatalf("codex=%+v, want current hooks reported ok", codex)
+		}
+		requireNoErr(t, os.Remove(filepath.Join(os.Getenv("HOME"), ".codex", "hooks.json")))
+		issues, _, codex := codexStatus(t)
+		if issues != 1 || codex.Status != "fail" || !strings.Contains(codex.Message, "was protected") {
+			t.Fatalf("issues=%d codex=%+v, want hooks doctor saw earlier to fail once removed", issues, codex)
+		}
+	})
+
+	failedReport := func(checkedAt time.Time) verificationReport {
+		report := passingAssuranceReport("codex", checkedAt)
+		report.Checks[1].Status = verificationFail
+		return summarizeVerification(report)
+	}
+
+	t.Run("failed verification of an agent never set up", func(t *testing.T) {
+		setup(t, true, "")
+		requireNoErr(t, writeVerificationReceipt(failedReport(time.Now().UTC().Truncate(time.Second))))
+		issues, warnings, codex := codexStatus(t)
+		if issues != 0 || warnings != 1 || codex.Status != "warn" {
+			t.Fatalf("issues=%d warnings=%d codex=%+v, want a failed verify alone to stay a warning", issues, warnings, codex)
+		}
+	})
+
+	t.Run("failed re-verification keeps earlier protection evidence", func(t *testing.T) {
+		setup(t, true, "")
+		now := time.Now().UTC().Truncate(time.Second)
+		requireNoErr(t, writeVerificationReceipt(passingAssuranceReport("codex", now)))
+		requireNoErr(t, writeVerificationReceipt(failedReport(now.Add(time.Second))))
+		issues, _, codex := codexStatus(t)
+		if issues != 1 || codex.Status != "fail" || !strings.Contains(codex.Message, "was protected") {
+			t.Fatalf("issues=%d codex=%+v, want a once-verified agent to fail", issues, codex)
+		}
+	})
+
 	t.Run("nothing protected", func(t *testing.T) {
 		setup(t, false, "")
 		issues, _, codex := codexStatus(t)

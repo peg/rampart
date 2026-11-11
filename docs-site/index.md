@@ -147,7 +147,7 @@ decision. Evaluation is normally measured in microseconds, but end-to-end hook
 latency varies by machine and policy set.
 
 **Can AI agents be manipulated by prompt injection?**  
-Yes — a webpage or MCP tool response can contain instructions that try to override an agent's behavior. Rampart's `watch-prompt-injection` policy checks tool responses for high-confidence patterns and blocks matching responses on supported post-tool hooks. [Learn more →](guides/prompt-injection.md)
+Yes — a webpage or MCP tool response can contain instructions that try to override an agent's behavior. Rampart's `watch-prompt-injection` policy checks tool responses for high-confidence patterns and blocks matching responses where the host's post-tool hook can block them. [Learn more →](guides/prompt-injection.md)
 
 **Does Rampart send my commands to any external server?**  
 Core Rampart policy evaluation, audit logging, and the dashboard are local.

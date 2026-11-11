@@ -844,7 +844,12 @@ func restrictiveCommandCandidates(command string) ([]string, bool) {
 		for _, body := range restrictivePOSIXBodyCandidates(candidate) {
 			appendCandidate(body, depth+1)
 		}
-		tokens := unwrapRestrictiveExecutor(stripLeadingEnvAssignments(tokenizeForOS(candidate, "posix")))
+		words := stripLeadingEnvAssignments(tokenizeForOS(candidate, "posix"))
+		tokens := unwrapRestrictiveExecutor(words)
+		if len(tokens) > 0 && !strSlicesEqual(tokens, unwrapExecutors(words, false)) {
+			// The command behind an executor allow rules do not look through.
+			appendCandidate(joinPOSIXWords(tokens), depth+1)
+		}
 		if body, wrapped := literalShellPayload(tokens); wrapped {
 			appendCandidate(body, depth+1)
 		}
@@ -1078,9 +1083,14 @@ func launcherPayloads(tokens []string) []string {
 					return []string{joinPOSIXWords(tokens[i+1:])}
 				}
 				return nil
-			case token == "-o" || token == "-f" || token == "--output" || token == "--format":
+			case token == "--output" || token == "--format":
 				i++
 			case strings.HasPrefix(token, "-") && len(token) > 1:
+				// A short cluster ending in -o or -f (-ao FILE, -pf FMT)
+				// takes the next word as that option's value.
+				if !strings.HasPrefix(token, "--") && shortClusterValueNext(token, "of") {
+					i++
+				}
 			default:
 				return []string{joinPOSIXWords(tokens[i:])}
 			}
@@ -1164,11 +1174,11 @@ func executorWriteTargets(tokens []string) []string {
 	for len(tokens) > 1 {
 		switch shellWrapperBasename(tokens[0]) {
 		case "env":
-			targets = append(targets, leadingOptionValues(tokens, "-C", "--chdir",
-				map[string]bool{"-u": true, "--unset": true, "-S": true, "--split-string": true, "--argv0": true})...)
+			targets = append(targets, leadingOptionValues(tokens, 'C', "--chdir", "uCPS",
+				map[string]bool{"--unset": true, "--split-string": true, "--argv0": true})...)
 		case "time":
-			targets = append(targets, leadingOptionValues(tokens, "-o", "--output",
-				map[string]bool{"-f": true, "--format": true})...)
+			targets = append(targets, leadingOptionValues(tokens, 'o', "--output", "of",
+				map[string]bool{"--format": true})...)
 		}
 		next := stripPOSIXTransparentExecutorOnce(tokens)
 		if strSlicesEqual(next, tokens) {
@@ -1180,33 +1190,61 @@ func executorWriteTargets(tokens []string) []string {
 }
 
 // leadingOptionValues returns the values given to one option before a
-// command's first operand, in its separate (-C dir), attached (-Cdir) and
-// long (--chdir=dir, --chdir dir) forms. other lists options that consume
-// the next word, so their values are not mistaken for the first operand.
-func leadingOptionValues(tokens []string, short, long string, other map[string]bool) []string {
+// command's first operand, in its separate (-C dir), attached (-Cdir),
+// clustered (-iC dir, -iCdir) and long (--chdir=dir, --chdir dir) forms.
+// shortValues lists every short option that takes a value, so a value that
+// belongs to another option is skipped rather than read as the first operand;
+// longValues does the same for long options.
+func leadingOptionValues(tokens []string, short byte, long, shortValues string, longValues map[string]bool) []string {
 	var values []string
 	for i := 1; i < len(tokens); i++ {
 		token := tokens[i]
 		switch {
 		case token == "--":
 			return values
-		case token == short || token == long:
+		case token == long:
 			if i+1 < len(tokens) {
 				values = append(values, tokens[i+1])
 			}
 			i++
 		case strings.HasPrefix(token, long+"="):
 			values = append(values, strings.TrimPrefix(token, long+"="))
-		case len(short) == 2 && strings.HasPrefix(token, short) && len(token) > 2:
-			values = append(values, token[2:])
-		case other[token]:
+		case longValues[token]:
 			i++
-		case strings.HasPrefix(token, "-") && len(token) > 1, strings.Contains(token, "="):
+		case strings.HasPrefix(token, "--"):
+		case strings.HasPrefix(token, "-") && len(token) > 1:
+			for at := 1; at < len(token); at++ {
+				if strings.IndexByte(shortValues, token[at]) < 0 {
+					continue
+				}
+				value := token[at+1:]
+				if value == "" && i+1 < len(tokens) {
+					i++
+					value = tokens[i]
+				}
+				if token[at] == short && value != "" {
+					values = append(values, value)
+				}
+				break
+			}
+		case strings.Contains(token, "="):
 		default:
 			return values
 		}
 	}
 	return values
+}
+
+// shortClusterValueNext reports whether a short option cluster's first
+// value-taking option (one of shortValues) ends the cluster, so its value is
+// the next word.
+func shortClusterValueNext(token, shortValues string) bool {
+	for at := 1; at < len(token); at++ {
+		if strings.IndexByte(shortValues, token[at]) >= 0 {
+			return at == len(token)-1
+		}
+	}
+	return false
 }
 
 // pathChangingUtilities are the commands whose path operands are created,
@@ -1340,7 +1378,30 @@ func pathChangeTargets(tokens []string) []string {
 			}
 		}
 		if changes {
-			for _, token := range tokens[1:] {
+			start := 1
+			// Options that precede the starting points: -H, -L, -P and the
+			// BSD -E, -X, -d, -s, -x; GNU -D takes a value and -O is
+			// attached; BSD -f names a starting point of its own.
+		leading:
+			for start < len(tokens) {
+				switch token := tokens[start]; {
+				case token == "--":
+					start++
+					break leading
+				case token == "-D":
+					start += 2
+				case token == "-f" && start+1 < len(tokens):
+					out = append(out, tokens[start+1])
+					start += 2
+				case strings.HasPrefix(token, "-O"):
+					start++
+				case len(token) > 1 && token[0] == '-' && strings.Trim(token[1:], "HLPEXdsx") == "":
+					start++
+				default:
+					break leading
+				}
+			}
+			for _, token := range tokens[min(start, len(tokens)):] {
 				if strings.HasPrefix(token, "-") || token == "(" || token == "!" {
 					break
 				}
@@ -1515,8 +1576,18 @@ func joinPOSIXWords(tokens []string) string {
 }
 
 func unwrapRestrictiveExecutor(tokens []string) []string {
+	return unwrapExecutors(tokens, true)
+}
+
+// unwrapExecutors removes leading transparent executors. With restrictive
+// set it also looks through env -P, which allow rules must not see through
+// because the altpath decides which binary runs.
+func unwrapExecutors(tokens []string, restrictive bool) []string {
 	for {
 		next := stripPOSIXTransparentExecutorOnce(tokens)
+		if restrictive && strSlicesEqual(next, tokens) && len(tokens) > 1 && shellWrapperBasename(tokens[0]) == "env" {
+			next = stripPOSIXEnvUtilityMode(tokens, true)
+		}
 		if len(next) > 1 && (shellWrapperBasename(next[0]) == "busybox" || shellWrapperBasename(next[0]) == "toybox") {
 			next = next[1:]
 		}

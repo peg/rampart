@@ -1833,7 +1833,17 @@ func findRequireApprovalUsages(userHomeDir func() (string, error)) ([]requireApp
 // Only files whose names exactly match a known built-in profile are updated.
 // Custom user files (custom.yaml, org.yaml, etc.) are never touched.
 func upgradeStandardPolicies(out io.Writer, dryRun bool) error {
-	return upgradeStandardPoliciesForVersion(out, dryRun, build.Version)
+	if err := upgradeStandardPoliciesForVersion(out, dryRun, build.Version); err != nil {
+		return err
+	}
+	if !dryRun {
+		// Installs set up before setup records existed get them here, while
+		// their hooks are still in place.
+		if home, err := os.UserHomeDir(); err == nil {
+			recordObservedIntegrations(home)
+		}
+	}
+	return nil
 }
 
 func upgradeStandardPoliciesForVersion(out io.Writer, dryRun bool, currentVersion string) error {

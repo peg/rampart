@@ -56,6 +56,8 @@ func TestOpenClawPolicyDecisions(t *testing.T) {
 		{name: "deny: sed in-place guard", tool: "exec", command: "sed -i 's/deny/allow/' ~/.rampart/policies/guard.yaml", expected: engine.ActionDeny},
 		{name: "deny: time output into guard", tool: "exec", command: "time -o ~/.rampart/policies/guard.yaml git status", expected: engine.ActionDeny},
 		{name: "allow: time takes the wrapped command's decision", tool: "exec", command: "time git status", expected: engine.ActionAllow},
+		{name: "ask: shell runs an rcfile before the allowed command", tool: "exec", command: "bash --rcfile /tmp/f -ic 'git status'", expected: engine.ActionAsk},
+		{name: "ask: env altpath chooses the binary", tool: "exec", command: "env -P /tmp/bin git status", expected: engine.ActionAsk},
 		{name: "ask not deny: cat project .rampart after cd", tool: "exec", command: "cd /home/alice/project && cat .rampart/policy.yaml", expected: engine.ActionAsk},
 		{name: "ask not deny: ls .rampart after cleanup", tool: "exec", command: "rm -rf build && ls .rampart", expected: engine.ActionAsk},
 		{name: "deny: xargs rampart setup", tool: "exec", command: "xargs rampart setup openclaw --remove", expected: engine.ActionDeny},
