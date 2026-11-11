@@ -136,9 +136,9 @@ An agent could encode commands to bypass pattern matching:
 - Rampart decodes base64 commands before pattern matching
 - Leading shell comments and ANSI escape sequences are stripped
 - Null bytes and control characters are removed
-- Subcommand extraction: `$(cmd)`, backticks, `eval 'cmd'` — inner commands are matched independently
-- Common obfuscation patterns (`base64 *`, `eval *`, `xxd -r | bash`) trigger deny rules in standard policy
-- The semantic verification sidecar classifies intent regardless of encoding
+- Subcommand extraction: `$(cmd)` and backticks — inner commands are matched independently
+- Decoded payloads piped into a shell (`base64 -d | bash`, `xxd -r | bash`) trigger deny rules in standard policy
+- The optional semantic verification sidecar can classify ambiguous commands
 
 **Coverage:** Pattern matching catches the encodings and shell forms it knows. The optional semantic verification layer can classify ambiguous or obfuscated commands, but it is probabilistic and does not cover every encoding. Treat both layers as reducing the obfuscation surface, not closing it.
 

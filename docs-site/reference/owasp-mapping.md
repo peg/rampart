@@ -94,7 +94,7 @@ This is a partial mitigation for ASI06 (Memory & Context Poisoning) — it preve
 
 ## What Rampart Does Not Do
 
-**ASI03 — Identity and Privilege Abuse:** Rampart does not manage agent credentials. If an agent holds an over-scoped API key, Rampart cannot restrict which endpoints that key can access. Tools like [Astrix](https://astrix.security/) or cloud IAM policies are better suited for credential scoping and lifecycle management.
+**ASI03 — Identity and Privilege Abuse:** Rampart does not manage agent credentials. If an agent holds an over-scoped API key, Rampart cannot restrict which endpoints that key can access. Credential-scoping and IAM controls are better suited for that.
 
 **ASI07 — Insecure Inter-Agent Communication:** Rampart operates at the agent-to-OS boundary. It has no visibility into messages passed between agents in a multi-agent system. Frameworks that provide agent-to-agent authentication, message signing, and replay protection are needed here. This is an architectural gap, not a missing feature — it would require Rampart to become a network-level proxy between agents rather than an OS-level policy engine.
 
