@@ -1,5 +1,6 @@
 # Build
 /rampart
+/rampart-linux
 /bin/
 /dist/
 *.exe
@@ -32,10 +33,7 @@ coverage.out
 
 # Runtime audit logs (top-level only, not internal/audit/)
 /audit/
-.wrangler/
 site/
-reddit-post.md
-.home/
 rampart-export-*.json
 
 # Preload library build artifacts (build from source with: cd preload && make)
