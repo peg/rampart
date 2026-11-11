@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Release builds use Go 1.26.11** — the module baseline, container build and
+  source-build requirement now use the Go patch release that resolves the
+  called standard-library vulnerability GO-2026-6859 in `net/http`, reported
+  against Go 1.26.10.
 - **Rampart's own files are protected from common shell writes** — the
   standard and OpenClaw profiles now deny a simple shell command that changes a
   `.rampart` path through an output redirection, a file utility such as `rm`,
