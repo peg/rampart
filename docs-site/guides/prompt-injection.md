@@ -19,7 +19,7 @@ Prompt injection also appears in issue trackers, README files, chat transcripts,
 
 Rampart's `watch-prompt-injection` policy checks tool responses for high-confidence instruction-hijack patterns and records each match in the audit stream.
 
-The default action is `deny`. Response checks run after the tool, so there is no approval point left: on integrations with post-tool hooks, a matching response is blocked before it reaches the model. The tool itself has already run.
+The default action is `deny`. Response checks run after the tool, so there is no approval point left: on integrations whose post-tool hook can block or replace a result, a matching response is blocked before it reaches the model. Hosts whose post-tool hooks only observe record the match but cannot block it. The tool itself has already run.
 
 ## The Patterns Detected
 

@@ -31,7 +31,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
 )
 
 const EventSchemaVersion = "rampart.audit.v1"
@@ -208,7 +207,7 @@ func eventKeysCanonical(data []byte) bool {
 				}
 			}
 			keys = append(keys, key)
-			if top.kind == typed && bytes.ContainsFunc(key, unicode.IsUpper) {
+			if top.kind == typed && !schemaKeySpelling(key) {
 				return false
 			}
 			top.child = dynamic
@@ -220,6 +219,20 @@ func eventKeysCanonical(data []byte) bool {
 			case len(stack) == 1 && string(key) == "compacted_fields":
 				top.child = typedValues
 			}
+		}
+	}
+	return true
+}
+
+// schemaKeySpelling reports whether key is spelled the way every audit schema
+// key is: lowercase ASCII letters, digits and underscores. encoding/json folds
+// some non-ASCII letters onto ASCII ones (U+017F onto "s", U+212A onto "k"), so
+// any other byte could name a schema field to Go and a different key to other
+// parsers.
+func schemaKeySpelling(key []byte) bool {
+	for _, b := range key {
+		if (b < 'a' || b > 'z') && (b < '0' || b > '9') && b != '_' {
+			return false
 		}
 	}
 	return true

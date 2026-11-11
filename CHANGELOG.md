@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.10.0] - 2026-11-09
+## [1.10.0] - 2026-11-10
 
 ### Security
 
@@ -15,8 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   standard and OpenClaw profiles now deny a simple shell command that changes a
   `.rampart` path through an output redirection, a file utility such as `rm`,
   `cp`, `mv`, `ln`, `mkdir`, `truncate` or `chmod`, an in-place `sed` or `perl`
-  edit, `dd of=`, `find -delete`, `cd`, `pushd`, `env -C` or `time -o`, so an
-  agent cannot remove or replace the managed Guard policy that way. Only the
+  edit, `dd of=`, `find -delete`, `cd`, `pushd`, `env -C` or `time -o` (also
+  inside option clusters such as `env -iC` and `time -ao`, and after `find -H`,
+  `-L` or `-P`), so an agent cannot remove or replace the managed Guard policy
+  that way. Only the
   destination of `cp`, `install`, `ln` and `rsync` counts, so copying a policy
   out of `.rampart` is allowed. This is a deny list, not a complete boundary: a
   glob or variable that stands in for the `.rampart` name, and utilities it
@@ -36,11 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   payloads never create a new allow. Arguments that `xargs` reads from
   standard input are not known to Rampart.
 - **Shell wrappers are unwrapped through more of their options** — a shell
-  option that takes a value (`bash -O extglob -c`, `--rcfile FILE`), a cluster
-  of `env` options (`env -iu NAME`, `env -P PATH`), `builtin`, and `time` before
-  a `( … )` or `{ … }` group no longer hide the command they run. A
-  redirection written against an operand (`path>/dev/null`) no longer hides the
-  operand.
+  option that takes a value (`bash -O extglob -c`), a cluster of `env` options
+  (`env -iu NAME`), `builtin`, and `time` before a `( … )` or `{ … }` group no
+  longer hide the command they run. A shell started with `--rcfile` or
+  `--init-file`, and `env -P`, run a file or binary Rampart does not see, so
+  deny and ask rules check the command they name but it is never allowed on
+  its own. A redirection written against an operand (`path>/dev/null`) no
+  longer hides the operand.
 - **OpenClaw browser navigation is judged by the URL OpenClaw opens** — the
   adapter derives `url`, `domain` and `scheme` from `targetUrl` (or `url` when
   it is absent), so a second, conflicting alias cannot decide the policy.
@@ -52,8 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The previous canary read a plausible SSH key path, which a host that never
   loaded the hook would have read.
 - **Audit hashes cover every stored field** — a record with a field the
-  schema does not define, a repeated key, or a schema key in another letter
-  case now fails `rampart audit verify` and every other hash check. Before, such
+  schema does not define, a repeated key, or a schema key spelled with anything
+  but lowercase ASCII letters, digits and underscores (another letter case, or
+  a letter that JSON decoding folds onto one) now fails `rampart audit verify`
+  and every other hash check. Before, such
   a record could be changed while its hash still verified.
 - **Malformed audit records are reported, not skipped silently** — `audit
   tail`, `watch` and the HTML report warn about them, `rampart serve` logs a
@@ -74,8 +80,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Rampart cannot see whether you trusted the hooks in Codex `/hooks`, so it
   reports them as configured, not active.
 - **Doctor remembers setup** — removing hooks that `rampart setup` installed is
-  now a failure even if verification never ran. `rampart setup <agent>
-  --remove` clears the record.
+  now a failure even if verification never ran. On an install set up by an
+  earlier release, `rampart upgrade` and `rampart doctor` record the agents
+  whose Rampart hooks they find, so removing those later also fails. A failed
+  `rampart verify` of an agent that was never set up is not a record.
+  `rampart setup <agent> --remove` clears the record.
 - **Release images are built from the tagged commit and published as tested** —
   the container workflow checks out the release commit, re-checks the tag
   before publishing, pins its base images by digest, and publishes only the

@@ -127,6 +127,13 @@ func writeVerificationReceipt(report verificationReport) error {
 	if err != nil {
 		return fmt.Errorf("parse verification time: %w", err)
 	}
+	if report.Summary.Failed > 0 && integrationProtectionRecorded(driver.ID) {
+		// A failing receipt no longer counts as protection, so keep the
+		// earlier evidence as a setup record before replacing it.
+		if err := recordIntegrationSetup(driver.ID); err != nil {
+			return err
+		}
+	}
 	receipt := verificationReceipt{
 		SchemaVersion:          verificationReceiptSchemaVersion,
 		IntegrationID:          driver.ID,
@@ -218,17 +225,43 @@ func hasVerificationReceipt(integrationID string) bool {
 }
 
 // integrationProtectionRecorded reports whether setup, protect or verify has
-// recorded this integration as protected on this machine.
+// recorded this integration as protected on this machine. A receipt that
+// reads cleanly and records a failed check is a verification run, not proof of
+// protection: running `rampart verify` against an agent that was never set up
+// must not make doctor expect it. Any other receipt, unreadable ones included,
+// counts.
 func integrationProtectionRecorded(integrationID string) bool {
-	if hasVerificationReceipt(integrationID) {
-		return true
-	}
 	path, err := integrationSetupMarkerPath(integrationID)
 	if err != nil {
 		return false
 	}
-	_, err = os.Lstat(path)
-	return err == nil
+	if _, err := os.Lstat(path); err == nil {
+		return true
+	}
+	if !hasVerificationReceipt(integrationID) {
+		return false
+	}
+	receipt, err := readVerificationReceipt(integrationID)
+	return err != nil || receipt.Summary.Failed == 0
+}
+
+// recordObservedIntegrations records setup for agents whose Rampart hooks are
+// installed but not recorded, as on installs set up before setup records
+// existed, so doctor fails rather than warns if those hooks are later removed.
+// Errors are ignored: the record only makes doctor stricter.
+func recordObservedIntegrations(home string) {
+	for _, observed := range []struct {
+		id      string
+		present func(string) bool
+	}{
+		{"claude-code", claudeRampartHooksPresent},
+		{"cline", clineManagedHooksPresent},
+		{"codex", codexRampartIntegrationPresent},
+	} {
+		if observed.present(home) && !integrationProtectionRecorded(observed.id) {
+			_ = recordIntegrationSetup(observed.id)
+		}
+	}
 }
 
 // clearVerificationReceipt forgets an integration's receipt and setup record

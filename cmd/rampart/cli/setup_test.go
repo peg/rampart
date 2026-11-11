@@ -262,10 +262,15 @@ func TestRemoveClineHooks_NoHooks(t *testing.T) {
 }
 
 func TestRemoveClineHooks_Workspace(t *testing.T) {
+	testSetHome(t, t.TempDir())
 	tmpDir := t.TempDir()
 	origDir, _ := os.Getwd()
 	os.Chdir(tmpDir)
 	defer os.Chdir(origDir)
+	// The user-level install's record must survive removing a workspace install.
+	if err := recordIntegrationSetup("cline"); err != nil {
+		t.Fatal(err)
+	}
 
 	hookDir := filepath.Join(tmpDir, ".clinerules", "hooks")
 	preDir := filepath.Join(hookDir, "PreToolUse")
@@ -284,6 +289,9 @@ func TestRemoveClineHooks_Workspace(t *testing.T) {
 
 	if !strings.Contains(out.String(), "Removed 1 Rampart Cline hook(s)") {
 		t.Errorf("expected removal message, got: %s", out.String())
+	}
+	if !integrationProtectionRecorded("cline") {
+		t.Error("removing a workspace install cleared the user-level setup record")
 	}
 }
 

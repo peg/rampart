@@ -908,6 +908,7 @@ func doctorHooks(emit emitFn) (issues, warnings int) {
 	if err != nil {
 		return 0, 0
 	}
+	recordObservedIntegrations(home)
 	anyProtected := len(detectProtectedAgents()) > 0
 	claudeDir := claudeConfigDir(home)
 	_, claudeDirErr := os.Stat(claudeDir)

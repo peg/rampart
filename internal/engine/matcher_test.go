@@ -945,6 +945,15 @@ func TestRestrictiveWriteTargets(t *testing.T) {
 		{"env attached chdir", `env --chdir=/guard rm -f p`, true},
 		{"time output file", `time -o /guard/p true`, true},
 		{"time payload", `time -o /tmp/t rm -rf /`, true},
+		{"env clustered chdir", `env -iC /guard rm -f p`, true},
+		{"env clustered attached chdir", `env -iC/guard rm -f p`, true},
+		{"env altpath payload", `env -P /bin rm -rf /`, true},
+		{"time clustered output file", `time -ao /guard/p true`, true},
+		{"time clustered output payload", `time -ao /tmp/t rm -rf /`, true},
+		{"time clustered format payload", `time -pf %e rm -rf /`, true},
+		{"find leading option", `find -L /guard -type f -exec rm {} +`, true},
+		{"find leading option delete", `find -H /guard -delete`, true},
+		{"find BSD -f start", `find -f /guard -delete`, true},
 		{"sed in-place", `sed -i s/a/b/ /guard/p`, true},
 		{"sed print", `sed -n p /guard/p`, false},
 		{"dd output", `dd if=/dev/zero of=/guard/p`, true},
@@ -973,6 +982,24 @@ func TestTimeOutputIsNotUnwrappedForAllow(t *testing.T) {
 		"time -p git status":                true,
 		"time -o /tmp/out git status":       false,
 		"time --output=/tmp/out git status": false,
+	} {
+		call := ToolCall{Tool: "exec", Params: map[string]any{"command": command}}
+		if got := matchConditionForAction(cond, call, nil, ActionAllow); got != want {
+			t.Errorf("allow match %q = %v, want %v", command, got, want)
+		}
+	}
+}
+
+func TestFileRunningWrappersAreNotUnwrappedForAllow(t *testing.T) {
+	cond := Condition{CommandMatches: []string{"git status"}}
+	for command, want := range map[string]bool{
+		"bash -c 'git status'":                       true,
+		"env -i git status":                          true,
+		"bash --rcfile /tmp/f -ic 'git status'":      false,
+		"bash --init-file /tmp/f -i -c 'git status'": false,
+		"env -P /tmp/bin git status":                 false,
+		"env -iP /tmp/bin git status":                false,
+		"env -P/tmp/bin git status":                  false,
 	} {
 		call := ToolCall{Tool: "exec", Params: map[string]any{"command": command}}
 		if got := matchConditionForAction(cond, call, nil, ActionAllow); got != want {

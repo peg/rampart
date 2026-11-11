@@ -152,6 +152,8 @@ func TestVerifyHashRejectsContentTheHashDoesNotCover(t *testing.T) {
 		"case variant duplicate":   strings.Replace(clean, `"tool":"exec"`, `"TOOL":"read","tool":"exec"`, 1),
 		"escaped duplicate key":    strings.Replace(clean, `"tool":"exec"`, `"\u0074ool":"read","tool":"exec"`, 1),
 		"nested request duplicate": strings.Replace(clean, `{"k":1}`, `{"k":2,"k":1}`, 1),
+		"folded non-ASCII key":     strings.Replace(clean, `"decision":`, `"decision":{"action":"deny"},"deciſion":`, 1),
+		"escaped folded key":       strings.Replace(clean, `"decision":`, `"decision":{"action":"deny"},"deci\u017fion":`, 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if record == clean {

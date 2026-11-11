@@ -608,6 +608,13 @@ func isExecFlag(token string) bool {
 }
 
 func stripPOSIXEnvUtility(tokens []string) []string {
+	return stripPOSIXEnvUtilityMode(tokens, false)
+}
+
+// stripPOSIXEnvUtilityMode returns the command env runs. With altPathTransparent
+// false, an -P (altpath) option leaves the tokens unchanged; deny and ask
+// candidates pass true to see the command anyway.
+func stripPOSIXEnvUtilityMode(tokens []string, altPathTransparent bool) []string {
 	i := 1
 	for i < len(tokens) {
 		token := tokens[i]
@@ -676,6 +683,11 @@ func stripPOSIXEnvUtility(tokens []string) []string {
 			i++
 		default:
 			consumesNext, ok := envShortOptions(token)
+			if ok && envClusterSetsAltPath(token) && !altPathTransparent {
+				// -P chooses the directories the command is looked up in, so
+				// the named command may not be the one that runs.
+				return tokens
+			}
 			if ok && consumesNext {
 				if i+1 >= len(tokens) {
 					return tokens
@@ -713,6 +725,20 @@ func envShortOptions(token string) (consumesNext, ok bool) {
 		}
 	}
 	return false, true
+}
+
+// envClusterSetsAltPath reports whether an env short option cluster that
+// envShortOptions accepted includes -P.
+func envClusterSetsAltPath(token string) bool {
+	for at := 1; at < len(token); at++ {
+		switch token[at] {
+		case 'P':
+			return true
+		case 'u', 'C':
+			return false // the rest of the cluster is that option's value
+		}
+	}
+	return false
 }
 
 func stripPOSIXNohup(tokens []string) []string {
@@ -1016,6 +1042,12 @@ func shellOptionTakesValue(token string) bool {
 	return false
 }
 
+// shellOptionRunsFile reports whether a shell option names a startup file the
+// shell runs before its command (bash --rcfile FILE, --init-file FILE).
+func shellOptionRunsFile(token string) bool {
+	return token == "--rcfile" || token == "--init-file"
+}
+
 // hasCFlag checks if a flag token contains -c, either standalone or combined
 // (e.g. -lc, -ic). Returns true for any single-dash flag containing 'c'.
 func hasCFlag(token string) bool {
@@ -1062,6 +1094,12 @@ func stripShellWrapperOnceForOS(tokens []string, goos string) ([]string, string)
 		// Skip other flags like --norc, -l, etc.
 		for i := 1; i < len(tokens); i++ {
 			tok := tokens[i]
+			if shellOptionRunsFile(tok) {
+				// The shell runs a file before the command string, so the
+				// string alone is not what runs. Deny and ask rules still see
+				// it through literalShellPayload.
+				return tokens, goos
+			}
 			if shellOptionTakesValue(tok) {
 				i++
 				continue
