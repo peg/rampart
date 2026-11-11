@@ -415,17 +415,30 @@ func printTestResult(w io.Writer, d engine.Decision, noColor bool) {
 		if !noColor {
 			color = "\033[35m" // magenta
 		}
+	case engine.ActionAsk:
+		icon = "👤"
+		label = "ASK"
+		if !noColor {
+			color = "\033[35m" // magenta
+		}
 	case engine.ActionWatch:
 		icon = "📝"
 		label = "LOG"
 		if !noColor {
 			color = "\033[33m"
 		}
-	default:
+	case engine.ActionAllow:
 		icon = "✅"
 		label = "ALLOW"
 		if !noColor {
 			color = "\033[32m"
+		}
+	default:
+		// Never present an unlisted action as an allow.
+		icon = "❔"
+		label = strings.ToUpper(d.Action.String())
+		if !noColor {
+			color = "\033[33m"
 		}
 	}
 

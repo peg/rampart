@@ -16,6 +16,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -578,7 +579,9 @@ func todayEventsAt(now time.Time) (allow, deny, pending int, lastDeny *audit.Eve
 
 	for _, path := range candidates {
 		events, _, err := audit.ReadEventsFromOffset(path, 0)
-		if err != nil {
+		// Malformed records are skipped by the reader; count the rest.
+		var malformed *audit.MalformedRecordsError
+		if err != nil && !errors.As(err, &malformed) {
 			continue
 		}
 		for i := range events {

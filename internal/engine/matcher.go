@@ -735,7 +735,7 @@ func restrictivePOSIXBodyCandidates(component string) []string {
 		}
 		word, rest := leadingShellWord(candidate)
 		switch word {
-		case "if", "elif", "while", "until", "then", "do", "else", "!":
+		case "if", "elif", "while", "until", "then", "do", "else", "!", "time":
 			candidate = rest
 			changed = true
 			continue
@@ -844,9 +844,34 @@ func restrictiveCommandCandidates(command string) ([]string, bool) {
 		for _, body := range restrictivePOSIXBodyCandidates(candidate) {
 			appendCandidate(body, depth+1)
 		}
-		tokens := unwrapRestrictiveExecutor(stripLeadingEnvAssignments(tokenizeForOS(candidate, "posix")))
+		words := stripLeadingEnvAssignments(tokenizeForOS(candidate, "posix"))
+		tokens := unwrapRestrictiveExecutor(words)
+		if len(tokens) > 0 && !strSlicesEqual(tokens, unwrapExecutors(words, false)) {
+			// The command behind an executor allow rules do not look through.
+			appendCandidate(joinPOSIXWords(tokens), depth+1)
+		}
 		if body, wrapped := literalShellPayload(tokens); wrapped {
 			appendCandidate(body, depth+1)
+		}
+		for _, nested := range launcherPayloads(tokens) {
+			appendCandidate(nested, depth+1)
+		}
+		// Files a command writes, and directories it moves into, are offered
+		// as "tee <path>" so one tee rule covers every way of naming the same
+		// change. Redirections are read from the quote-masked text so a quoted
+		// ">" is prose, not a write. Utility operands are taken only from a
+		// simple command; a compound candidate's components are candidates in
+		// their own right, so an operand of one never borrows another's verb.
+		writes := redirectWriteTargets(tokenizeForOS(maskLiteralRedirects(candidate), "posix"))
+		if len(SplitCompoundCommand(candidate)) <= 1 {
+			// Comments are found in the quoted text, so a quoted or escaped
+			// "#" operand is still an operand.
+			raw := stripLeadingEnvAssignments(shellWords(stripUnquotedShellComment(candidate)))
+			writes = append(writes, executorWriteTargets(raw)...)
+			writes = append(writes, pathChangeTargets(unwrapRestrictiveExecutor(raw))...)
+		}
+		for _, target := range writes {
+			appendCandidate("tee "+joinPOSIXWords([]string{target}), depth+1)
 		}
 	}
 	appendCandidate(command, 0)
@@ -951,14 +976,7 @@ func restrictiveRMOperands(tokens []string) []string {
 	operands := make([]string, 0, len(tokens))
 	optionsEnded := false
 	for index := 1; index < len(tokens); index++ {
-		token := tokens[index]
-		if shellRedirectionConsumesNext(token) {
-			index++
-			continue
-		}
-		if isShellRedirectionToken(token) {
-			continue
-		}
+		token := tokens[index] // redirections were removed by shellWords
 		if optionsEnded {
 			operands = append(operands, token)
 			continue
@@ -1045,9 +1063,531 @@ func mayNeedCanonicalCommandAliases(command string) bool {
 		(containsFold(command, "rm") || containsFold(command, "find"))
 }
 
+// launcherPayloads returns the literal commands that xargs, find's
+// -exec/-execdir/-ok/-okdir actions, and time with an output file run. They are deny/ask candidates only:
+// a launcher is not transparent (xargs appends input, find substitutes {}),
+// so these payloads never grant an allow. Parsing is deliberately lenient,
+// because a misparse here can only add a restrictive candidate.
+func launcherPayloads(tokens []string) []string {
+	if len(tokens) < 2 {
+		return nil
+	}
+	switch shellWrapperBasename(tokens[0]) {
+	case "time":
+		// time with an output file is not transparent (it writes the file),
+		// so its command is exposed here for deny and ask rules only.
+		for i := 1; i < len(tokens); i++ {
+			switch token := tokens[i]; {
+			case token == "--":
+				if i+1 < len(tokens) {
+					return []string{joinPOSIXWords(tokens[i+1:])}
+				}
+				return nil
+			case token == "--output" || token == "--format":
+				i++
+			case strings.HasPrefix(token, "-") && len(token) > 1:
+				// A short cluster ending in -o or -f (-ao FILE, -pf FMT)
+				// takes the next word as that option's value.
+				if !strings.HasPrefix(token, "--") && shortClusterValueNext(token, "of") {
+					i++
+				}
+			default:
+				return []string{joinPOSIXWords(tokens[i:])}
+			}
+		}
+	case "xargs":
+		if start := xargsCommandStart(tokens); start > 0 && start < len(tokens) {
+			return []string{joinPOSIXWords(tokens[start:])}
+		}
+	case "find":
+		var payloads []string
+		for i := 1; i < len(tokens); i++ {
+			switch tokens[i] {
+			case "-exec", "-execdir", "-ok", "-okdir":
+			default:
+				continue
+			}
+			end := i + 1
+			for end < len(tokens) && tokens[end] != ";" && tokens[end] != "+" {
+				end++
+			}
+			if end > i+1 {
+				payloads = append(payloads, joinPOSIXWords(tokens[i+1:end]))
+			}
+			i = end
+		}
+		return payloads
+	}
+	return nil
+}
+
+// redirectWriteTargets returns the files that output redirections write. Each
+// one becomes a "tee <target>" deny/ask candidate, so a rule written for tee
+// also covers `cmd > target` in every path spelling. Duplications such as
+// 2>&1 and the /dev sinks are not file writes.
+//
+// The tokens must come from quote-masked text (maskLiteralRedirects), so every
+// remaining ">" is a shell operator, including one attached to the previous
+// word (echo x>file). ">&word" writes a file unless word is a descriptor
+// number or "-", and "<>" opens its target for writing.
+func redirectWriteTargets(tokens []string) []string {
+	var targets []string
+	add := func(target string) {
+		switch target {
+		case "", "/dev/null", "/dev/stdout", "/dev/stderr":
+			return
+		}
+		targets = append(targets, target)
+	}
+	for i, token := range tokens {
+		at := strings.IndexByte(token, '>')
+		if at < 0 {
+			continue
+		}
+		rest := token[at+1:]
+		duplicate := false
+		if rest != "" {
+			switch rest[0] {
+			case '>', '|':
+				rest = rest[1:]
+			case '&':
+				rest = rest[1:]
+				duplicate = true
+			}
+		}
+		if rest == "" && i+1 < len(tokens) {
+			rest = tokens[i+1]
+		}
+		if duplicate && (rest == "-" || strings.Trim(rest, "0123456789") == "") {
+			continue // 2>&1, >&- and similar move descriptors, not files
+		}
+		add(rest)
+	}
+	return targets
+}
+
+// executorWriteTargets returns the paths that transparent executors change
+// before running their command: env -C/--chdir moves into a directory and
+// time -o/--output writes its report to a file.
+func executorWriteTargets(tokens []string) []string {
+	var targets []string
+	for len(tokens) > 1 {
+		switch shellWrapperBasename(tokens[0]) {
+		case "env":
+			targets = append(targets, leadingOptionValues(tokens, 'C', "--chdir", "uCPS",
+				map[string]bool{"--unset": true, "--split-string": true, "--argv0": true})...)
+		case "time":
+			targets = append(targets, leadingOptionValues(tokens, 'o', "--output", "of",
+				map[string]bool{"--format": true})...)
+		}
+		next := stripPOSIXTransparentExecutorOnce(tokens)
+		if strSlicesEqual(next, tokens) {
+			break
+		}
+		tokens = next
+	}
+	return targets
+}
+
+// leadingOptionValues returns the values given to one option before a
+// command's first operand, in its separate (-C dir), attached (-Cdir),
+// clustered (-iC dir, -iCdir) and long (--chdir=dir, --chdir dir) forms.
+// shortValues lists every short option that takes a value, so a value that
+// belongs to another option is skipped rather than read as the first operand;
+// longValues does the same for long options.
+func leadingOptionValues(tokens []string, short byte, long, shortValues string, longValues map[string]bool) []string {
+	var values []string
+	for i := 1; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--":
+			return values
+		case token == long:
+			if i+1 < len(tokens) {
+				values = append(values, tokens[i+1])
+			}
+			i++
+		case strings.HasPrefix(token, long+"="):
+			values = append(values, strings.TrimPrefix(token, long+"="))
+		case longValues[token]:
+			i++
+		case strings.HasPrefix(token, "--"):
+		case strings.HasPrefix(token, "-") && len(token) > 1:
+			for at := 1; at < len(token); at++ {
+				if strings.IndexByte(shortValues, token[at]) < 0 {
+					continue
+				}
+				value := token[at+1:]
+				if value == "" && i+1 < len(tokens) {
+					i++
+					value = tokens[i]
+				}
+				if token[at] == short && value != "" {
+					values = append(values, value)
+				}
+				break
+			}
+		case strings.Contains(token, "="):
+		default:
+			return values
+		}
+	}
+	return values
+}
+
+// shortClusterValueNext reports whether a short option cluster's first
+// value-taking option (one of shortValues) ends the cluster, so its value is
+// the next word.
+func shortClusterValueNext(token, shortValues string) bool {
+	for at := 1; at < len(token); at++ {
+		if strings.IndexByte(shortValues, token[at]) >= 0 {
+			return at == len(token)-1
+		}
+	}
+	return false
+}
+
+// pathChangingUtilities are the commands whose path operands are created,
+// replaced, removed, re-permissioned, or (for cd) become the working
+// directory for relative paths that follow.
+var pathChangingUtilities = map[string]bool{
+	"rm": true, "unlink": true, "rmdir": true, "mkdir": true, "mv": true, "cp": true, "ln": true,
+	"install": true, "truncate": true, "shred": true, "touch": true, "chmod": true, "chown": true,
+	"chgrp": true, "chflags": true, "rsync": true, "tee": true, "cd": true, "pushd": true,
+}
+
+// copyingUtilities change only their destination: the last operand, or the
+// directory named by -t/--target-directory. Their sources are only read.
+var copyingUtilities = map[string]bool{"cp": true, "install": true, "ln": true, "rsync": true}
+
+// shortOptionValues lists, per utility, the short options that take a value,
+// either the rest of the option cluster or the next word.
+var shortOptionValues = map[string]string{
+	"cp": "St", "mv": "St", "ln": "St", "install": "BSgmot", "rsync": "efT",
+}
+
+// rsyncOptionValues lists rsync options whose next word is a pattern or
+// command rather than a path rsync changes.
+var rsyncOptionValues = map[string]bool{
+	"--exclude": true, "--include": true, "--filter": true, "--exclude-from": true,
+	"--include-from": true, "--rsh": true, "--rsync-path": true,
+}
+
+// rsyncWriteOptions are rsync options whose value is a path rsync writes.
+var rsyncWriteOptions = map[string]bool{
+	"--backup-dir": true, "--log-file": true, "--write-batch": true, "--only-write-batch": true,
+	"--temp-dir": true, "--partial-dir": true,
+}
+
+// pathChangeTargets returns the operands a simple command may change. It is
+// lenient in the restrictive direction: an operand it cannot rule out is
+// returned, and the caller only uses the result for deny and ask rules. The
+// tokens must already have shell comments removed.
+func pathChangeTargets(tokens []string) []string {
+	if len(tokens) < 2 {
+		return nil
+	}
+	head := shellWrapperBasename(tokens[0])
+	var targetDirs []string // -t/--target-directory values
+	var optionWrites []string
+	allOperands := false // a mode in which every operand changes
+	optionValue := func(i *int, value string, attached bool) string {
+		if !attached && *i+1 < len(tokens) {
+			*i++
+			return tokens[*i]
+		}
+		return value
+	}
+	operands := func() []string {
+		var out []string
+		options := true
+		for i := 1; i < len(tokens); i++ {
+			token := tokens[i]
+			switch {
+			case options && token == "--":
+				options = false
+			case options && strings.HasPrefix(token, "--"):
+				name, value, attached := strings.Cut(token, "=")
+				switch {
+				case name == "--target-directory" && head != "rsync":
+					targetDirs = append(targetDirs, optionValue(&i, value, attached))
+				case head == "rsync" && rsyncWriteOptions[name]:
+					optionWrites = append(optionWrites, optionValue(&i, value, attached))
+				case head == "rsync" && name == "--remove-source-files", head == "install" && name == "--directory":
+					allOperands = true
+				case head == "rsync" && rsyncOptionValues[name]:
+					optionValue(&i, value, attached)
+				}
+			case options && strings.HasPrefix(token, "-") && len(token) > 1:
+				for at, flag := range token[1:] {
+					if head == "install" && flag == 'd' {
+						allOperands = true // install -d creates every operand
+					}
+					if !strings.ContainsRune(shortOptionValues[head], flag) {
+						continue
+					}
+					value := optionValue(&i, token[2+at:], token[2+at:] != "")
+					switch {
+					case flag == 't':
+						targetDirs = append(targetDirs, value)
+					case head == "rsync" && flag == 'T':
+						optionWrites = append(optionWrites, value)
+					}
+					break
+				}
+			default:
+				out = append(out, token)
+			}
+		}
+		return out
+	}
+	switch head {
+	case "sed", "perl":
+		return inPlaceEditTargets(head, tokens)
+	case "dd":
+		var out []string
+		for _, token := range tokens[1:] {
+			if strings.HasPrefix(token, "of=") {
+				out = append(out, strings.TrimPrefix(token, "of="))
+			}
+		}
+		return out
+	case "find":
+		var out []string
+		changes := false
+		for i := 1; i < len(tokens); i++ {
+			switch tokens[i] {
+			case "-delete":
+				changes = true
+			case "-fprint", "-fprint0", "-fls", "-fprintf":
+				changes = true
+				if i+1 < len(tokens) {
+					out = append(out, tokens[i+1])
+				}
+			case "-exec", "-execdir", "-ok", "-okdir":
+				end := i + 1
+				for end < len(tokens) && tokens[end] != ";" && tokens[end] != "+" {
+					end++
+				}
+				// An action that changes the found path changes the tree
+				// under every starting point.
+				for _, target := range pathChangeTargets(unwrapRestrictiveExecutor(tokens[i+1 : end])) {
+					changes = changes || strings.Contains(target, "{}")
+				}
+				i = end
+			}
+		}
+		if changes {
+			start := 1
+			// Options that precede the starting points: -H, -L, -P and the
+			// BSD -E, -X, -d, -s, -x; GNU -D takes a value and -O is
+			// attached; BSD -f names a starting point of its own.
+		leading:
+			for start < len(tokens) {
+				switch token := tokens[start]; {
+				case token == "--":
+					start++
+					break leading
+				case token == "-D":
+					start += 2
+				case token == "-f" && start+1 < len(tokens):
+					out = append(out, tokens[start+1])
+					start += 2
+				case strings.HasPrefix(token, "-O"):
+					start++
+				case len(token) > 1 && token[0] == '-' && strings.Trim(token[1:], "HLPEXdsx") == "":
+					start++
+				default:
+					break leading
+				}
+			}
+			for _, token := range tokens[min(start, len(tokens)):] {
+				if strings.HasPrefix(token, "-") || token == "(" || token == "!" {
+					break
+				}
+				out = append(out, token) // starting points the actions may change
+			}
+		}
+		return out
+	}
+	if !pathChangingUtilities[head] {
+		return nil
+	}
+	out := operands()
+	switch {
+	case copyingUtilities[head] && !allOperands && len(targetDirs) > 0:
+		out = nil
+	case copyingUtilities[head] && !allOperands && len(out) > 0:
+		out = out[len(out)-1:]
+	}
+	return append(append(out, targetDirs...), optionWrites...)
+}
+
+// shellWords tokenizes a simple command and removes its redirections, so a
+// redirection never stands in for an operand and an operand written against
+// one (rm dir>/dev/null) keeps its own spelling. Redirection operators are
+// found in the quote-masked text, so a quoted "<" or ">" stays in its word.
+func shellWords(text string) []string {
+	words := tokenizeForOS(text, "posix")
+	masked := tokenizeForOS(maskLiteralRedirects(text), "posix")
+	if len(masked) != len(words) {
+		return words // keep every word rather than guess which is a redirection
+	}
+	out := make([]string, 0, len(words))
+	for i := 0; i < len(words); i++ {
+		at := strings.IndexAny(masked[i], "<>")
+		if at < 0 || len(masked[i]) != len(words[i]) {
+			out = append(out, words[i])
+			continue
+		}
+		if prefix := words[i][:at]; !isRedirectionPrefix(prefix) {
+			out = append(out, prefix)
+		}
+		if strings.TrimLeft(masked[i][at:], "<>&|") == "" {
+			i++ // the operator's target is the next word
+		}
+	}
+	return out
+}
+
+// isRedirectionPrefix reports whether text before a redirection operator is
+// part of the redirection (a file descriptor or &) rather than a word.
+func isRedirectionPrefix(prefix string) bool {
+	if prefix == "" || prefix == "&" {
+		return true
+	}
+	return strings.Trim(prefix, "0123456789") == ""
+}
+
+// inPlaceEditTargets returns the files that sed -i or perl -i rewrites, and
+// nil when the command does not edit in place. The script, inline or named by
+// -e/-f (sed) or -e/-E (perl), is not one of the files.
+func inPlaceEditTargets(head string, tokens []string) []string {
+	// Short options whose value is the rest of the cluster or, for the
+	// script options, the next word.
+	rest, script := "efiIl", "ef" // BSD -I is -i that edits each file separately
+	if head == "perl" {
+		rest, script = "0CdDeEFiIlmMx", "eE"
+	}
+	inPlace, scriptGiven, options := false, false, true
+	var operands []string
+	for i := 1; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case !options || token == "-" || !strings.HasPrefix(token, "-"):
+			operands = append(operands, token)
+		case token == "--":
+			options = false
+		case head == "sed" && strings.HasPrefix(token, "--"):
+			name, _, attached := strings.Cut(token, "=")
+			switch name {
+			case "--in-place":
+				inPlace = true
+			case "--expression", "--file":
+				scriptGiven = true
+				if !attached {
+					i++
+				}
+			case "--line-length":
+				if !attached {
+					i++
+				}
+			}
+		default:
+			for at, flag := range token[1:] {
+				if !strings.ContainsRune(rest, flag) {
+					continue
+				}
+				attached := token[2+at:] != ""
+				switch {
+				case flag == 'i' || (head == "sed" && flag == 'I'):
+					inPlace = true
+					// BSD sed -i takes a separate, possibly empty, suffix.
+					if !attached && head == "sed" && i+1 < len(tokens) && tokens[i+1] == "" {
+						i++
+					}
+				case strings.ContainsRune(script, flag):
+					scriptGiven = true
+					if !attached {
+						i++
+					}
+				case head == "sed" && !attached:
+					i++ // -l N
+				}
+				break
+			}
+		}
+	}
+	if !inPlace {
+		return nil
+	}
+	if !scriptGiven && len(operands) > 0 {
+		operands = operands[1:] // the inline script or perl program file
+	}
+	return operands
+}
+
+// xargsCommandStart returns the index of the utility xargs runs, or 0 when
+// xargs falls back to echo.
+func xargsCommandStart(tokens []string) int {
+	withValue := map[string]bool{
+		// BSD -J, -R and -S take a value; GNU --eof and --replace take one
+		// only when attached with "=", so they are plain flags here.
+		"-I": true, "-J": true, "-L": true, "-n": true, "-P": true, "-R": true, "-S": true, "-s": true,
+		"-E": true, "-d": true, "-a": true, "--arg-file": true, "--delimiter": true, "--max-lines": true,
+		"--max-args": true, "--max-procs": true, "--max-chars": true, "--process-slot-var": true,
+	}
+	i := 1
+	for i < len(tokens) {
+		token := tokens[i]
+		switch {
+		case token == "--":
+			if i+1 < len(tokens) {
+				return i + 1
+			}
+			return 0
+		case withValue[token]:
+			i += 2
+		case strings.HasPrefix(token, "-") && len(token) > 1:
+			i++ // flags, attached values (-I{}, -n1, --max-args=1) and unknown options
+		default:
+			return i
+		}
+	}
+	return 0
+}
+
+// joinPOSIXWords rebuilds a command from tokens, single-quoting any word the
+// tokenizer would otherwise split or reinterpret.
+func joinPOSIXWords(tokens []string) string {
+	words := make([]string, len(tokens))
+	for i, token := range tokens {
+		if token != "" && strings.IndexFunc(token, func(r rune) bool {
+			return !(r == '-' || r == '_' || r == '.' || r == '/' || r == '~' || r == '=' || r == ':' ||
+				r == ',' || r == '+' || r == '@' || r == '%' || r == '{' || r == '}' ||
+				(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'))
+		}) < 0 {
+			words[i] = token
+			continue
+		}
+		words[i] = "'" + strings.ReplaceAll(token, "'", `'\''`) + "'"
+	}
+	return strings.Join(words, " ")
+}
+
 func unwrapRestrictiveExecutor(tokens []string) []string {
+	return unwrapExecutors(tokens, true)
+}
+
+// unwrapExecutors removes leading transparent executors. With restrictive
+// set it also looks through env -P, which allow rules must not see through
+// because the altpath decides which binary runs.
+func unwrapExecutors(tokens []string, restrictive bool) []string {
 	for {
 		next := stripPOSIXTransparentExecutorOnce(tokens)
+		if restrictive && strSlicesEqual(next, tokens) && len(tokens) > 1 && shellWrapperBasename(tokens[0]) == "env" {
+			next = stripPOSIXEnvUtilityMode(tokens, true)
+		}
 		if len(next) > 1 && (shellWrapperBasename(next[0]) == "busybox" || shellWrapperBasename(next[0]) == "toybox") {
 			next = next[1:]
 		}
@@ -1121,7 +1661,7 @@ func visitCanonicalCommandAliases(command string, visit func(string) bool) bool 
 		return true
 	}
 	for _, segment := range SplitCompoundCommand(stripUnquotedShellComment(command)) {
-		tokens := unwrapRestrictiveExecutor(tokenizeForOS(maskLiteralRedirects(segment), "posix"))
+		tokens := unwrapRestrictiveExecutor(shellWords(segment))
 		if len(tokens) == 0 {
 			continue
 		}
@@ -1224,22 +1764,6 @@ func cleanRestrictivePOSIXPath(value string) string {
 		return cleaned
 	}
 	return value
-}
-
-func shellRedirectionConsumesNext(token string) bool {
-	switch token {
-	case ">", ">>", "<", "<<", "<<<", "1>", "1>>", "2>", "2>>":
-		return true
-	default:
-		return false
-	}
-}
-
-func isShellRedirectionToken(token string) bool {
-	if shellRedirectionConsumesNext(token) || strings.Contains(token, ">&") || strings.Contains(token, "<&") {
-		return true
-	}
-	return strings.ContainsAny(token, "><")
 }
 
 func matchRestrictiveCommandDialectFirst(patterns []string, command string, action Action, dialect string) string {

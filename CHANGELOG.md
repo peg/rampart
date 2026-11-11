@@ -7,6 +7,205 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-11-10
+
+### Security
+
+- **Release builds use Go 1.26.11** — the module baseline, container build and
+  source-build requirement now use the Go patch release that resolves the
+  called standard-library vulnerability GO-2026-6859 in `net/http`, reported
+  against Go 1.26.10.
+- **Rampart's own files are protected from common shell writes** — the
+  standard and OpenClaw profiles now deny a simple shell command that changes a
+  `.rampart` path through an output redirection, a file utility such as `rm`,
+  `cp`, `mv`, `ln`, `mkdir`, `truncate` or `chmod`, an in-place `sed` or `perl`
+  edit, `dd of=`, `find -delete`, `cd`, `pushd`, `env -C` or `time -o` (also
+  inside option clusters such as `env -iC` and `time -ao`, and after `find -H`,
+  `-L` or `-P`), so an agent cannot remove or replace the managed Guard policy
+  that way. Only the
+  destination of `cp`, `install`, `ln` and `rsync` counts, so copying a policy
+  out of `.rampart` is allowed. This is a deny list, not a complete boundary: a
+  glob or variable that stands in for the `.rampart` name, and utilities it
+  does not know, are not covered. Reading or mentioning `.rampart` (`cat`,
+  `ls`, `grep`, commit messages) and files such as `.rampartrc` are not
+  affected, but heredoc lines are checked as commands, so a heredoc line that
+  is itself such a command is denied.
+- **Custom `tee` rules also match the same writes made other ways** — a deny or
+  ask rule for `tee <path>` now also matches a redirection to `<path>` and the
+  file utilities above changing it. Review custom `tee` rules for new matches.
+- **Launchers no longer hide the command they run** — `time` is unwrapped like
+  `env` and `nohup`, so `time <command>` gets the decision of `<command>`.
+  When `time` writes an output file (`-o`/`--output`) it is not unwrapped for
+  allow rules, and the output file is checked as a write. The commands run by
+  `xargs` (including `-I`, `-J` and `--replace`) and by `find -exec`,
+  `-execdir`, `-ok` and `-okdir` are checked by deny and ask rules. These
+  payloads never create a new allow. Arguments that `xargs` reads from
+  standard input are not known to Rampart.
+- **Shell wrappers are unwrapped through more of their options** — a shell
+  option that takes a value (`bash -O extglob -c`), a cluster of `env` options
+  (`env -iu NAME`), `builtin`, and `time` before a `( … )` or `{ … }` group no
+  longer hide the command they run. A shell started with `--rcfile` or
+  `--init-file`, and `env -P`, run a file or binary Rampart does not see, so
+  deny and ask rules check the command they name but it is never allowed on
+  its own. A redirection written against an operand (`path>/dev/null`) no
+  longer hides the operand.
+- **OpenClaw browser navigation is judged by the URL OpenClaw opens** — the
+  adapter derives `url`, `domain` and `scheme` from `targetUrl` (or `url` when
+  it is absent), so a second, conflicting alias cannot decide the policy.
+- **Audit readers count every event the verifier counts** — views, reports and
+  exports classify records by event id, as chain verification does, so extra
+  fields on a real event cannot hide it from them.
+- **`rampart protect` suggests a canary that is harmless without Rampart** —
+  the first test is now `echo rampart-canary`, which the managed Guard denies.
+  The previous canary read a plausible SSH key path, which a host that never
+  loaded the hook would have read.
+- **Audit hashes cover every stored field** — a record with a field the
+  schema does not define, a repeated key, or a schema key spelled with anything
+  but lowercase ASCII letters, digits and underscores (another letter case, or
+  a letter that JSON decoding folds onto one) now fails `rampart audit verify`
+  and every other hash check. Before, such
+  a record could be changed while its hash still verified.
+- **Malformed audit records are reported, not skipped silently** — `audit
+  tail`, `watch` and the HTML report warn about them, `rampart serve` logs a
+  warning when its audit API reads them, and the compliance report and export
+  fail.
+- **`init --from-audit` learns only from verified history** — a directory must
+  pass `rampart audit verify` and a single file must have a valid hash on every
+  record, or no rules are generated. `--allow-unverified` opts out and marks the
+  generated policy.
+- **OpenClaw replies must stay on the originating provider** — a send whose
+  explicit `channel` names another provider, or names one when the origin
+  provider is unknown, needs approval even when its target ID matches the
+  originating conversation.
+- **Codex hooks that cannot run are not reported as installed** — `doctor` and
+  `verify` fail when the Rampart hook entry carries fields that change how
+  Codex runs it, such as `async`, or when the user `config.toml` sets
+  `allow_managed_hooks_only = true`. `rampart setup codex` repairs the entry.
+  Rampart cannot see whether you trusted the hooks in Codex `/hooks`, so it
+  reports them as configured, not active.
+- **Doctor remembers setup** — removing hooks that `rampart setup` installed is
+  now a failure even if verification never ran. On an install set up by an
+  earlier release, `rampart upgrade` and `rampart doctor` record the agents
+  whose Rampart hooks they find, so removing those later also fails. A failed
+  `rampart verify` of an agent that was never set up is not a record.
+  `rampart setup <agent> --remove` clears the record.
+- **Release images are built from the tagged commit and published as tested** —
+  the container workflow checks out the release commit, re-checks the tag
+  before publishing, pins its base images by digest, and publishes only the
+  digest that passed the smoke test.
+
+### Added
+
+- `rampart setup claude-code --hook-failure=auto|block|continue` controls what
+  happens when the PreToolUse hook fails. Claude Code lets a hook that cannot
+  start, times out, or exits unexpectedly proceed by default, which silently
+  disables enforcement; Claude Code 2.1.295+ can block instead. A new
+  installation on a detected supported version now fails closed on PreToolUse
+  only. An existing installation is left unchanged and told how to opt in, and
+  an older or undetected Claude Code never receives the field. To detect the
+  version, setup runs `claude --version` with a minimal environment and a
+  3-second timeout. `verify` reports the active mode. With it enabled, a
+  Rampart crash or hang blocks tool calls until fixed or reverted with
+  `--hook-failure=continue`.
+
+### Changed
+
+- Claude Code: a policy allow no longer answers `allow` on the user's behalf.
+  The hook now returns no decision, so Claude Code's own permission mode,
+  allow/ask/deny rules and prompts still apply. Monitor and audit modes never
+  return a decision, including for a hook payload Rampart cannot parse. A call
+  approved through Rampart's approval queue keeps an explicit allow, and an
+  empty hook payload in enforce mode is refused. Existing installations need
+  no action. If you relied on Rampart to suppress Claude Code prompts, add
+  Claude Code permission rules or choose a permission mode instead.
+- The experimental Hermes compatibility gate now tests the last reviewed release
+  (Hermes 0.21.5, `v2026.9.24`) instead of the rolling latest, so upstream
+  releases no longer turn scheduled CI red. Hermes releases after 0.21.5 are not
+  claimed compatible until reviewed.
+- `rampart setup claude-code` now fails closed by default for a new PreToolUse
+  hook on a supported host even when an older Rampart PostToolUse hook was
+  left behind, or when Rampart's PreToolUse hook was `async`, `asyncRewake` or
+  conditional (`if`); previously setup treated either as an existing
+  installation.
+- `rampart doctor` fails when an agent that protect or verify recorded as
+  protected has lost its Rampart hooks, instead of warning as if it had never
+  been set up. `rampart setup <agent> --remove` clears that record for Claude
+  Code, Codex and Cline.
+- The scheduled Hermes compatibility gate installs the reviewed release by
+  commit and fails if its tag is moved upstream.
+- The threat model, docs site description and Homebrew formula description no
+  longer call Rampart a firewall or say it catches misbehaving agents reliably.
+  Self-protection is described as covering the listed command and file-tool
+  forms, and the sandbox recommendation no longer links a third-party tool.
+- Dependency updates: `prometheus/client_golang` 1.25.0, `golang.org/x/sys`
+  0.49.0, `golang.org/x/text` 0.42.0, `google.golang.org/protobuf` 1.36.12, and
+  `mkdocs-material` 9.8.0 for the documentation build.
+
+### Removed
+
+- The alpha Python SDK (`sdks/python`) is removed. It was never published to
+  PyPI. Custom and Python agents should call the
+  [HTTP API](https://docs.rampart.sh/reference/api-reference/) directly.
+- `rampart quickstart` is removed. Use `rampart protect <agent>` (for example
+  `rampart protect claude-code`). The command still exists as a hidden stub that
+  prints this guidance and exits non-zero, so old scripts fail with an
+  explanation instead of an unknown-command error.
+
+### Fixed
+
+- Audit readers (the HTTP audit API and dashboard, `status`, `inventory`,
+  `init-from-audit`, and the compliance, HTML and export reports) no longer
+  return a blank zero-timestamp event for the chain-continuation header that
+  starts every rotated audit file. Each rotation previously added one phantom
+  record to counts and time ranges. Chain verification is unchanged.
+- `rampart test` now labels an `ask` decision `ASK`. It previously printed
+  `✅ ALLOW` next to an "approval required" message, although `--json`
+  reported `ask` and the integration would prompt. A `webhook` decision is
+  labelled `WEBHOOK`, and any action without its own label no longer
+  renders as an allow. Exit codes are unchanged.
+- `rampart doctor` no longer fails just because another agent is installed.
+  After `rampart protect claude-code` on a machine that also has Codex or
+  Cline, doctor exited 1 and told the user to run `rampart setup`. Once at
+  least one agent is protected, an installed agent without Rampart hooks is now
+  a warning naming `rampart protect <agent>`, unless protect or verify recorded
+  that agent as protected (see Changed). Without that record doctor cannot tell
+  an agent that was never protected from one whose hooks were deleted, so it
+  does not stay quiet. Stale Rampart hooks, and a machine where nothing is protected, still
+  fail. Hook hints and the summary now point to `rampart protect`, and notes
+  print with `ℹ` instead of a checkmark.
+- `rampart setup claude-code`, `verify` and `doctor` no longer accept fields on
+  Rampart's own hook entries that let Claude Code skip or stop waiting for
+  Rampart's decision: `async`, `if`, `args`, `once`, a timeout under 10
+  seconds, or any unrecognized field. Such a hook is reported as not
+  configured, and re-running setup removes those fields and says which it
+  removed. A `timeout` of 10 seconds or more and a `statusMessage` are kept.
+- In monitor and audit modes, a Claude Code hook payload Rampart could not
+  parse (for example a tool Rampart does not recognize yet) returned an
+  explicit `allow`, which skipped Claude Code's own permission prompt. It now
+  returns no decision.
+- `rampart doctor` no longer offers a downgrade on `git describe` builds such
+  as `v1.9.7-55-g4d91f21`.
+- `rampart protect` now ends with next steps for hook hosts: restart the host,
+  try a harmless blocked command, and review decisions with `rampart log`. For
+  Claude Code it also explains that a denial appears as a "PreToolUse hook
+  error" carrying Rampart's reason.
+- `rampart serve` and `rampart setup claude-code` no longer suggest
+  `rampart init` when Rampart runs on the embedded standard policy, which is
+  the normal state after `protect`. `rampart doctor` reports that state as
+  healthy instead of failing when `~/.rampart/policies` has no policy files.
+- `rampart verify` now prints the Claude Code PreToolUse failure mode in its
+  human report, not only in `--json`.
+- When `rampart serve` cannot take a `headless_only` approval, the hook's
+  warning now says approval could not be requested; the call is denied. It
+  previously said Rampart was running without enforcement or falling back to
+  the native prompt.
+- The README installer snippet uses `sh`, matching the installer script and
+  the installation guide.
+- `rampart setup claude-code` keeps fail-closed mode when settings contain
+  several Rampart PreToolUse hooks and any of them has `onFailure: "block"`.
+  Previously only the first was checked, so re-running setup could merge the
+  duplicates into a hook that fails open.
+
 ## [1.9.7] - 2026-10-30
 
 ### Security

@@ -299,7 +299,9 @@ func collectTodayAuditCounts(auditDir string) inventoryAuditEventCount {
 	counts := inventoryAuditEventCount{}
 	for _, path := range candidates {
 		events, _, readErr := audit.ReadEventsFromOffset(path, 0)
-		if readErr != nil {
+		// Malformed records are skipped by the reader; count the rest.
+		var malformed *audit.MalformedRecordsError
+		if readErr != nil && !errors.As(readErr, &malformed) {
 			continue
 		}
 		for _, event := range events {

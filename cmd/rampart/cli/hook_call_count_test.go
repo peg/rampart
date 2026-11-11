@@ -60,9 +60,10 @@ policies:
 		return output
 	}
 
+	// A policy allow leaves the decision to Claude Code's own permission flow.
 	first := run("call-count-1")
-	if first.HookSpecificOutput == nil || first.HookSpecificOutput.PermissionDecision != "allow" {
-		t.Fatalf("first decision = %#v, want allow", first.HookSpecificOutput)
+	if first.HookSpecificOutput != nil || first.Decision != "" {
+		t.Fatalf("first decision = %#v, want no host decision", first)
 	}
 
 	// runHookWithStdin constructs and executes an entirely new hook command and

@@ -193,6 +193,18 @@ policies:
             - ">> .rampart/"
             - ">> ~/.rampart/"
         message: "Direct writes to .rampart/ directory blocked"
+      # Same shell write protection as the standard profile: the engine offers
+      # each file a simple command changes as "tee <path>".
+      - action: deny
+        when:
+          command_matches:
+            - "tee .rampart"
+            - "tee .rampart/**"
+            - "tee '.rampart/**"
+            - "tee **/.rampart"
+            - "tee **/.rampart'"
+            - "tee **/.rampart/**"
+        message: "Changing Rampart's own files from the shell is not allowed"
       # Shell references fail closed because redirection and wrapper syntax can
       # disguise a write. The read tool remains available for inspection.
       - action: deny

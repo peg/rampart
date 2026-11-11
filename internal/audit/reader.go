@@ -46,6 +46,23 @@ func OpenRegularFile(path string) (*os.File, error) {
 	return openAuditRegular(path, os.O_RDONLY)
 }
 
+// MalformedRecordsError reports complete audit records that could not be
+// decoded as events. ReadEventsFromOffset returns it alongside the events it
+// could read.
+type MalformedRecordsError struct {
+	Path        string
+	Count       int
+	FirstOffset int64
+	FirstErr    error
+}
+
+func (e *MalformedRecordsError) Error() string {
+	return fmt.Sprintf("audit: %s has %d malformed record(s); first at byte offset %d: %v",
+		e.Path, e.Count, e.FirstOffset, e.FirstErr)
+}
+
+func (e *MalformedRecordsError) Unwrap() error { return e.FirstErr }
+
 // readRecord reads at most one JSONL record. complete is false only for an
 // unterminated final record, which callers may retry after more data is written.
 // The returned record does not include the trailing newline.
@@ -83,6 +100,11 @@ func readRecord(reader *bufio.Reader) (record []byte, complete bool, err error) 
 // If the file has been truncated (offset > size), it resets to the beginning.
 // Partial (unterminated) lines are not consumed — the offset stays before them
 // so they can be re-read once complete.
+//
+// A complete record that is not valid event JSON is skipped so the rest of
+// the file stays readable, but it is never hidden: the events read are
+// returned together with a *MalformedRecordsError. Callers that show audit
+// data must surface it; callers that need a trustworthy history must fail.
 func ReadEventsFromOffset(path string, offset int64) ([]Event, int64, error) {
 	f, err := OpenRegularFile(path)
 	if err != nil {
@@ -105,11 +127,18 @@ func ReadEventsFromOffset(path string, offset int64) ([]Event, int64, error) {
 	reader := bufio.NewReaderSize(f, auditReaderBufferBytes)
 	cursor := offset
 	events := make([]Event, 0, 8)
+	var malformed *MalformedRecordsError
+	done := func() ([]Event, int64, error) {
+		if malformed != nil {
+			return events, cursor, malformed
+		}
+		return events, cursor, nil
+	}
 
 	for {
 		line, complete, readErr := readRecord(reader)
 		if errors.Is(readErr, io.EOF) {
-			return events, cursor, nil
+			return done()
 		}
 		if readErr != nil {
 			return nil, cursor, fmt.Errorf("audit: read record at offset %d: %w", cursor, readErr)
@@ -117,7 +146,7 @@ func ReadEventsFromOffset(path string, offset int64) ([]Event, int64, error) {
 
 		// Partial line (no trailing newline) — don't consume it.
 		if !complete {
-			return events, cursor, nil
+			return done()
 		}
 
 		cursor += int64(len(line) + 1)
@@ -127,8 +156,21 @@ func ReadEventsFromOffset(path string, offset int64) ([]Event, int64, error) {
 		}
 
 		var evt Event
-		if unmarshalErr := json.Unmarshal(trimmed, &evt); unmarshalErr == nil {
-			events = append(events, evt)
+		if unmarshalErr := json.Unmarshal(trimmed, &evt); unmarshalErr != nil {
+			if malformed == nil {
+				malformed = &MalformedRecordsError{Path: path, FirstOffset: cursor - int64(len(line)+1), FirstErr: unmarshalErr}
+			}
+			malformed.Count++
+			continue
 		}
+		// Classify exactly as the chain verifier does: a record with an event
+		// id is an event, whatever other fields it carries. Only an id-less
+		// record, such as the continuation header that starts a rotated file,
+		// is chain bookkeeping and would otherwise decode into a zero-valued
+		// Event. Extra header-shaped fields must never hide a real event.
+		if evt.ID == "" {
+			continue
+		}
+		events = append(events, evt)
 	}
 }

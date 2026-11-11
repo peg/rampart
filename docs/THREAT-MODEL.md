@@ -1,12 +1,12 @@
 # Threat Model
 
-> Last reviewed: 2026-10-30 | Applies to: v1.9.7+
+> Last reviewed: 2026-11-08 | Applies to: v1.10.0+
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 
 ## What Rampart Is
 
-A firewall for AI agent tool calls. It evaluates agent-reported shell commands,
+A policy layer for AI agent tool calls. It evaluates agent-reported shell commands,
 file operations, fetch requests, and related metadata against YAML policies.
 Rampart sees what the framework sends it, not raw syscalls or network traffic.
 It is designed to reduce common accidental and prompt-injection-driven tool
@@ -21,7 +21,7 @@ Rampart's target threat is an AI agent that:
 - **Made a well-intentioned mistake** (wrong environment, wrong file, wrong server)
 - **Escalated beyond its intended scope** (sub-agent spawning unrestricted tool calls)
 
-These agents aren't adversarial — they're confused, manipulated, or wrong. Rampart catches them reliably.
+These agents aren't adversarial — they're confused, manipulated, or wrong. Rampart is built to stop the common forms of these mistakes before they run. It does not catch every variant, and its coverage depends on the policy and on what the integration exposes.
 
 ## Not the Target: Adversarial Human Attackers
 
@@ -136,11 +136,11 @@ An agent could encode commands to bypass pattern matching:
 - Rampart decodes base64 commands before pattern matching
 - Leading shell comments and ANSI escape sequences are stripped
 - Null bytes and control characters are removed
-- Subcommand extraction: `$(cmd)`, backticks, `eval 'cmd'` — inner commands are matched independently
-- Common obfuscation patterns (`base64 *`, `eval *`, `xxd -r | bash`) trigger deny rules in standard policy
-- The semantic verification sidecar classifies intent regardless of encoding
+- Subcommand extraction: `$(cmd)` and backticks — inner commands are matched independently
+- Decoded payloads piped into a shell (`base64 -d | bash`, `xxd -r | bash`) trigger deny rules in standard policy
+- The optional semantic verification sidecar can classify ambiguous commands
 
-**Coverage:** The two-layer approach (pattern matching + LLM classification) significantly reduces the obfuscation surface. Pattern matching catches known encodings; the LLM layer catches intent regardless of how the command is formatted. v0.6.9 closed 10 specific bypass vectors identified in a security audit.
+**Coverage:** Pattern matching catches the encodings and shell forms it knows. The optional semantic verification layer can classify ambiguous or obfuscated commands, but it is probabilistic and does not cover every encoding. Treat both layers as reducing the obfuscation surface, not closing it.
 
 ### 5. OpenClaw Integration Boundaries
 
@@ -340,18 +340,18 @@ v0.7.4 introduced temporal allows (`--for`, `--once`). Expired rules are
 
 Rampart protects its own configuration from agent tampering through two layers:
 
-1. **Exec-level:** The standard policy blocks `rampart allow`, `rampart block`, `rampart init`, and shell redirects to `.rampart/` directories. This prevents agents from running CLI commands that modify policy.
-2. **Write/Edit-level:** The standard policy blocks write and edit tool calls targeting `**/.rampart/**`. This prevents agents from directly overwriting policy files, config, or audit logs via file tools.
+1. **Exec-level:** The standard policy blocks `rampart allow`, `rampart block`, `rampart init`, and simple shell commands that change a `.rampart` path: output redirections, file utilities such as `rm`, `cp`, `mv`, `ln`, `mkdir`, `truncate` and `chmod`, in-place `sed` and `perl` edits, `dd of=`, `find -delete`, `cd`, `pushd`, `env -C` and `time -o`. This is a deny list over the command text the agent reports. A glob or variable that stands in for the `.rampart` name, and utilities it does not know, are not covered, so it raises the cost of tampering rather than preventing every way to reach the same effect.
+2. **Write/Edit-level:** The standard policy blocks write and edit tool calls targeting `**/.rampart/**`. This stops file tools from overwriting policy files, config, or audit logs; shell writes rely on the exec-level rules above.
 
 Both layers are active by default in the `standard` and `paranoid` profiles. The `yolo` profile disables these protections — it's named that way for a reason.
 
-**Remaining surface:** An agent with exec access could modify Rampart's binary on disk (if file permissions allow), or kill the `rampart serve` process (triggering fail-open). User separation mitigates both: run `rampart serve` as a different user than the agent.
+**Remaining surface:** An agent with exec access could modify Rampart's binary on disk (if file permissions allow), write `.rampart` through a form the deny list does not cover, or stop the `rampart serve` process. Hooks evaluate policy locally, so deny rules still apply without `rampart serve`, but decisions that need its approval queue (`headless_only` asks) are denied while it is unreachable. User separation mitigates these: run `rampart serve` as a different user than the agent.
 
 ## Philosophy
 
-Rampart is a **seatbelt, not a roll cage**. It catches the vast majority of dangerous situations an AI agent will encounter — accidental or manipulated. It doesn't claim to stop every possible attack vector, and we're honest about what falls outside its scope.
+Rampart is a **seatbelt, not a roll cage**. It is designed to catch common dangerous actions an AI agent attempts, whether accidental or manipulated. It doesn't claim a detection rate or to stop every possible attack vector, and we're honest about what falls outside its scope.
 
-If you need full isolation, use a sandbox (container, VM, or a tool like [nono](https://github.com/nicholasgasior/nono)). Rampart and sandboxes are complementary — use both for defense in depth.
+If you need full isolation, use a sandbox (a container, VM, or OS-level sandbox). Rampart and sandboxes are complementary — use both for defense in depth.
 
 ---
 

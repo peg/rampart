@@ -68,6 +68,13 @@ Use --remove to uninstall Rampart-managed hook files.`,
 				return err
 			}
 			if remove {
+				// Only the user-level install is recorded, so removing a
+				// workspace install leaves that record in place.
+				if installScope == "user-level" {
+					if err := clearVerificationReceipt("cline"); err != nil {
+						return fmt.Errorf("setup cline: %w", err)
+					}
+				}
 				return removeClineHooksFromDir(cmd, hookDir)
 			}
 
@@ -75,6 +82,13 @@ Use --remove to uninstall Rampart-managed hook files.`,
 			paths, migrated, err := installClineHooks(hookDir, rampartBin, runtime.GOOS, force)
 			if err != nil {
 				return err
+			}
+			// Doctor checks only the user-level hook directories, so only
+			// that install is recorded.
+			if installScope == "user-level" {
+				if err := recordIntegrationSetup("cline"); err != nil {
+					return fmt.Errorf("setup cline: %w", err)
+				}
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ Cline hooks installed (%s)\n", installScope)

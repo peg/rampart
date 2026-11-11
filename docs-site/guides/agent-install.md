@@ -59,8 +59,7 @@ rampart protect
 starts or verifies the local policy service, configures every detected supported
 native integration, and runs safe active verification without invoking a model.
 On Windows, the service helper uses a login-scoped background process rather
-than a persistent system service. The deprecated `rampart quickstart --yes`
-spelling remains available for existing scripts.
+than a persistent system service.
 
 **OpenClaw note:** protection applies to future tool calls, not the current
 session. `rampart protect` restarts the OpenClaw gateway automatically; restart
@@ -222,7 +221,6 @@ Then add an allow rule for your specific use case. See [Securing Claude Code](ht
 | Command | What it does |
 |---------|--------------|
 | `rampart protect` | Detect, configure, and verify supported integrations |
-| `rampart quickstart --yes` | Deprecated compatibility workflow |
 | `rampart doctor` | Health check — hooks, service, permissions |
 | `rampart status` | Show configured agents, assurance evidence, mode, and today's counts |
 | `rampart watch` | Live feed of tool decisions observed by Rampart |

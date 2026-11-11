@@ -24,6 +24,35 @@ var osExecutable = os.Executable
 var detectOpenClawVersionForSetup = detectOpenClawVersion
 var runSetupOpenClawPluginForSetup = runSetupOpenClawPlugin
 
+// hasInstalledPolicy reports whether ~/.rampart/policies holds a complete base
+// profile. custom.yaml is an empty managed placeholder and guard.yaml is a
+// supplemental layer with no default_action, so a home containing only these
+// files still needs a base profile.
+func hasInstalledPolicy() bool {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return false
+	}
+	policyDir := filepath.Join(home, ".rampart", "policies")
+	entries, err := os.ReadDir(policyDir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := strings.ToLower(e.Name())
+		if name == "custom.yaml" || name == "guard.yaml" {
+			continue
+		}
+		if strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml") {
+			return true
+		}
+	}
+	return false
+}
+
 // resolveRampartHookBinary returns the executable that managed hook files
 // should invoke. A package-manager PATH entry is upgrade-stable, but is trusted
 // only when it currently resolves to the same file as this process. This avoids
@@ -235,6 +264,7 @@ type claudeSettings map[string]any
 func newSetupClaudeCodeCmd(opts *rootOptions) *cobra.Command {
 	var force bool
 	var remove bool
+	var hookFailure string
 
 	cmd := &cobra.Command{
 		Use:   "claude-code",
@@ -249,9 +279,19 @@ This includes Bash, Read, Write, Edit, Fetch, Task, and any future tools.
 Safe to run multiple times — will not duplicate hooks or overwrite
 other settings.
 
+By default Claude Code lets a tool call proceed when a hook cannot start, times
+out, or exits unexpectedly, so a Rampart failure would disable enforcement.
+Claude Code 2.1.295 and newer can block instead (onFailure "block"). A new
+installation on a supported version enables that for the PreToolUse hook; an
+existing installation is left unchanged and told how to opt in. Use
+--hook-failure=block or --hook-failure=continue to choose explicitly.
+
 Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if remove {
+				if err := clearVerificationReceipt("claude-code"); err != nil {
+					return fmt.Errorf("setup: %w", err)
+				}
 				return removeClaudeCodeHooks(cmd)
 			}
 			home, err := os.UserHomeDir()
@@ -286,8 +326,31 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			// The hook reads RAMPART_TOKEN from ~/.rampart/token automatically, so
 			// settings.json never needs to contain credentials.
 			hookCommand := currentClaudeHookCommand()
-			if claudeHooksUseCommand(settings, hookCommand) && !force {
+
+			// Decide whether the PreToolUse hook fails closed. An existing
+			// enforcement hook keeps its current mode unless the user asks.
+			// Leftover Rampart Post hooks, or a PreToolUse hook that Claude Code
+			// never waited for, enforced nothing, so those cases are planned as
+			// a fresh installation.
+			preToolUseInstalled := claudeRampartPreToolUseEnforced(settings)
+			failurePlan, err := planClaudeHookFailure(
+				hookFailure,
+				preToolUseInstalled,
+				claudePreToolUseBlocksOnFailure(settings),
+				detectClaudeVersion,
+			)
+			if err != nil {
+				return fmt.Errorf("setup: %w", err)
+			}
+			if claudeHooksUseCommand(settings, hookCommand) && !force &&
+				failurePlan.Block == claudePreToolUseBlocksOnFailure(settings) {
+				if err := recordIntegrationSetup("claude-code"); err != nil {
+					return fmt.Errorf("setup: %w", err)
+				}
 				fmt.Fprintln(cmd.OutOrStdout(), "Rampart hook already configured in Claude Code settings.")
+				if failurePlan.Notice != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", failurePlan.Notice)
+				}
 				return nil
 			}
 
@@ -295,12 +358,16 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 				"type":    "command",
 				"command": hookCommand,
 			}
+			// Only PreToolUse is the enforcement point; the Post hooks keep
+			// Claude Code's default so a scanning failure cannot hide tool output.
+			preToolUseHook := buildClaudePreToolUseHook(settings, hookCommand, failurePlan)
+			droppedFields := claudeRampartHooksUnsafeFields(settings)
 
 			// Use wildcard matcher to intercept ALL tools (Bash, Read, Write, Edit, Fetch, Task, etc.)
 			// This ensures comprehensive coverage as Claude Code adds new tools.
 			allToolsMatcher := map[string]any{
 				"matcher": ".*",
-				"hooks":   []any{rampartHook},
+				"hooks":   []any{preToolUseHook},
 			}
 
 			// PostToolUse scans successful tool responses and correlates approval
@@ -376,11 +443,20 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			if err := atomicWritePrivateFile(settingsPath, data); err != nil {
 				return fmt.Errorf("setup: write settings: %w", err)
 			}
+			if err := recordIntegrationSetup("claude-code"); err != nil {
+				return fmt.Errorf("setup: %w", err)
+			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ Rampart hook installed in %s\n", settingsPath)
 			fmt.Fprintf(cmd.OutOrStdout(), "  Hook command: %s\n", hookCommand)
+			if len(droppedFields) > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "  Removed fields that could skip Rampart's decision: %s\n", strings.Join(droppedFields, ", "))
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), "  Claude Code will route hook-visible tool calls through Rampart.")
 			fmt.Fprintln(cmd.OutOrStdout(), "  Documented tools are classified; in enforce mode, unknown future PreToolUse tools deny until Rampart is updated.")
+			if failurePlan.Notice != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", failurePlan.Notice)
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), "  Run 'claude' normally — no wrapper needed.")
 			fmt.Fprintln(cmd.OutOrStdout(), "")
 
@@ -397,9 +473,6 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 			}
 
 			fmt.Fprintln(cmd.OutOrStdout(), "Tip: export RAMPART_SESSION=my-project in your shell profile to tag audit events with a project name.")
-			if !hasInstalledPolicy() {
-				fmt.Fprintln(cmd.OutOrStdout(), "💡 No policy found — run 'rampart init --profile standard' to install the standard policy")
-			}
 
 			// Check if rampart is in system PATH.
 			if _, err := execLookPath("rampart"); err != nil {
@@ -427,6 +500,8 @@ Use --remove to uninstall the Rampart hooks from Claude Code settings.`,
 
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing Rampart hook config")
 	cmd.Flags().BoolVar(&remove, "remove", false, "Remove Rampart hooks from Claude Code settings")
+	cmd.Flags().StringVar(&hookFailure, "hook-failure", claudeHookFailureAuto,
+		"What happens when the PreToolUse hook fails: auto (fail closed on a new install with Claude Code 2.1.295+), block, or continue")
 	return cmd
 }
 
@@ -2228,7 +2303,8 @@ func claudeHooksUseCommand(settings claudeSettings, expected string) bool {
 					continue
 				}
 				owned++
-				if command != expected || hook["type"] != "command" || matcher["matcher"] != ".*" {
+				if command != expected || hook["type"] != "command" || matcher["matcher"] != ".*" ||
+					len(claudeRampartHookUnsafeFields(hook)) > 0 {
 					return false
 				}
 			}

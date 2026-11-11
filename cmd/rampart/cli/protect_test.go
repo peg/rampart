@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/peg/rampart/internal/engine"
 	ocplugin "github.com/peg/rampart/internal/plugin/openclaw"
 	"github.com/peg/rampart/policies"
 )
@@ -357,6 +358,61 @@ func TestProtectionPlanConfiguresVerifiesAndRecordsCodex(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".rampart", "verification", "codex.json")); err != nil {
 		t.Fatalf("canonical protection plan did not record verification: %v", err)
+	}
+	for _, want := range []string{"Next steps:", "Restart Codex", protectCanaryCommand, "rampart log"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("protect output is missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+// On a host that never loaded the hook the canary really runs, so it must be
+// a plain echo of a literal word: no file, path, expansion or redirection that
+// could put real data into the agent's transcript.
+func TestProtectCanaryIsHarmlessWhenUnprotected(t *testing.T) {
+	fields := strings.Fields(protectCanaryCommand)
+	if len(fields) != 2 || fields[0] != "echo" {
+		t.Fatalf("canary %q must be `echo <word>`", protectCanaryCommand)
+	}
+	if strings.ContainsAny(fields[1], "/~$`'\"\\<>|;&*?[]{}()") {
+		t.Fatalf("canary argument %q must be a literal word", fields[1])
+	}
+}
+
+// The canary that protect tells newcomers to try must stay denied by the
+// managed policies protect installs, for every hook host, or the first thing
+// a new user tries would appear to show Rampart doing nothing.
+func TestProtectCanaryIsDeniedByManagedPolicies(t *testing.T) {
+	dir := t.TempDir()
+	for _, profile := range []string{"standard", "guard"} {
+		content, err := policies.Profile(profile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, profile+".yaml"), content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	eng, err := engine.New(engine.NewMultiStore("", dir, nil), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, driver := range supportedIntegrationDrivers() {
+		if driver.OpenClaw || !driver.AutoProtect {
+			continue
+		}
+		checked++
+		params := map[string]any{"command": protectCanaryCommand}
+		decision := eng.Evaluate(engine.ToolCall{
+			Agent: driver.ID, Session: "protect-canary", Tool: "exec", Params: params, Input: params,
+		})
+		if decision.Action != engine.ActionDeny {
+			t.Errorf("%s: canary %q = %s, want deny", driver.DisplayName, protectCanaryCommand, decision.Action)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no hook host was checked")
 	}
 }
 

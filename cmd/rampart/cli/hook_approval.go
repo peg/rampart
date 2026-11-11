@@ -90,7 +90,7 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, call engine
 			fmt.Fprintf(c.stderrWriter(), "⚠ Approval cancelled — denying\n")
 			return hookDeny
 		}
-		fmt.Fprintf(c.stderrWriter(), "WARNING: rampart serve unreachable at %s — running without policy enforcement\n", c.serveURL)
+		fmt.Fprintf(c.stderrWriter(), "WARNING: rampart serve unreachable at %s — cannot request approval\n", c.serveURL)
 		if c.autoDiscovered {
 			c.logger.Debug("hook: auto-discovered serve unreachable, falling back to hookAsk", "url", c.serveURL, "error", err)
 		} else {
@@ -121,7 +121,7 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, call engine
 
 	if resp.StatusCode != http.StatusCreated {
 		c.logger.Error("hook: create approval failed", "status", resp.StatusCode)
-		fmt.Fprintf(c.stderrWriter(), "⚠ Rampart serve returned %d, falling back to native prompt\n", resp.StatusCode)
+		fmt.Fprintf(c.stderrWriter(), "⚠ Rampart serve returned %d — cannot request approval\n", resp.StatusCode)
 		return hookAsk
 	}
 
@@ -139,8 +139,8 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, call engine
 	// Guard against a serve bug returning 201 with an empty ID — polling
 	// /v1/approvals/ (no ID) would spin silently for the full timeout.
 	if created.ID == "" {
-		c.logger.Error("hook: server returned 201 with empty approval ID, falling back to native prompt")
-		fmt.Fprintf(c.stderrWriter(), "⚠ Rampart serve returned empty approval ID, falling back to native prompt\n")
+		c.logger.Error("hook: server returned 201 with empty approval ID")
+		fmt.Fprintf(c.stderrWriter(), "⚠ Rampart serve returned empty approval ID — cannot request approval\n")
 		return hookAsk
 	}
 

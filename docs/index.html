@@ -28,7 +28,7 @@
       "url": "https://rampart.sh",
       "applicationCategory": "SecurityApplication",
       "operatingSystem": "Linux, macOS, Windows",
-      "softwareVersion": "1.9.7",
+      "softwareVersion": "1.10.0",
       "license": "https://opensource.org/licenses/Apache-2.0",
       "codeRepository": "https://github.com/peg/rampart"
     }
@@ -84,12 +84,12 @@
         <div class="hero-grid">
             <div class="hero-copy">
               <div class="story-intro">
-                <p class="eyebrow">v1.9.7 · Open-source control for AI agents</p>
+                <p class="eyebrow">v1.10.0 · Open-source control for AI agents</p>
                 <h1 id="hero-title">
                     <span class="first-line">Let agents move fast.</span>
                     <span class="final-line">Keep the final say.</span>
                 </h1>
-                <p class="hero-intro">Rampart places a policy boundary between AI agents and the tools they use. Routine work continues. Your rules block prohibited actions. When an integration supports approval, consequential decisions come back to you.</p>
+                <p class="hero-intro">Rampart places a policy boundary between AI agents and the tools they use. Your rules block prohibited actions, and everything else continues under your agent's own permissions. When an integration supports approval, consequential decisions come back to you.</p>
                 <div class="hero-actions">
                     <a class="primary-action external-link" href="https://docs.rampart.sh/getting-started/installation/" target="_blank" rel="noopener noreferrer" aria-label="Install Rampart (opens in a new tab)">Install Rampart</a>
                     <a class="secondary-action" href="https://docs.rampart.sh/getting-started/how-it-works/" target="_blank" rel="noopener noreferrer" aria-label="See how it works (opens in a new tab)">See how it works</a>
@@ -158,7 +158,7 @@
             <div class="outcome-rail" role="list" aria-label="Rampart policy outcomes">
                 <div class="outcome" role="listitem">
                     <p class="outcome-name">ALLOW</p>
-                    <p class="outcome-copy">Routine work moves through.</p>
+                    <p class="outcome-copy">Everything else continues under the agent&rsquo;s own permissions.</p>
                 </div>
                 <div class="outcome" role="listitem">
                     <p class="outcome-name">ASK</p>
@@ -170,7 +170,7 @@
                 </div>
                 <div class="outcome" role="listitem">
                     <p class="outcome-name">WATCH</p>
-                    <p class="outcome-copy">Activity stays visible without interruption.</p>
+                    <p class="outcome-copy">Matches are recorded without a Rampart prompt.</p>
                 </div>
             </div>
         </div>
@@ -226,7 +226,7 @@
           <p class="integration-kind">Native hooks</p>
           <h3>Claude Code</h3>
           <p>Apply local policy through the native hook interface. Verification checks installed configuration and adapter behavior; it does not prove host ingestion.</p>
-          <code>rampart setup claude-code</code>
+          <code>rampart protect claude-code</code>
           <a class="text-action" href="https://docs.rampart.sh/integrations/claude-code/">Claude Code setup and limits</a>
         </article>
       </div>

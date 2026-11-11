@@ -20,7 +20,7 @@ description: "Install Rampart on Windows, macOS, or Linux. Get the security laye
     **Manual:** Download the `.zip` from [GitHub Releases](https://github.com/peg/rampart/releases), extract `rampart.exe`, and add to your PATH.
     
     !!! success "No Server Required"
-        Basic protection works immediately after `rampart setup claude-code` — no need to run `rampart serve`. The hook evaluates policies locally. Run serve only if you want the live dashboard or approval flow.
+        Basic protection works immediately after `rampart protect claude-code` — no need to keep `rampart serve` running for local decisions. The hook evaluates policies locally. Run serve only if you want the live dashboard or approval flow.
 
 === "macOS & Linux"
 
@@ -58,7 +58,7 @@ This installs the `rampart` binary.
 
 ## Go Install
 
-Requires Go 1.26.10+:
+Requires Go 1.26.11+:
 
 ```bash
 go install github.com/peg/rampart/cmd/rampart@latest

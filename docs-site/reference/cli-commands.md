@@ -37,22 +37,6 @@ cannot yet prove that an already-running or installed service uses the same
 file. Advanced custom-config deployments should use `rampart serve install`,
 the appropriate `rampart setup <agent>` command, and explicit verification.
 
-### `rampart quickstart` (deprecated compatibility)
-
-Preserves the older profile-selection and wrap-guidance workflow while routing
-supported native integrations through the same managed protection path as
-`rampart protect`. New installations should use `rampart protect`.
-
-```bash
-rampart quickstart                  # Legacy compatibility workflow
-rampart quickstart --yes            # Compatibility spelling for existing scripts
-rampart quickstart -y               # Short compatibility spelling
-```
-
-Quickstart remains non-interactive. `--yes` / `-y`, `--profile`, and wrap-only
-agent guidance remain available so existing scripts continue to work, but new
-onboarding and repair flows should use `rampart protect`.
-
 ### `rampart verify`
 
 Actively test expected policy decisions with fixed, non-executing canaries.
@@ -67,6 +51,7 @@ rampart verify codex           # Verify Codex hook installation and adapter deni
 rampart verify gemini          # Verify Gemini hook installation and adapter denial
 rampart verify antigravity     # Verify Antigravity plugin installation and adapter denial
 rampart verify copilot         # Verify shared Copilot hook and dual-host denial
+rampart verify cursor          # Verify Cursor hook installation and adapter denial
 rampart verify policy          # Verify the local Rampart policy path
 rampart verify openclaw --json # Emit schema rampart.verify.v1
 ```
@@ -105,15 +90,21 @@ service build and dispatched tool actions also require separate evidence.
 
 ### `rampart setup claude-code`
 
-Install native hooks into Claude Code. Adds a `PreToolUse` hook to `~/.claude/settings.json` — no LD_PRELOAD or shim needed.
+Install native hooks into Claude Code. Adds `PreToolUse`, `PostToolUse` and `PostToolUseFailure` hooks to `~/.claude/settings.json` — no LD_PRELOAD or shim needed. Most users should run `rampart protect claude-code`, which also installs the managed policies and verifies the result.
 
 ```bash
 rampart setup claude-code           # Install hooks
 rampart setup claude-code --force   # Overwrite existing hooks
 rampart setup claude-code --remove  # Remove hooks
+rampart setup claude-code --hook-failure=block     # Block tool calls if the hook fails (Claude Code 2.1.295+)
+rampart setup claude-code --hook-failure=continue  # Let tool calls run if the hook fails
 ```
 
-Hooks are written to `~/.claude/settings.json` and intercept tool calls at the `PreToolUse` lifecycle point. A `PostToolUseFailure` hook is also registered to prevent Claude Code from repeatedly retrying denied operations. Both exec and file operations are covered natively — no `--patch-tools` equivalent needed.
+`--hook-failure` defaults to `auto`: a new installation on a detected Claude
+Code 2.1.295 or later blocks tool calls when the PreToolUse hook fails, and an
+existing installation keeps its current behavior.
+
+Hooks are written to `~/.claude/settings.json` and intercept tool calls at the `PreToolUse` lifecycle point. `PostToolUse` scans tool responses, and `PostToolUseFailure` keeps Claude Code from repeatedly retrying denied operations. Both exec and file operations are covered natively — no `--patch-tools` equivalent needed.
 
 ### `rampart setup cline`
 
@@ -247,11 +238,10 @@ rampart upgrade --no-binary # Refresh managed policies without replacing the bin
 ```
 
 Custom `serve --background` launches do not retain their original options or
-working directory through automatic restart. This includes the incoming
-v1.9.1 updater: the destination binary cannot repair a restart already performed
-by the old executable. Stop the service, install the new binary, and restart
+working directory through automatic restart, and a new binary cannot repair a
+restart already performed by the old executable that ran the upgrade. Stop the service, install the new binary, and restart
 with the original options and CWD using the [manual migration](../getting-started/upgrade.md#custom-background-services-manual-migration).
-Automatic background preservation and recovery remain outside this release.
+Automatic background preservation and recovery are not supported.
 
 After upgrade, standard policy profiles (`standard.yaml`, `paranoid.yaml`, `yolo.yaml`) in `~/.rampart/policies/` are refreshed automatically. Custom policy files are never modified. Run `rampart protect` once afterward to refresh Rampart-managed hooks and plugins and verify every detected agent boundary; unrelated host configuration is preserved.
 
@@ -400,7 +390,7 @@ rampart init --from-audit ~/.rampart/audit/ --dry-run           # Preview withou
 rampart init --from-audit ~/.rampart/audit/ --output policy.yaml  # Custom output path
 ```
 
-Only allowed events are used for rule generation — denied events represent behavior you don't want to codify.
+Only allowed events are used for rule generation — denied events represent behavior you don't want to codify. The history must pass hash verification first; `--allow-unverified` skips that and marks the generated policy.
 
 ## Service Management
 
@@ -713,7 +703,6 @@ rampart rules --project                        # List only project rules
 rampart rules --json                           # JSON output for scripting
 rampart rules remove 1                         # Remove rule by index
 rampart rules reset                            # Remove all override rules
-rampart rules reset --global                   # Reset only global rules
 ```
 
 ### `rampart policy generate preset`

@@ -174,10 +174,10 @@ func TestGenerateExportClassifiesCurrentDecisionAliases(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now().UTC()
 	events := []audit.Event{
-		{Timestamp: now, Decision: audit.EventDecision{Action: "watch"}},
-		{Timestamp: now, Decision: audit.EventDecision{Action: "require_approval"}},
-		{Timestamp: now, Decision: audit.EventDecision{Action: "webhook"}},
-		{Timestamp: now, Decision: audit.EventDecision{Action: "unknown"}},
+		{ID: "evt-watch", Timestamp: now, Decision: audit.EventDecision{Action: "watch"}},
+		{ID: "evt-approval", Timestamp: now, Decision: audit.EventDecision{Action: "require_approval"}},
+		{ID: "evt-webhook", Timestamp: now, Decision: audit.EventDecision{Action: "webhook"}},
+		{ID: "evt-unknown", Timestamp: now, Decision: audit.EventDecision{Action: "unknown"}},
 	}
 	f, err := os.Create(filepath.Join(dir, now.Format("2006-01-02")+".jsonl"))
 	if err != nil {

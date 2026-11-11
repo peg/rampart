@@ -343,7 +343,7 @@ func TestDoctorHooks_PathHints(t *testing.T) {
 	emit := func(name, status, msg string) {
 		results = append(results, checkResult{Name: name, Status: status, Message: msg})
 	}
-	issues := doctorHooks(emit)
+	issues, _ := doctorHooks(emit)
 	if issues != 2 {
 		t.Fatalf("expected 2 issues, got %d (%+v)", issues, results)
 	}
@@ -390,7 +390,7 @@ func TestDoctorHooksRejectsStaleClaudeCommand(t *testing.T) {
 	requireNoErr(t, os.WriteFile(settingsPath, data, 0o600))
 
 	var results []checkResult
-	issues := doctorHooks(func(name, status, message string) {
+	issues, _ := doctorHooks(func(name, status, message string) {
 		results = append(results, checkResult{Name: name, Status: status, Message: message})
 	})
 	if issues != 1 || len(results) != 1 || results[0].Status != "fail" {
@@ -398,6 +398,176 @@ func TestDoctorHooksRejectsStaleClaudeCommand(t *testing.T) {
 	}
 	if !strings.Contains(results[0].Message, "stale") {
 		t.Fatalf("doctor should explain the stale-command possibility: %s", results[0].Message)
+	}
+}
+
+// Protecting one agent must not make doctor fail for another installed agent
+// without Rampart hooks, but it must still warn: doctor cannot tell an agent
+// that was never protected from one whose hooks were deleted. Stale Rampart
+// hooks and a machine where nothing is protected still fail.
+func TestDoctorHooksUnprotectedAgentWarnsOnceAnotherIsProtected(t *testing.T) {
+	codexStatus := func(t *testing.T) (int, int, checkResult) {
+		t.Helper()
+		var codex checkResult
+		issues, warnings := doctorHooks(func(name, status, message string) {
+			if name == "Hooks" && strings.Contains(message, "Codex") {
+				codex = checkResult{Name: name, Status: status, Message: message}
+			}
+		})
+		return issues, warnings, codex
+	}
+	setup := func(t *testing.T, protectClaude bool, codexHooks string) {
+		t.Helper()
+		home := t.TempDir()
+		testSetHome(t, home)
+		t.Setenv("CLAUDE_CONFIG_DIR", "")
+		t.Setenv("PATH", t.TempDir())
+		t.Chdir(t.TempDir())
+		managedDir := t.TempDir()
+		originalResolver := claudeManagedSettingsDirResolver
+		claudeManagedSettingsDirResolver = func() string { return managedDir }
+		t.Cleanup(func() { claudeManagedSettingsDirResolver = originalResolver })
+		if protectClaude {
+			writeCurrentClaudeHookSettings(t, home, nil)
+		}
+		codexDir := filepath.Join(home, ".codex")
+		requireNoErr(t, os.MkdirAll(codexDir, 0o700))
+		if codexHooks != "" {
+			requireNoErr(t, os.WriteFile(filepath.Join(codexDir, "hooks.json"), []byte(codexHooks), 0o600))
+		}
+	}
+
+	for name, codexHooks := range map[string]string{
+		"never set up, Claude Code protected":  "",
+		"hooks deleted, Claude Code protected": `{"hooks":{}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			setup(t, true, codexHooks)
+			issues, warnings, codex := codexStatus(t)
+			if issues != 0 || warnings != 1 || codex.Status != "warn" {
+				t.Fatalf("issues=%d warnings=%d codex=%+v, want 0 issues and 1 warning", issues, warnings, codex)
+			}
+			if !strings.Contains(codex.Message, "rampart protect codex") {
+				t.Fatalf("warning should name the protect command: %s", codex.Message)
+			}
+		})
+	}
+
+	t.Run("stale Rampart hooks, Claude Code protected", func(t *testing.T) {
+		stale := `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"/retired/rampart hook --format codex"}]}]}}`
+		setup(t, true, stale)
+		issues, _, codex := codexStatus(t)
+		if issues != 1 || codex.Status != "fail" || !strings.Contains(codex.Message, "stale") {
+			t.Fatalf("issues=%d codex=%+v, want stale Codex hooks to fail", issues, codex)
+		}
+	})
+
+	t.Run("previously protected, hooks file gone", func(t *testing.T) {
+		setup(t, true, "")
+		receiptDir := filepath.Join(os.Getenv("HOME"), ".rampart", "verification")
+		requireNoErr(t, os.MkdirAll(receiptDir, 0o700))
+		requireNoErr(t, os.WriteFile(filepath.Join(receiptDir, "codex.json"), []byte("{}"), 0o600))
+		issues, _, codex := codexStatus(t)
+		if issues != 1 || codex.Status != "fail" || !strings.Contains(codex.Message, "was protected") {
+			t.Fatalf("issues=%d codex=%+v, want a lost managed boundary to fail", issues, codex)
+		}
+		// A deliberate removal forgets the receipt, so doctor goes back to a warning.
+		requireNoErr(t, clearVerificationReceipt("codex"))
+		issues, warnings, codex := codexStatus(t)
+		if issues != 0 || warnings != 1 || codex.Status != "warn" {
+			t.Fatalf("issues=%d warnings=%d codex=%+v, want a warning after --remove", issues, warnings, codex)
+		}
+	})
+
+	t.Run("set up without verification, hooks file gone", func(t *testing.T) {
+		setup(t, true, "")
+		requireNoErr(t, testExecuteRoot(t, "setup", "codex"))
+		if hasVerificationReceipt("codex") {
+			t.Fatal("setup alone must not write a verification receipt")
+		}
+		requireNoErr(t, os.Remove(filepath.Join(os.Getenv("HOME"), ".codex", "hooks.json")))
+		issues, _, codex := codexStatus(t)
+		if issues != 1 || codex.Status != "fail" || !strings.Contains(codex.Message, "was protected") {
+			t.Fatalf("issues=%d codex=%+v, want hooks removed after setup to fail", issues, codex)
+		}
+		requireNoErr(t, testExecuteRoot(t, "setup", "codex", "--remove"))
+		issues, warnings, codex := codexStatus(t)
+		if issues != 0 || warnings != 1 || codex.Status != "warn" {
+			t.Fatalf("issues=%d warnings=%d codex=%+v, want a warning after --remove", issues, warnings, codex)
+		}
+	})
+
+	t.Run("set up before setup records existed, hooks later removed", func(t *testing.T) {
+		setup(t, true, "")
+		requireNoErr(t, testExecuteRoot(t, "setup", "codex"))
+		marker, err := integrationSetupMarkerPath("codex")
+		requireNoErr(t, err)
+		requireNoErr(t, os.Remove(marker)) // as an install from an earlier release has it
+		if _, _, codex := codexStatus(t); codex.Status != "ok" {
+			t.Fatalf("codex=%+v, want current hooks reported ok", codex)
+		}
+		requireNoErr(t, os.Remove(filepath.Join(os.Getenv("HOME"), ".codex", "hooks.json")))
+		issues, _, codex := codexStatus(t)
+		if issues != 1 || codex.Status != "fail" || !strings.Contains(codex.Message, "was protected") {
+			t.Fatalf("issues=%d codex=%+v, want hooks doctor saw earlier to fail once removed", issues, codex)
+		}
+	})
+
+	failedReport := func(checkedAt time.Time) verificationReport {
+		report := passingAssuranceReport("codex", checkedAt)
+		report.Checks[1].Status = verificationFail
+		return summarizeVerification(report)
+	}
+
+	t.Run("failed verification of an agent never set up", func(t *testing.T) {
+		setup(t, true, "")
+		requireNoErr(t, writeVerificationReceipt(failedReport(time.Now().UTC().Truncate(time.Second))))
+		issues, warnings, codex := codexStatus(t)
+		if issues != 0 || warnings != 1 || codex.Status != "warn" {
+			t.Fatalf("issues=%d warnings=%d codex=%+v, want a failed verify alone to stay a warning", issues, warnings, codex)
+		}
+	})
+
+	t.Run("failed re-verification keeps earlier protection evidence", func(t *testing.T) {
+		setup(t, true, "")
+		now := time.Now().UTC().Truncate(time.Second)
+		requireNoErr(t, writeVerificationReceipt(passingAssuranceReport("codex", now)))
+		requireNoErr(t, writeVerificationReceipt(failedReport(now.Add(time.Second))))
+		issues, _, codex := codexStatus(t)
+		if issues != 1 || codex.Status != "fail" || !strings.Contains(codex.Message, "was protected") {
+			t.Fatalf("issues=%d codex=%+v, want a once-verified agent to fail", issues, codex)
+		}
+	})
+
+	t.Run("nothing protected", func(t *testing.T) {
+		setup(t, false, "")
+		issues, _, codex := codexStatus(t)
+		if issues != 1 || codex.Status != "fail" || !strings.Contains(codex.Message, "rampart protect codex") {
+			t.Fatalf("issues=%d codex=%+v, want a failure naming protect", issues, codex)
+		}
+	})
+}
+
+// The hook and serve use the built-in standard profile without policy files,
+// so their absence is not a failure.
+func TestDoctorPoliciesWithoutFilesUsesBuiltInProfile(t *testing.T) {
+	for name, setup := range map[string]func(dir string){
+		"no directory":  func(string) {},
+		"no yaml files": func(dir string) { requireNoErr(t, os.MkdirAll(dir, 0o755)) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			testSetHome(t, home)
+			setup(filepath.Join(home, ".rampart", "policies"))
+			var results []checkResult
+			issues := doctorPolicies(func(name, status, msg string) {
+				results = append(results, checkResult{Name: name, Status: status, Message: msg})
+			})
+			if issues != 0 || len(results) != 1 || results[0].Status != "ok" ||
+				!strings.Contains(results[0].Message, "built-in standard profile") {
+				t.Fatalf("issues=%d results=%+v, want one ok naming the built-in profile", issues, results)
+			}
+		})
 	}
 }
 
@@ -620,7 +790,7 @@ func TestDoctorHooks_ClaudeBinaryNoDir(t *testing.T) {
 	emit := func(name, status, msg string) {
 		results = append(results, checkResult{Name: name, Status: status, Message: msg})
 	}
-	issues := doctorHooks(emit)
+	issues, _ := doctorHooks(emit)
 	if issues != 1 {
 		t.Fatalf("expected 1 issue (missing Claude Code hook), got %d (%+v)", issues, results)
 	}
@@ -1154,6 +1324,10 @@ func TestIsNewerReleaseVersion(t *testing.T) {
 		{"v1.0.0-alpha", "v1.0.0-beta", true},
 		{"v0.9.22-staging-47fa0cf", "v0.9.22", false},
 		{"v0.9.22-0.20260503052103-a72c3452fe38", "v0.9.22", false},
+		// A git-describe build is a commit after the tag; offering the tag
+		// would be a downgrade.
+		{"v1.9.7-55-g4d91f21", "v1.9.7", false},
+		{"1.9.7-55-g4d91f21", "v1.10.0", false},
 	}
 	for _, tt := range tests {
 		if got := isNewerReleaseVersion(tt.current, tt.latest); got != tt.want {

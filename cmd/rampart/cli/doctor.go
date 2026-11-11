@@ -16,8 +16,10 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
@@ -38,7 +40,7 @@ import (
 )
 
 // defaultServePort is the default port for rampart serve.
-// Referenced by doctor, hook, quickstart, and serve install.
+// Referenced by doctor, hook, and serve install.
 // Must match the --port flag default in newServeCmd.
 const defaultServePort = 9090
 
@@ -185,6 +187,12 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 			} else {
 				icon = "⚠"
 			}
+		case "info":
+			if useColor {
+				icon = colorDim + "ℹ" + colorReset
+			} else {
+				icon = "ℹ"
+			}
 		default:
 			if useColor {
 				icon = colorGreen + "✓" + colorReset
@@ -242,7 +250,9 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	issues += doctorHookBinary(emit)
 
 	// 6. Hooks installed (Claude Code, Codex, and Cline)
-	issues += doctorHooks(emit)
+	hookIssues, hookWarnings := doctorHooks(emit)
+	issues += hookIssues
+	warnings += hookWarnings
 
 	// 7. Audit directory
 	auditIssues, auditWarnings := doctorAudit(emit)
@@ -382,7 +392,7 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 			if issues > 1 {
 				noun = "issues"
 			}
-			fmt.Fprintf(w, "%d %s found. Run 'rampart setup' to fix hook installation.\n", issues, noun)
+			fmt.Fprintf(w, "%d %s found. See the ✗ lines above.\n", issues, noun)
 		}
 		if warnings > 0 {
 			fmt.Fprintf(w, "%d warning(s) — not blocking but worth reviewing.\n", warnings)
@@ -586,10 +596,15 @@ func doctorPolicies(emit emitFn) int {
 	}
 	policyDir := filepath.Join(home, ".rampart", "policies")
 
+	// The hook and serve always load the built-in standard profile, so policy
+	// files are optional additions.
 	entries, err := os.ReadDir(policyDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		emit("Policy", "ok", "built-in standard profile (no files in "+policyDir+")")
+		return 0
+	}
 	if err != nil {
-		emit("Policy", "fail", fmt.Sprintf("%s (not found)", policyDir)+hintSep+
-			"rampart init --profile standard")
+		emit("Policy", "fail", fmt.Sprintf("%s (%s)", policyDir, err))
 		return 1
 	}
 
@@ -650,10 +665,7 @@ func doctorPolicies(emit emitFn) int {
 		}
 	}
 	if !found {
-		emit("Policy", "fail",
-			fmt.Sprintf("no .yaml files in %s", policyDir)+hintSep+
-				"rampart init --profile standard")
-		issues++
+		emit("Policy", "ok", "built-in standard profile (no files in "+policyDir+")")
 	}
 	return issues
 }
@@ -889,14 +901,15 @@ func doctorPending(emit emitFn, serveURL, token string) int {
 	return 0
 }
 
-func doctorHooks(emit emitFn) int {
-	issues := 0
+func doctorHooks(emit emitFn) (issues, warnings int) {
 
 	// Claude Code hooks — honor CLAUDE_CONFIG_DIR when it relocates ~/.claude.
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return 0
+		return 0, 0
 	}
+	recordObservedIntegrations(home)
+	anyProtected := len(detectProtectedAgents()) > 0
 	claudeDir := claudeConfigDir(home)
 	_, claudeDirErr := os.Stat(claudeDir)
 	claudeBinary, _ := exec.LookPath("claude")
@@ -917,10 +930,10 @@ func doctorHooks(emit emitFn) int {
 				emit("Hooks", "ok", "Claude Code (current PreToolUse, PostToolUse, and PostToolUseFailure hooks; no readable setting disables user hooks)")
 			}
 		} else {
-			emit("Hooks", "fail",
-				fmt.Sprintf("Claude Code hooks missing, stale, incomplete, or unsafe (expected current Rampart hooks in %s)", claudeSettingsPath)+
-					hintSep+"rampart setup claude-code")
-			issues++
+			n, w := doctorHookGap(emit, anyProtected, claudeRampartHooksPresent(home), "Claude Code", "claude-code",
+				fmt.Sprintf("Claude Code hooks missing, stale, incomplete, or unsafe (expected current Rampart hooks in %s)", claudeSettingsPath))
+			issues += n
+			warnings += w
 		}
 	}
 
@@ -936,10 +949,10 @@ func doctorHooks(emit emitFn) int {
 		if clineHooksConfiguredForHome(home) {
 			emit("Hooks", "ok", "Cline (current PreToolUse and PostToolUse hook files)")
 		} else {
-			emit("Hooks", "fail",
-				fmt.Sprintf("Cline hook not installed or disabled (expected platform-native Rampart hook files in %s)", clineUserHooksDir(home))+
-					hintSep+"rampart setup cline && rampart verify cline")
-			issues++
+			n, w := doctorHookGap(emit, anyProtected, clineManagedHooksPresent(home), "Cline", "cline",
+				fmt.Sprintf("Cline hook not installed or disabled (expected platform-native Rampart hook files in %s)", clineUserHooksDir(home)))
+			issues += n
+			warnings += w
 		}
 	}
 
@@ -950,17 +963,53 @@ func doctorHooks(emit emitFn) int {
 	codexBinary, _ := exec.LookPath("codex")
 	if codexDirErr == nil || codexBinary != "" {
 		hooksPath := filepath.Join(codexDir, "hooks.json")
-		if codexHooksConfiguredForHome(home) {
-			emit("Hooks", "ok", "Codex (current PreToolUse and PostToolUse in hooks.json)")
-		} else {
-			emit("Hooks", "fail",
-				fmt.Sprintf("Codex lifecycle hooks missing, stale, incomplete, or unsafe (expected current Rampart hooks in %s)", hooksPath)+
-					hintSep+"rampart setup codex")
+		if codexUserHooksDisabled(home) {
+			emit("Hooks", "fail", "Codex config.toml sets allow_managed_hooks_only = true, so Codex skips Rampart's hooks"+
+				hintSep+"remove that setting, or install Rampart as a managed Codex hook")
 			issues++
+		} else if codexHooksConfiguredForHome(home) {
+			emit("Hooks", "ok", "Codex (current PreToolUse and PostToolUse in hooks.json; trust in Codex /hooks not checked)")
+		} else {
+			n, w := doctorHookGap(emit, anyProtected, codexRampartIntegrationPresent(home), "Codex", "codex",
+				fmt.Sprintf("Codex lifecycle hooks missing, stale, incomplete, or unsafe (expected current Rampart hooks in %s)", hooksPath))
+			issues += n
+			warnings += w
 		}
 	}
 
-	return issues
+	return issues, warnings
+}
+
+// doctorHookGap reports an installed agent without current Rampart hooks and
+// returns the issue and warning counts. Rampart-owned hooks that no longer
+// match the current install are always a failure: the user believes that agent
+// is protected. So is a setup record or verification receipt for an agent whose
+// hooks are now gone: setup, protect or verify recorded it as protected, and only
+// `rampart setup <agent> --remove` forgets that. With nothing protected it also
+// fails, so doctor never reports a healthy install that protects nothing.
+// Otherwise the agent was most likely never protected, and doctor warns.
+func doctorHookGap(emit emitFn, anyProtected, rampartOwned bool, name, id, failMsg string) (issues, warnings int) {
+	fix := hintSep + "rampart protect " + id
+	if !rampartOwned && integrationProtectionRecorded(id) {
+		emit("Hooks", "fail", name+" was protected (setup or verification record found) but its Rampart hooks are missing. "+
+			"Re-protect it, or run `rampart setup "+id+" --remove` if you removed it on purpose"+fix)
+		return 1, 0
+	}
+	if !rampartOwned && anyProtected {
+		emit("Hooks", "warn", name+" has no Rampart hooks. If you protected it before, they were removed"+fix)
+		return 0, 1
+	}
+	emit("Hooks", "fail", failMsg+fix)
+	return 1, 0
+}
+
+func clineManagedHooksPresent(home string) bool {
+	for _, hookDir := range clineKnownHookDirs(home) {
+		if clineManagedHooksPresentInDir(hookDir) {
+			return true
+		}
+	}
+	return false
 }
 
 // doctorCoverage cross-checks whether a user with OpenClaw protection but no
@@ -1352,7 +1401,7 @@ func doctorVersionCheck(w io.Writer, silent bool, emit emitFn) int {
 
 	// Pseudoversion or pre-release build (e.g. v0.2.37-0.20260218194853-6c13a58b371e).
 	// Comparing these to a stable release tag is meaningless and confusing — skip the check.
-	if strings.Contains(current, "-0.") {
+	if strings.Contains(current, "-0.") || isGitDescribeVersion(current) {
 		if emit != nil {
 			emit("Update check", "info", "Dev build — update checks skipped")
 		} else if !silent {
@@ -1436,7 +1485,7 @@ func compareReleaseVersions(a, b string) (int, bool) {
 func parseReleaseVersion(v string) (releaseVersion, bool) {
 	var out releaseVersion
 	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
-	if v == "" || v == "dev" || v == "unknown" || strings.Contains(v, "dirty") || strings.Contains(v, "staging") || strings.HasPrefix(v, "0.0.0-") || isGoPseudoVersion(v) {
+	if v == "" || v == "dev" || v == "unknown" || strings.Contains(v, "dirty") || strings.Contains(v, "staging") || strings.HasPrefix(v, "0.0.0-") || isGoPseudoVersion(v) || isGitDescribeVersion(v) {
 		return out, false
 	}
 	v = strings.SplitN(v, "+", 2)[0]
@@ -1700,6 +1749,26 @@ func normalizedReleaseVersion(version string) (string, bool) {
 		normalized += "-" + strings.Join(parsed.prerelease, ".")
 	}
 	return normalized, true
+}
+
+// isGitDescribeVersion reports a `git describe` build such as
+// v1.9.7-55-g4d91f21: a commit after the tag, not that release or a
+// prerelease of it, so comparing it with a release tag is meaningless.
+func isGitDescribeVersion(version string) bool {
+	parts := strings.Split(strings.TrimSuffix(version, "-dirty"), "-")
+	if len(parts) < 3 {
+		return false
+	}
+	count, commit := parts[len(parts)-2], parts[len(parts)-1]
+	if _, err := strconv.Atoi(count); err != nil || !strings.HasPrefix(commit, "g") || len(commit) < 8 {
+		return false
+	}
+	for _, r := range commit[1:] {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 func isGoPseudoVersion(version string) bool {

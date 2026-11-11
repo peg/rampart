@@ -1,5 +1,5 @@
 ---
-title: Rampart
+title: Documentation
 description: "Rampart is an open-source security policy engine for hook-visible AI agent actions. Block matched dangerous commands, detect known prompt-injection patterns, and audit policy decisions."
 hide:
   - navigation
@@ -147,7 +147,7 @@ decision. Evaluation is normally measured in microseconds, but end-to-end hook
 latency varies by machine and policy set.
 
 **Can AI agents be manipulated by prompt injection?**  
-Yes — a webpage or MCP tool response can contain instructions that try to override an agent's behavior. Rampart's `watch-prompt-injection` policy monitors tool responses for these patterns and logs them for review. [Learn more →](guides/prompt-injection.md)
+Yes — a webpage or MCP tool response can contain instructions that try to override an agent's behavior. Rampart's `watch-prompt-injection` policy checks tool responses for high-confidence patterns and blocks matching responses where the host's post-tool hook can block them. [Learn more →](guides/prompt-injection.md)
 
 **Does Rampart send my commands to any external server?**  
 Core Rampart policy evaluation, audit logging, and the dashboard are local.
@@ -163,7 +163,7 @@ I/O add environment-dependent overhead; optional semantic verification adds a
 network model call.
 
 **What if I need to allow a command that's blocked?**  
-Run `rampart allow "your command pattern"` and it's done — no YAML editing required. The rule takes effect immediately. For one-time exceptions, use `action: ask` in your policy so you can approve each instance. [Full guide →](guides/customizing-policy.md)
+If an `ask` rule keeps prompting, run `rampart allow "your command pattern"` — no YAML editing required, and the rule applies from the next call. A command blocked by a deny rule stays blocked: `allow` does not override deny rules. [Full guide →](guides/customizing-policy.md)
 
 ## How It Works
 
@@ -208,30 +208,21 @@ policy decisions, not proof of execution or independent audit witnessing.
 | **Cursor** | Native local Agent hook; optional MCP proxy | `rampart setup cursor` |
 | **Claude Desktop** | MCP proxy | `rampart mcp --` |
 | **Any CLI agent** | Shell wrapper | `rampart wrap --` |
-| **Python agents** | HTTP API / SDK | `localhost:9090` |
+| **Custom agents** | HTTP API | `localhost:9090` |
 
 [:octicons-arrow-right-24: See all integration guides](integrations/index.md)
 
 ## Current release
 
-Rampart v1.9.7 extends self-protection to more of Rampart's own commands,
-requires durable allow rules to name what they allow, fails closed in more hook
-error paths, redacts more credential shapes, and evaluates Codex and Cline
-`apply_patch` text as file content so large patches are no longer denied.
-v1.9.6 made rule exclusions excuse only the command they match, kept
-download-and-execute analysis working across here-documents, stopped a
-repository's own `rampart.yaml` from replacing the installed policy, refused
-empty hook input instead of approving it, and built with Go 1.26.10. v1.9.5
-stopped file searches from reaching protected credential files and recognizes
-Claude Code's subagent hand-back tool. v1.9.4 completed the
-download-and-pipe detection added in v1.9.3: fetched content that reaches a
-shell, an interpreter, eval or an unrecognized program is denied, while
-read-only filters such as head, jq and wc are not blocked. These build on
-v1.9.2, which preserves native action path and
-working-directory identity, redacts diagnostics, and makes the alpha Python SDK
-fail closed by default. Read the
-[upgrade guidance](getting-started/upgrade.md) before upgrading a custom
-background service or relying on native OpenClaw approval review. See the [release
-notes](https://github.com/peg/rampart/releases/latest) for the concise upgrade
-summary or the repository
+Rampart v1.10.0 stops answering `allow` for Claude Code: when policy allows an
+action, Rampart returns no decision, so Claude Code's own permission mode and
+prompts apply again. Deny and ask rules work as before. New Claude Code
+installations on 2.1.295 or later fail closed when the hook cannot run;
+existing installations keep their current behavior until you opt in.
+`rampart doctor` now warns, rather than fails, when another detected agent has
+no Rampart hooks, and `rampart protect` ends with a harmless test to try. The
+alpha Python SDK and `rampart quickstart` are removed. Existing installations
+need no action. Read the [upgrade guidance](getting-started/upgrade.md) before
+upgrading a custom background service, and see the [release
+notes](https://github.com/peg/rampart/releases/latest) or the repository
 [changelog](https://github.com/peg/rampart/blob/main/CHANGELOG.md) for history.

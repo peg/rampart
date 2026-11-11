@@ -14,11 +14,15 @@
 package audit
 
 import (
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,4 +64,103 @@ func TestReadEventsFromOffset_RejectsOversizedRecord(t *testing.T) {
 	require.ErrorContains(t, err, "record exceeds")
 	require.Nil(t, events)
 	require.Zero(t, offset)
+}
+
+func TestReadEventsFromOffset_SkipsChainContinuationHeaders(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rotated.jsonl")
+	header := `{"chain_continue":"sha256:aaa","prev_file":"2026-10-12.jsonl"}` + "\n"
+	first := `{"id":"01JEVENT00000000000000001","timestamp":"2026-10-13T00:00:01Z","tool":"exec","decision":{"action":"allow"}}` + "\n"
+	second := `{"id":"01JEVENT00000000000000002","timestamp":"2026-10-13T00:00:02Z","tool":"read","decision":{"action":"deny"}}` + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(header+first+second), 0o600))
+
+	events, offset, err := ReadEventsFromOffset(path, 0)
+	require.NoError(t, err)
+	require.Len(t, events, 2, "the header is chain bookkeeping, not an event")
+	require.Equal(t, "01JEVENT00000000000000001", events[0].ID)
+	require.Equal(t, "01JEVENT00000000000000002", events[1].ID)
+	for _, event := range events {
+		require.False(t, event.Timestamp.IsZero())
+	}
+	require.EqualValues(t, len(header+first+second), offset, "the header is still consumed so tailing does not reread it")
+
+	// Resuming from after the header must behave identically.
+	resumed, _, err := ReadEventsFromOffset(path, int64(len(header)))
+	require.NoError(t, err)
+	require.Len(t, resumed, 2)
+}
+
+func TestReadEventsFromOffset_OnlyRealHeadersAreSkipped(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lookalikes.jsonl")
+	// An event that merely mentions the header's field names is an event.
+	mention := `{"id":"01JEVENT0000000000000000A","timestamp":"2026-10-13T00:00:01Z","tool":"exec","request":{"command":"echo \"chain_continue\" prev_file"},"decision":{"action":"allow"}}` + "\n"
+	// The verifier requires both top-level fields; one alone is not a header.
+	onlyOne := `{"chain_continue":"sha256:aaa","id":"01JEVENT0000000000000000B","timestamp":"2026-10-13T00:00:02Z","tool":"exec","decision":{"action":"allow"}}` + "\n"
+	// An event carrying both header fields is still an event: the verifier
+	// classifies by event id, and the reader must not hide what it counts.
+	both := `{"chain_continue":"sha256:aaa","prev_file":"x.jsonl","id":"01JEVENT0000000000000000C","timestamp":"2026-10-13T00:00:03Z","tool":"exec","decision":{"action":"deny"}}` + "\n"
+	// Escaped key spellings decode to the same fields.
+	escaped := `{"chain_continue":"sha256:aaa","prev_file":"x.jsonl","id":"01JEVENT0000000000000000D","timestamp":"2026-10-13T00:00:04Z","tool":"exec","decision":{"action":"deny"}}` + "\n"
+	// A header-shaped record later in a file is bookkeeping, never an event.
+	lateHeader := `{"chain_continue":"sha256:bbb","prev_file":"y.jsonl"}` + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(mention+onlyOne+both+escaped+lateHeader), 0o600))
+
+	events, _, err := ReadEventsFromOffset(path, 0)
+	require.NoError(t, err)
+	require.Len(t, events, 4)
+	assert.Equal(t, "01JEVENT0000000000000000C", events[2].ID)
+	assert.Equal(t, "01JEVENT0000000000000000D", events[3].ID)
+}
+
+func TestReadEventsFromOffset_AfterRotationReturnsOnlyWrittenEvents(t *testing.T) {
+	dir := t.TempDir()
+	sink, err := NewJSONLSink(dir,
+		WithFsync(false),
+		WithRotateSize(500),
+		WithAnchorInterval(0),
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sink.Close() })
+
+	const written = 5
+	for i := 0; i < written; i++ {
+		require.NoError(t, sink.Write(sampleEvent("exec")))
+	}
+	files, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	require.NoError(t, err)
+	sort.Strings(files)
+	require.GreaterOrEqual(t, len(files), 2, "the small rotation size must produce rotated files with headers")
+
+	total := 0
+	for _, file := range files {
+		events, _, err := ReadEventsFromOffset(file, 0)
+		require.NoError(t, err)
+		for _, event := range events {
+			require.NotEmpty(t, event.ID, "%s returned a blank record", file)
+			require.False(t, event.Timestamp.IsZero(), "%s returned a record without a timestamp", file)
+			total++
+		}
+	}
+	require.Equal(t, written, total)
+}
+
+// A malformed complete record must not vanish: the reader keeps the good
+// events, advances past it and reports it.
+func TestReadEventsFromOffset_ReportsMalformedCompleteRecords(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mixed.jsonl")
+	good := `{"id":"01JTEST000000000000000001","timestamp":"2026-02-12T00:00:00Z","agent":"a","session":"s","tool":"exec","request":{},"decision":{"action":"allow","evaluation_time_us":1},"prev_hash":"","hash":"sha256:abc"}`
+	content := good + "\n" + `{"id":"01JTEST000000000000000002","tool":` + "\n" + `not json` + "\n" +
+		strings.Replace(good, "0001", "0003", 1) + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+	events, offset, err := ReadEventsFromOffset(path, 0)
+	var malformed *MalformedRecordsError
+	require.ErrorAs(t, err, &malformed)
+	assert.Equal(t, 2, malformed.Count)
+	assert.Equal(t, int64(len(good)+1), malformed.FirstOffset)
+	require.Len(t, events, 2)
+	assert.Equal(t, int64(len(content)), offset)
 }

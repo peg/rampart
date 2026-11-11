@@ -5,7 +5,7 @@
 There is no universal fallback. Claude Code, Codex, and Cline normally evaluate
 local policy without `rampart serve`; Rampart-handled parse/config errors deny
 in enforce mode, while an unexpected hook-process crash or timeout follows the
-host's behavior. Managed OpenClaw denies when its policy service is unavailable.
+host's behavior (for Claude Code, `--hook-failure=block` makes it block). Managed OpenClaw denies when its policy service is unavailable.
 Hermes denies every tool by default and can fail open only for tools an operator
 explicitly opts out of that boundary. See the
 [support matrix](support-matrix.md#degraded-behavior-notes).

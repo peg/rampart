@@ -15,9 +15,10 @@ Agent → Tool Call → Rampart → Policy Engine → Allow / Deny / Watch / Ask
 
 ## Design Decisions
 
-**Boundary-specific failure behavior.** Managed native integrations fail closed
-when enforcement is unavailable. Optional compatibility boundaries such as the
-shell wrapper and preload library can be configured to fail open. See the
+**Boundary-specific failure behavior.** Failure behavior depends on the
+boundary. Native hooks evaluate policy in-process, and what happens when a hook
+cannot run is partly up to the host. `rampart protect openclaw` configures the
+OpenClaw plugin to fail closed. The preload library fails open by default. See the
 [threat model](https://docs.rampart.sh/reference/threat-model/) for the trade-offs and exact boundary guarantees.
 
 **Custom YAML over OPA/Rego.** The domain is narrow — "should this tool call
@@ -106,7 +107,7 @@ not install a misleading post-result scanner.
 
 **`rampart wrap`** — Add a cooperative shell boundary without agent code changes. Best for agents that honor `$SHELL` or resolve common shells through `PATH`; it is not subprocess interposition.
 
-**HTTP Proxy** — Point your agent's tool calls at `localhost:9090`. Framework-agnostic. Best for: custom agents, Python scripts, anything that makes HTTP calls.
+**HTTP Proxy** — Point your agent's tool calls at `localhost:9090`. Framework-agnostic. Best for: custom agents and anything that makes HTTP calls; see the [HTTP API reference](https://docs.rampart.sh/reference/api-reference/).
 
 **OpenClaw Plugin** — Rampart evaluates the tool call first. Allow decisions pass through, deny decisions are blocked immediately, and matched exec `ask` decisions are routed into OpenClaw's native approval flow without turning on prompts for every exec. Best for: OpenClaw deployments that want native approval UX with selective policy-driven exec approvals.
 
@@ -139,7 +140,7 @@ policies/            Built-in profiles (standard, paranoid, yolo)
 
 ## Known Limitations
 
-**Pattern matching has gaps.** Common evasion techniques (shell wrappers like `bash -c`, quoted binaries, escaped characters) are handled via normalization and `command_contains` substring matching. However, novel obfuscation (`find / -delete`, variable expansion, encoded payloads) can bypass static patterns. Combine with [semantic verification](https://github.com/peg/rampart-verify) for intent-based classification.
+**Pattern matching has gaps.** Common evasion techniques (shell wrappers like `bash -c`, quoted binaries, escaped characters) are handled via normalization and `command_contains` substring matching. However, forms the normalizer does not recognize, such as variable expansion, can bypass static patterns. Combine with [semantic verification](https://github.com/peg/rampart-verify) for intent-based classification.
 
 **Compatibility boundaries are voluntary.** A compromised agent can bypass an
 HTTP proxy by making direct calls, and it can bypass `rampart wrap` by ignoring

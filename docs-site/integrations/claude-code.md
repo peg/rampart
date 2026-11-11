@@ -24,23 +24,23 @@ to hooks.
 
 ## What Gets Protected by Default
 
-The standard policy (`~/.rampart/policies/standard.yaml`) uses three different defaults depending on the risk:
+Rampart's built-in standard policy uses three different defaults depending on the risk:
 
 | Category | Example | Default |
 |---------|---------|---------|
 | Destructive commands | `rm -rf /`, `dd if=/dev/urandom of=/dev/sda` | `deny` |
-| Credential stores / secret files | `cat ~/.ssh/id_rsa`, `cat ~/.aws/credentials`, `cat ~/.codex/auth.json` | `deny` |
-| Sensitive agent-state artifacts | `cat ~/.claude/history.jsonl`, reading Claude sessions, editing `~/.claude/settings.json` | `ask` |
+| Credential stores / secret files | `cat ~/.ssh/id_rsa`, `cat ~/.aws/credentials`, Read of `~/.codex/auth.json` | `deny` |
+| Sensitive agent-state artifacts | Read of `~/.claude/history.jsonl`, reading Claude sessions, editing `~/.claude/settings.json` | `ask` |
 
 This split is deliberate. Secret stores are too dangerous to expose silently. But agent history, shell snapshots, durable memory, and security-relevant settings are often legitimate to inspect, so Rampart requires human approval instead of hard-blocking them.
 
 ## Setup
 
 ```bash
-rampart setup claude-code
+rampart protect claude-code
 ```
 
-That's it. This installs wildcard `PreToolUse`, `PostToolUse`, and
+That's it. This installs the managed Guard rules and wildcard `PreToolUse`, `PostToolUse`, and
 `PostToolUseFailure` hooks. Rampart currently classifies:
 
 - **Bash, PowerShell, and Monitor commands** (`exec`)
@@ -78,7 +78,10 @@ Claude Code → PreToolUse  → Rampart policy → Allow/Deny/Ask
 When Claude Code wants to run a command, it sends the tool call to `rampart hook` via stdin. Rampart evaluates it against your policies and returns a JSON response:
 
 ```json
-// Allowed (explicit allow bypasses Claude Code permission system)
+// Allowed by policy (no decision: Claude Code's own permission rules and prompts still apply)
+{}
+
+// Approved by you through Rampart's approval queue
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}
 
 // Denied
@@ -87,6 +90,11 @@ When Claude Code wants to run a command, it sends the tool call to `rampart hook
 // Requires approval (waits for human decision)
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"Rampart: Manual approval required"}}
 ```
+
+**Allow behavior:** A policy allow returns no decision, so Claude Code's permission mode, allow/ask/deny
+rules and prompts apply as if Rampart were not installed. Monitor and audit
+modes never return a decision. The explicit `allow` is reserved for a call you
+approved through Rampart's own approval queue, such as a `headless_only` ask.
 
 **Ask behavior:** When a policy action is `ask`, the hook returns `"permissionDecision":"ask"`. Claude Code shows its native permission prompt, so the user approves or denies directly in the Claude Code UI.
 
@@ -101,8 +109,34 @@ prior side effects or upstream telemetry. See Claude's
 
 Local policy evaluation and native `ask` do not require `rampart serve`.
 Rampart-handled malformed input and policy errors deny in enforce mode.
-Claude command-hook timeouts and launch failures supply no veto; normal host
-permissions apply. This differs from Claude Agent SDK callback hooks. See the
+By default Claude Code lets a command hook that times out, cannot launch, exits
+unexpectedly, or prints invalid output proceed through its normal permission
+flow, so a failure of Rampart itself would not stop the tool call. This differs
+from Claude Agent SDK callback hooks.
+
+Claude Code 2.1.295 and newer support `onFailure: "block"` on command hooks.
+Rampart sets it on the **PreToolUse** hook only, so the Post hooks keep the
+default and a scanning failure cannot hide tool output:
+
+- A **new installation** on a detected supported Claude Code fails closed.
+- An **existing installation** is never changed silently. Setup reports that
+  fail-closed is available and how to enable it.
+- `rampart setup claude-code --hook-failure=block` opts in explicitly and
+  refuses an older or undetected Claude Code, because an older release may
+  reject a settings file with an unknown hook field.
+  `--hook-failure=continue` returns to Claude Code's default.
+- `rampart verify claude-code` reports the active mode.
+
+Setup checks the version of the `claude` command on your `PATH`. An IDE
+extension or desktop app that runs its own older Claude Code may ignore the
+field, or reject the settings file, so update those surfaces too.
+
+With fail-closed enabled, a Rampart crash or hang blocks tool calls until it is
+fixed or the mode is reverted. Run the setup command above from a terminal
+outside Claude Code, or edit the settings file, to revert. A hung hook is still
+treated as failed only after Claude's documented command-hook timeout. Rampart
+configures this documented host behavior but does not verify it by launching
+Claude Code. See the
 [upstream failure contract](https://code.claude.com/docs/en/hooks#timeouts) and
 the [per-host failure table](../getting-started/support-matrix.md#degraded-behavior-notes).
 
@@ -137,14 +171,19 @@ rampart watch
 
 ## Custom Policy
 
-By default, Rampart uses the `standard` profile. To customize:
+Claude Code hooks always start from Rampart's built-in `standard` profile. To
+customize it:
 
-```bash
-# Edit your policy
-vim ~/.rampart/policies/standard.yaml
+- Use `rampart allow "<command>"` or `rampart block "<command>"` for a
+  durable rule. A command `allow` without `--for` or `--once` overrides `ask`
+  rules; temporary and path allows do not, and a matching deny still wins.
+- Add your own policy file with new policy names in `~/.rampart/policies/`.
+  It applies from the next tool call.
 
-# Changes take effect immediately (hot reload)
-```
+Editing a copied `~/.rampart/policies/standard.yaml`, or changing
+`default_action` there, does not change hook decisions, because the built-in
+policies of the same name win. `rampart test` reads that file, so its answer
+can differ from the hook's while such a copy exists.
 
 See [Configuration](../getting-started/configuration.md) for the full policy format.
 

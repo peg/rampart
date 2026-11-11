@@ -200,4 +200,21 @@ Check the [CHANGELOG](https://github.com/peg/rampart/blob/main/CHANGELOG.md) bef
 
 Notable past changes:
 
+- **v1.10.0**: No action is needed after upgrading. Claude Code no longer
+  receives an `allow` from Rampart for a policy allow, so Claude Code's own
+  permission prompts and rules apply again. If you relied on Rampart to
+  suppress those prompts, add Claude Code permission rules or choose a
+  permission mode. Existing Claude Code hooks keep letting calls through when
+  the hook itself cannot run; run `rampart setup claude-code --hook-failure=block`
+  to opt in to fail-closed behavior on Claude Code 2.1.295 or later, and
+  confirm that every Claude Code surface you use (CLI, IDE extension, desktop)
+  is on a version that accepts the setting. The alpha Python SDK is removed
+  (call the HTTP API instead), and `rampart quickstart` now exits non-zero
+  with a pointer to `rampart protect <agent>`.
 - **v0.2.0**: Webhook JSON fields changed to snake_case. If you parse webhook payloads, update your field names.
+
+## Versioning
+
+Rampart's Go module path is `github.com/peg/rampart`. Go requires a `/v2`
+module path for a 2.0 release, so behavior changes such as the v1.10.0 Claude
+Code change ship as minor releases and are listed above and in the changelog.

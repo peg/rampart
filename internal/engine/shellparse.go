@@ -539,6 +539,8 @@ func stripPOSIXTransparentExecutorOnce(tokens []string) []string {
 				return tokens[i:]
 			}
 		}
+	case "builtin":
+		return tokens[1:] // builtin NAME runs the shell builtin NAME
 	case "env":
 		return stripPOSIXEnvUtility(tokens)
 	case "nohup":
@@ -551,6 +553,44 @@ func stripPOSIXTransparentExecutorOnce(tokens []string) []string {
 		return stripPOSIXSetsid(tokens)
 	case "stdbuf":
 		return stripPOSIXStdbuf(tokens)
+	case "time":
+		return stripPOSIXTime(tokens)
+	}
+	return tokens
+}
+
+// stripPOSIXTime exposes the command run by the shell `time` keyword or the
+// time(1) utility. Only reporting options are skipped; an unknown option or
+// an output file (-o, --output) leaves the tokens unchanged, because writing
+// that file is an effect of its own and must not be allowed as the command.
+func stripPOSIXTime(tokens []string) []string {
+	i := 1
+	for i < len(tokens) {
+		token := tokens[i]
+		switch {
+		case token == "--":
+			i++
+			if i < len(tokens) {
+				return tokens[i:]
+			}
+			return tokens
+		case token == "-p" || token == "-l" || token == "-v" || token == "-a" || token == "-q" ||
+			token == "--portability" || token == "--verbose" || token == "--append" || token == "--quiet":
+			i++
+		case token == "-o" || token == "--output" || strings.HasPrefix(token, "--output="):
+			return tokens
+		case token == "-f" || token == "--format":
+			if i+1 >= len(tokens) {
+				return tokens
+			}
+			i += 2
+		case strings.HasPrefix(token, "--format="):
+			i++
+		case strings.HasPrefix(token, "-"):
+			return tokens
+		default:
+			return tokens[i:]
+		}
 	}
 	return tokens
 }
@@ -568,6 +608,13 @@ func isExecFlag(token string) bool {
 }
 
 func stripPOSIXEnvUtility(tokens []string) []string {
+	return stripPOSIXEnvUtilityMode(tokens, false)
+}
+
+// stripPOSIXEnvUtilityMode returns the command env runs. With altPathTransparent
+// false, an -P (altpath) option leaves the tokens unchanged; deny and ask
+// candidates pass true to see the command anyway.
+func stripPOSIXEnvUtilityMode(tokens []string, altPathTransparent bool) []string {
 	i := 1
 	for i < len(tokens) {
 		token := tokens[i]
@@ -635,6 +682,23 @@ func stripPOSIXEnvUtility(tokens []string) []string {
 		case isEnvAssignment(token):
 			i++
 		default:
+			consumesNext, ok := envShortOptions(token)
+			if ok && envClusterSetsAltPath(token) && !altPathTransparent {
+				// -P chooses the directories the command is looked up in, so
+				// the named command may not be the one that runs.
+				return tokens
+			}
+			if ok && consumesNext {
+				if i+1 >= len(tokens) {
+					return tokens
+				}
+				i += 2
+				continue
+			}
+			if ok {
+				i++
+				continue
+			}
 			if strings.HasPrefix(token, "-") {
 				return tokens
 			}
@@ -642,6 +706,39 @@ func stripPOSIXEnvUtility(tokens []string) []string {
 		}
 	}
 	return tokens
+}
+
+// envShortOptions parses a cluster of env short options such as -iv,
+// -iu NAME, or -P/bin (BSD altpath). It reports whether the cluster ends in
+// an option whose value is the next word, and ok=false for anything else.
+func envShortOptions(token string) (consumesNext, ok bool) {
+	if len(token) < 2 || token[0] != '-' || token[1] == '-' {
+		return false, false
+	}
+	for at := 1; at < len(token); at++ {
+		switch token[at] {
+		case 'i', '0', 'v':
+		case 'u', 'C', 'P':
+			return at == len(token)-1, true
+		default:
+			return false, false
+		}
+	}
+	return false, true
+}
+
+// envClusterSetsAltPath reports whether an env short option cluster that
+// envShortOptions accepted includes -P.
+func envClusterSetsAltPath(token string) bool {
+	for at := 1; at < len(token); at++ {
+		switch token[at] {
+		case 'P':
+			return true
+		case 'u', 'C':
+			return false // the rest of the cluster is that option's value
+		}
+	}
+	return false
 }
 
 func stripPOSIXNohup(tokens []string) []string {
@@ -934,6 +1031,23 @@ func shellWrapperBasename(token string) string {
 	return strings.ToLower(filepath.Base(strings.ReplaceAll(token, "\\", "/")))
 }
 
+// shellOptionTakesValue reports whether a POSIX shell option consumes the
+// next word (bash -O extglob, --rcfile FILE), so that word is not mistaken
+// for a script operand.
+func shellOptionTakesValue(token string) bool {
+	switch token {
+	case "-o", "+o", "-O", "+O", "--rcfile", "--init-file":
+		return true
+	}
+	return false
+}
+
+// shellOptionRunsFile reports whether a shell option names a startup file the
+// shell runs before its command (bash --rcfile FILE, --init-file FILE).
+func shellOptionRunsFile(token string) bool {
+	return token == "--rcfile" || token == "--init-file"
+}
+
 // hasCFlag checks if a flag token contains -c, either standalone or combined
 // (e.g. -lc, -ic). Returns true for any single-dash flag containing 'c'.
 func hasCFlag(token string) bool {
@@ -980,7 +1094,17 @@ func stripShellWrapperOnceForOS(tokens []string, goos string) ([]string, string)
 		// Skip other flags like --norc, -l, etc.
 		for i := 1; i < len(tokens); i++ {
 			tok := tokens[i]
-			if !strings.HasPrefix(tok, "-") {
+			if shellOptionRunsFile(tok) {
+				// The shell runs a file before the command string, so the
+				// string alone is not what runs. Deny and ask rules still see
+				// it through literalShellPayload.
+				return tokens, goos
+			}
+			if shellOptionTakesValue(tok) {
+				i++
+				continue
+			}
+			if !strings.HasPrefix(tok, "-") && !strings.HasPrefix(tok, "+") {
 				// Reached a non-flag token without finding -c — not a wrapper.
 				return tokens, goos
 			}

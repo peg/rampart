@@ -329,7 +329,7 @@ Safe wildcard suggestions are generated automatically. Wildcards are **not** sug
           - "rampart rules"
           - "rampart policy generate"
           - "rampart init"
-          # ...plus token, approve, deny, uninstall, protect and quickstart
+          # ...plus token, approve, deny, uninstall and protect
       message: "Policy modification commands must be run by a human, not an agent"
 ```
 

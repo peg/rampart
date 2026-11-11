@@ -6,7 +6,7 @@
 
 <img src="docs/og-authority-visible.png" alt="Rampart — Let agents move fast. Keep the final say." width="100%">
 
-[![Go](https://img.shields.io/badge/Go-1.26.10+-00ADD8?style=flat&logo=go)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.26.11+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![CI](https://github.com/peg/rampart/actions/workflows/ci.yml/badge.svg)](https://github.com/peg/rampart/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/peg/rampart?style=flat)](https://github.com/peg/rampart/releases)
@@ -24,8 +24,9 @@ Rampart adds operator-owned policies and a consistent audit trail across its
 supported integration boundaries.
 
 It sits at supported hooks, plugins, proxies, and process boundaries; evaluates
-the action against local policy; and returns `allow`, `ask`, or `deny` before the
-host executes it. Decisions are visible, approvals stay human-owned, and the
+the action against local policy; and returns `deny` or `ask`, or lets the
+action continue, before the host executes it. For Claude Code, an action that
+policy allows continues under Claude Code's own permissions. Decisions are visible, approvals stay human-owned, and the
 result becomes part of a hash-chained audit trail.
 
 ```text
@@ -36,7 +37,7 @@ Agent proposes an action
    │   Rampart   │  policy · approval · audit
    └──────┬──────┘
           │
-      allow / ask / deny
+     deny / ask / continue
           │
           ▼
 Host executes — or does not
@@ -70,7 +71,7 @@ That is the normal path:
 **macOS and Linux installer**
 
 ```bash
-curl -fsSL https://rampart.sh/install | bash
+curl -fsSL https://rampart.sh/install | sh
 ```
 
 **Windows PowerShell**
@@ -85,7 +86,7 @@ irm https://rampart.sh/install.ps1 | iex
 go install github.com/peg/rampart/cmd/rampart@latest
 ```
 
-Source builds require Go 1.26.10 or newer. Windows upgrades use the PowerShell
+Source builds require Go 1.26.11 or newer. Windows upgrades use the PowerShell
 installer; binary self-upgrade is intentionally disabled there.
 
 </details>
@@ -95,8 +96,8 @@ installer; binary self-upgrade is intentionally disabled there.
 | | What you get |
 | --- | --- |
 | **Policy before execution** | Match shell, file, network, MCP, messaging, and other host-exposed actions before they run. |
-| **Selective approval** | Routine work stays quiet. Sensitive actions can use the host's native approval UI where the integration supports it. |
-| **Fail-closed ownership** | When Rampart owns a decision and cannot safely classify or persist it, the action does not silently proceed. |
+| **Selective approval** | Prohibited actions are denied and consequential ones go to approval; everything else continues under the agent's own permissions. `rampart protect` also installs Guard rules that ask before package runners, interpreters, `make`, pushes, and deploys. |
+| **Fail-closed ownership** | When Rampart owns a decision and cannot safely classify or persist it, the action does not silently proceed. Where the host decides what happens when a hook fails, the integration docs say so. |
 | **Auditable evidence** | Inspect live decisions, verify installed boundaries, and validate a hash-chained local audit trail. |
 | **Local and model-free by default** | The policy engine is a Go binary. Core enforcement and verification do not require an LLM or provider traffic. |
 
@@ -109,10 +110,10 @@ action visible there. When a supported adapter receives multiple represented
 targets, it evaluates each one and lets the most restrictive decision win.
 
 ```text
-ALLOW  exec  npm test                         [allow-dev]
-DENY   read  ~/.ssh/id_ed25519                [block-credentials]
-ASK    exec  kubectl apply -f production.yaml [approve-production]
-DENY   resp  tool output contained a secret   [scan-response]
+ALLOW  exec  go test ./...                     [allow-unmatched]
+DENY   read  ~/.ssh/id_ed25519                [block-credential-access]
+ASK    exec  kubectl apply -f production.yaml [guard-external-changes]
+DENY   resp  tool output contained a secret   [block-credential-leaks]
 ```
 
 `rampart status` separates configuration from evidence:
@@ -139,18 +140,21 @@ credentials, host output, or agent memory.
 | **Cursor** | Local Agent and Cmd+K `preToolUse` hook | Installed fail-closed configuration and adapter verification; Cloud/Tab separate |
 | **Hermes Agent** | Experimental `pre_tool_call` user plugin | Compatible hosts can use native approval; no safe live host verifier yet |
 | **Gemini CLI** | Experimental `BeforeTool`/`AfterTool` hooks | Enterprise/API-key path; authenticated host proof pending |
-| **MCP servers** | JSON-RPC stdio proxy | Correlated request/response policy and identity enforcement |
+| **MCP servers** | JSON-RPC stdio proxy | Correlated request/response policy; agent and session IDs are advisory |
 | **Other agents** | Cooperative shell wrapper or compatible process preload | Explicitly limited; prefer a native integration when available |
 
 ```bash
 rampart protect openclaw
-rampart setup claude-code
-rampart setup codex
+rampart protect claude-code
+rampart protect codex
 rampart setup cline
 rampart setup antigravity
 rampart setup copilot
 rampart setup cursor
 ```
+
+`rampart protect <agent>` installs the hooks, the managed policies, and
+verification. `rampart setup <agent>` installs only the integration.
 
 Experimental integrations are explicit opt-ins and stay outside bare
 `rampart protect` auto-detection:
@@ -165,11 +169,11 @@ for platform coverage, verifier strength, and known host-owned limitations.
 
 ## A policy you can read
 
-Rampart policies are YAML, local, and hot-reloaded:
+Rampart policies are YAML, local, and hot-reloaded. This is an example of a
+policy file you might add, not the built-in default:
 
 ```yaml
 version: "1"
-default_action: allow
 
 policies:
   - name: block-credential-reads
@@ -218,7 +222,7 @@ working in a repository whose policy you do not trust.
 [Policy schema →](https://docs.rampart.sh/reference/policy-schema/) ·
 [Community policies →](https://docs.rampart.sh/community-policies/)
 
-## Approvals without prompt fatigue
+## Approvals
 
 An `ask` rule requires human review of the action that matched. The integration
 determines where that review appears and whether it can resume the call. Paths
@@ -281,8 +285,10 @@ rampart preload -- your-agent
 paths or direct process APIs. `preload` covers compatible dynamically linked
 exec/spawn calls on Linux and non-SIP-protected macOS processes; static,
 setuid, direct-syscall, and SIP-protected paths remain outside that boundary.
+`preload` needs `rampart serve` and fails open by default (`--fail-open=true`).
 
 [MCP proxy →](https://docs.rampart.sh/features/mcp-proxy/) ·
+[HTTP API for custom agents →](https://docs.rampart.sh/reference/api-reference/) ·
 [Any CLI agent →](https://docs.rampart.sh/integrations/any-cli-agent/) ·
 [Threat model →](docs/THREAT-MODEL.md)
 

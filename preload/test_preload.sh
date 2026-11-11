@@ -149,7 +149,7 @@ expect_result posix-spawn-deny deny "${BASE_URL}/deny" 1 "$SPAWN_PROBE" spawn
 expect_result posix-spawnp-allow allow "${BASE_URL}/allow" 0 "$SPAWN_PROBE" spawnp
 expect_result posix-spawnp-deny deny "${BASE_URL}/deny" 1 "$SPAWN_PROBE" spawnp
 
-# When invoked by the isolated Linux lab, retain the real Rampart policy check.
+# When RAMPART_ADDR names a running Rampart server, also check a real policy deny.
 if [[ -n "${RAMPART_ADDR:-}" ]]; then
   BLOCK_CMD="${RAMPART_BLOCK_CMD:-rm -rf /tmp/rampart_preload_block_test_$$}"
   RAMPART_CONTRACT_TOKEN="${RAMPART_TOKEN:-}" \

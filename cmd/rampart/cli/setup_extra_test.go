@@ -162,8 +162,10 @@ func TestSetupClaudeCode_Install(t *testing.T) {
 	if !strings.Contains(out.String(), "Rampart hook installed") {
 		t.Errorf("output = %q", out.String())
 	}
-	if !strings.Contains(out.String(), "rampart init") {
-		t.Errorf("expected init tip, got: %s", out.String())
+	// The hook always loads the shipped standard profile, so setup must not
+	// tell the user a policy is missing.
+	if strings.Contains(out.String(), "No policy found") {
+		t.Errorf("setup printed a stale policy tip: %s", out.String())
 	}
 
 	// Verify settings file

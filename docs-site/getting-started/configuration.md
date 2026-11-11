@@ -318,7 +318,7 @@ Manage pending approvals:
 ```bash
 rampart pending                          # What's waiting
 rampart approve abc123                   # Let it through
-rampart deny abc123 --reason "not now"   # Block it
+rampart deny abc123                      # Block it
 ```
 
 ## Webhook Notifications

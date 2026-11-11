@@ -197,3 +197,21 @@ func findPolicyEntry(entries []inventoryPolicyFile, fileName string) (inventoryP
 	}
 	return inventoryPolicyFile{}, false
 }
+
+// One malformed record must not drop the readable events in the same file
+// from today's counts.
+func TestCollectTodayAuditCountsKeepsEventsBesideMalformedRecord(t *testing.T) {
+	dir := t.TempDir()
+	today := time.Now().UTC().Format("2006-01-02")
+	record := func(id, action string) string {
+		return fmt.Sprintf(`{"id":%q,"timestamp":"%sT00:00:00Z","agent":"a","session":"s","tool":"exec","request":{},"decision":{"action":%q},"hash":""}`, id, today, action)
+	}
+	content := record("01JTESTCOUNT0000000000001", "allow") + "\nnot json\n" + record("01JTESTCOUNT0000000000002", "deny") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, today+".jsonl"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	counts := collectTodayAuditCounts(dir)
+	if counts.Allow != 1 || counts.Deny != 1 || counts.Total != 2 {
+		t.Fatalf("counts = %+v, want 1 allow and 1 deny", counts)
+	}
+}

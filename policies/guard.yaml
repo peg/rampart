@@ -179,3 +179,18 @@ policies:
           tool_param_matches:
             rampart_consequence: "openclaw:*"
         message: "Unclassified messaging action — human approval required"
+
+  # The canary `rampart protect` asks a newcomer to try. It is denied here so
+  # the first test shows Rampart working, and it is harmless when no hook
+  # intercepts it: the shell only prints the word.
+  - name: guard-protect-canary
+    description: "Deny the harmless protect canary so a new user can see the boundary work"
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "echo rampart-canary"
+        message: "Rampart canary: protection is active (this harmless test command is denied on purpose)"

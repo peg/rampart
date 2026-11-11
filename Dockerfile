@@ -2,7 +2,9 @@
 # requested image platform so linux/arm64 releases don't depend on slow QEMU
 # emulation for the Go build itself.
 ARG BUILDPLATFORM
-FROM --platform=$BUILDPLATFORM golang:1.26.10-bookworm AS build
+# Base images are pinned by multi-arch index digest so a moved upstream tag
+# cannot change what a release builds. Update the tag and digest together.
+FROM --platform=$BUILDPLATFORM golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS build
 WORKDIR /src
 
 ARG TARGETOS
@@ -23,7 +25,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -
 RUN mkdir -p /runtime-home/.rampart/policies /runtime-home/.rampart/audit
 
 # Runtime stage — distroless for minimal attack surface
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 COPY --from=build /rampart /rampart
 COPY --from=build --chown=65532:65532 /runtime-home/ /home/nonroot/
 USER nonroot:nonroot

@@ -304,7 +304,7 @@ function parseConversationTarget(value) {
   return { provider, id: target };
 }
 
-function sameConversation(target, ctx) {
+function sameConversation(target, explicitProvider, ctx) {
   const normalizedTarget = parseConversationTarget(target);
   if (!normalizedTarget.id) return false;
 
@@ -317,6 +317,14 @@ function sameConversation(target, ctx) {
     normalizedTarget.provider !== originProvider
   ) {
     return false;
+  }
+  // OpenClaw delivers through the explicit `channel` parameter when it is set,
+  // so an ID that matches the origin conversation can still belong to another
+  // provider. A reply needs that provider to match a known origin provider.
+  const destinationProvider = String(explicitProvider ?? "").trim().toLowerCase();
+  if (destinationProvider) {
+    if (!originProvider || destinationProvider !== originProvider) return false;
+    if (normalizedTarget.provider && normalizedTarget.provider !== destinationProvider) return false;
   }
 
   const candidates = [
@@ -345,7 +353,7 @@ function classifyMessageConsequence(params, ctx) {
     params?.recipient ??
     params?.destination;
 
-  if (ROUTINE_REPLY_ACTIONS.has(action) && sameConversation(target, ctx)) {
+  if (ROUTINE_REPLY_ACTIONS.has(action) && sameConversation(target, params?.channel, ctx)) {
     return "routine-reply";
   }
   if (ROUTINE_REPLY_ACTIONS.has(action) || action === "broadcast" || action === "poll") {
@@ -403,14 +411,22 @@ function classifyBrowserConsequence(params) {
   return "mutation";
 }
 
+// OpenClaw's browser dispatcher navigates to targetUrl and only falls back to
+// url when targetUrl is absent. Policy must judge exactly that destination, so
+// every agent-supplied destination fact (url, domain, scheme) is replaced with
+// one derived from the URL the host will use. A second, conflicting alias can
+// therefore never make a different, safer-looking destination win.
 function addBrowserURLFacts(policyParams) {
   const rawURL = policyParams?.targetUrl ?? policyParams?.url;
+  delete policyParams.url;
+  delete policyParams.domain;
+  delete policyParams.scheme;
   if (typeof rawURL !== "string" || !rawURL.trim()) return;
+  policyParams.url = rawURL;
   try {
     const parsed = new URL(rawURL);
-    if (!policyParams.url) policyParams.url = rawURL;
-    if (!policyParams.domain) policyParams.domain = parsed.hostname;
-    if (!policyParams.scheme) policyParams.scheme = parsed.protocol.replace(/:$/, "");
+    policyParams.domain = parsed.hostname;
+    policyParams.scheme = parsed.protocol.replace(/:$/, "");
   } catch {
     // A malformed URL has no derived safe-domain fact and therefore cannot
     // inherit the safe-navigation allow rule.

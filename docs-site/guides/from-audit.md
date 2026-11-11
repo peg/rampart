@@ -34,14 +34,16 @@ rampart init --from-audit ~/.rampart/audit/
 
 This reads the audit log, identifies patterns, and outputs a policy YAML file. Only **allowed** events are used — if something was denied (by a pre-existing rule), it won't be included.
 
+Rampart verifies the history before it learns from it. A directory must pass the same checks as `rampart audit verify`; a single file must have a valid hash on every record. A modified, unhashed, or malformed record generates no rules and the command fails. `--allow-unverified` learns from such history anyway and marks the generated policy as unverified; use it only for logs you trust.
+
 ### Useful flags
 
 | Flag | Description |
 |------|-------------|
 | `--since 24h` | Only use events from the last 24 hours |
-| `--since 2026-03-01` | Only use events after a specific date |
 | `--dry-run` | Preview the generated policy without writing |
 | `--output custom.yaml` | Write to a specific file |
+| `--allow-unverified` | Learn from history that fails hash verification (not recommended) |
 
 ### Example: last 24 hours, preview first
 
@@ -79,4 +81,4 @@ rampart serve --mode enforce
 
 **Version control your policies.** Policy YAML belongs in your repo alongside the code it protects. Review policy changes in PRs just like code changes.
 
-**Combine with the policy registry.** Start with a community policy from `rampart init --registry`, then layer your generated policy on top for agent-specific rules.
+**Combine with the policy registry.** Start with a community policy from `rampart policy list` and `rampart policy fetch <name>`, then layer your generated policy on top for agent-specific rules.

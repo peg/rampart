@@ -61,9 +61,6 @@ Experimental integrations require explicit setup and remain outside bare
 plugin. Use the [support matrix](support-matrix.md) to choose the right path and
 understand approval, platform, and host-failure limits.
 
-`rampart quickstart` remains a deprecated compatibility command for existing
-scripts; new installations should use `protect`.
-
 ## Inspect the result
 
 ```bash

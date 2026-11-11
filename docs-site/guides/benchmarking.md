@@ -70,7 +70,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install Rampart
-        run: curl -fsSL https://rampart.sh/install | bash
+        run: curl -fsSL https://rampart.sh/install | sh
       - name: Install the standard policy
         run: rampart init --profile standard
       - name: Benchmark policy

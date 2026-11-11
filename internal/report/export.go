@@ -9,6 +9,7 @@ package report
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -93,6 +94,10 @@ func GenerateExport(opts ExportOptions) (*ExportReport, string, error) {
 	var events []audit.Event
 	for _, f := range auditFiles {
 		fileEvents, _, readErr := audit.ReadEventsFromOffset(f, 0)
+		var malformed *audit.MalformedRecordsError
+		if errors.As(readErr, &malformed) {
+			return nil, "", readErr
+		}
 		if readErr != nil {
 			continue
 		}

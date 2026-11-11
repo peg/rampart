@@ -127,6 +127,13 @@ func writeVerificationReceipt(report verificationReport) error {
 	if err != nil {
 		return fmt.Errorf("parse verification time: %w", err)
 	}
+	if report.Summary.Failed > 0 && integrationProtectionRecorded(driver.ID) {
+		// A failing receipt no longer counts as protection, so keep the
+		// earlier evidence as a setup record before replacing it.
+		if err := recordIntegrationSetup(driver.ID); err != nil {
+			return err
+		}
+	}
 	receipt := verificationReceipt{
 		SchemaVersion:          verificationReceiptSchemaVersion,
 		IntegrationID:          driver.ID,
@@ -154,6 +161,15 @@ func writeVerificationReceipt(report verificationReport) error {
 	if err != nil {
 		return err
 	}
+	if err := writeVerificationStateFile(path, append(data, '\n')); err != nil {
+		return fmt.Errorf("write verification receipt: %w", err)
+	}
+	return nil
+}
+
+// writeVerificationStateFile atomically writes a private file in the
+// verification state directory, refusing symlinked or non-regular targets.
+func writeVerificationStateFile(path string, data []byte) error {
 	verificationDir := filepath.Dir(path)
 	if info, statErr := os.Lstat(verificationDir); statErr == nil {
 		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
@@ -166,12 +182,105 @@ func writeVerificationReceipt(report verificationReport) error {
 		return fmt.Errorf("inspect verification receipt directory: %w", statErr)
 	}
 	if info, statErr := os.Lstat(path); statErr == nil && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
-		return fmt.Errorf("verification receipt path is not a regular file")
+		return fmt.Errorf("%s is not a regular file", path)
 	} else if statErr != nil && !os.IsNotExist(statErr) {
-		return fmt.Errorf("inspect verification receipt: %w", statErr)
+		return fmt.Errorf("inspect %s: %w", path, statErr)
 	}
-	if err := atomicWriteRecoverablePrivateFile(path, append(data, '\n')); err != nil {
-		return fmt.Errorf("write verification receipt: %w", err)
+	return atomicWriteRecoverablePrivateFile(path, data)
+}
+
+func integrationSetupMarkerPath(integrationID string) (string, error) {
+	receipt, err := verificationReceiptPath(integrationID)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(receipt, ".json") + ".setup", nil
+}
+
+// recordIntegrationSetup notes that setup installed this integration's hooks,
+// so doctor can tell hooks that were removed from hooks that never existed even
+// when verification never ran. `rampart setup <agent> --remove` clears it.
+func recordIntegrationSetup(integrationID string) error {
+	path, err := integrationSetupMarkerPath(integrationID)
+	if err != nil {
+		return err
+	}
+	if err := writeVerificationStateFile(path, []byte(integrationID+"\n")); err != nil {
+		return fmt.Errorf("record %s setup: %w", integrationID, err)
+	}
+	return nil
+}
+
+// hasVerificationReceipt reports whether protect or verify has recorded this
+// integration as protected on this machine. Any receipt file counts, valid or
+// not: it is evidence the integration was managed, which doctor must not
+// downgrade to "never configured" when its hooks disappear.
+func hasVerificationReceipt(integrationID string) bool {
+	path, err := verificationReceiptPath(integrationID)
+	if err != nil {
+		return false
+	}
+	_, err = os.Lstat(path)
+	return err == nil
+}
+
+// integrationProtectionRecorded reports whether setup, protect or verify has
+// recorded this integration as protected on this machine. A receipt that
+// reads cleanly and records a failed check is a verification run, not proof of
+// protection: running `rampart verify` against an agent that was never set up
+// must not make doctor expect it. Any other receipt, unreadable ones included,
+// counts.
+func integrationProtectionRecorded(integrationID string) bool {
+	path, err := integrationSetupMarkerPath(integrationID)
+	if err != nil {
+		return false
+	}
+	if _, err := os.Lstat(path); err == nil {
+		return true
+	}
+	if !hasVerificationReceipt(integrationID) {
+		return false
+	}
+	receipt, err := readVerificationReceipt(integrationID)
+	return err != nil || receipt.Summary.Failed == 0
+}
+
+// recordObservedIntegrations records setup for agents whose Rampart hooks are
+// installed but not recorded, as on installs set up before setup records
+// existed, so doctor fails rather than warns if those hooks are later removed.
+// Errors are ignored: the record only makes doctor stricter.
+func recordObservedIntegrations(home string) {
+	for _, observed := range []struct {
+		id      string
+		present func(string) bool
+	}{
+		{"claude-code", claudeRampartHooksPresent},
+		{"cline", clineManagedHooksPresent},
+		{"codex", codexRampartIntegrationPresent},
+	} {
+		if observed.present(home) && !integrationProtectionRecorded(observed.id) {
+			_ = recordIntegrationSetup(observed.id)
+		}
+	}
+}
+
+// clearVerificationReceipt forgets an integration's receipt and setup record
+// when the user
+// deliberately removes that integration, so doctor stops expecting it.
+func clearVerificationReceipt(integrationID string) error {
+	path, err := verificationReceiptPath(integrationID)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove verification receipt: %w", err)
+	}
+	marker, err := integrationSetupMarkerPath(integrationID)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(marker); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove setup record: %w", err)
 	}
 	return nil
 }

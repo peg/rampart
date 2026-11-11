@@ -322,6 +322,35 @@ func TestPrintTestResultNoColor(t *testing.T) {
 	}
 }
 
+// Only an allow decision may render as ALLOW; an ask previously fell through
+// to the allow label while its message said approval was required.
+func TestPrintTestResultLabelsNonAllowActions(t *testing.T) {
+	tests := []struct {
+		action engine.Action
+		label  string
+	}{
+		{engine.ActionAllow, "ALLOW"},
+		{engine.ActionAsk, "ASK"},
+		{engine.ActionRequireApproval, "APPROVAL"},
+		{engine.ActionWatch, "LOG"},
+		{engine.ActionWebhook, "WEBHOOK"},
+		{engine.ActionDeny, "DENY"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.action.String(), func(t *testing.T) {
+			var buf bytes.Buffer
+			printTestResult(&buf, engine.Decision{Action: tt.action, Message: "m"}, true)
+			first, _, _ := strings.Cut(buf.String(), "\n")
+			if !strings.Contains(first, " "+tt.label+" — ") {
+				t.Fatalf("label line = %q, want label %s", first, tt.label)
+			}
+			if tt.action != engine.ActionAllow && strings.Contains(first, "ALLOW") {
+				t.Fatalf("%s rendered as ALLOW: %q", tt.action, first)
+			}
+		})
+	}
+}
+
 func TestPrintTestResultColor(t *testing.T) {
 	var buf bytes.Buffer
 	d := engine.Decision{

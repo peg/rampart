@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,4 +103,65 @@ func TestEventDecodePreservesExactNumbersForHashVerification(t *testing.T) {
 	valid, err = decoded.VerifyHash()
 	require.NoError(t, err)
 	require.False(t, valid)
+}
+
+// The hash covers the typed event, so stored bytes the typed event drops must
+// fail verification rather than leave a valid hash on a changed record.
+func TestVerifyHashRejectsContentTheHashDoesNotCover(t *testing.T) {
+	event := Event{
+		ID:        "01JTESTUNCOVERED000000000",
+		Timestamp: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+		Agent:     "test",
+		Tool:      "exec",
+		Request:   map[string]any{"command": "git status", "Mixed": "kept", "items": []any{map[string]any{"k": 1}}},
+		Decision:  EventDecision{Action: "allow", Message: "ok"},
+	}
+	if err := event.ComputeHash(); err != nil {
+		t.Fatal(err)
+	}
+	line, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clean := string(line)
+	verify := func(t *testing.T, record string) bool {
+		t.Helper()
+		var decoded Event
+		if err := json.Unmarshal([]byte(record), &decoded); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		ok, err := decoded.VerifyHash()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	if !verify(t, clean) {
+		t.Fatal("an unmodified record must verify")
+	}
+	if !verify(t, " "+strings.Replace(clean, `,"tool":`, `, "tool": `, 1)) {
+		t.Fatal("whitespace outside values is not content and must still verify")
+	}
+
+	for name, record := range map[string]string{
+		"unknown top-level field":  strings.Replace(clean, `"tool":"exec"`, `"tool":"exec","note":"added"`, 1),
+		"unknown decision field":   strings.Replace(clean, `"action":"allow"`, `"action":"allow","approved_by":"x"`, 1),
+		"duplicate top-level key":  strings.Replace(clean, `"tool":"exec"`, `"tool":"read","tool":"exec"`, 1),
+		"duplicate request key":    strings.Replace(clean, `"command":"git status"`, `"command":"other","command":"git status"`, 1),
+		"case variant schema key":  strings.Replace(clean, `"tool":"exec"`, `"Tool":"exec"`, 1),
+		"case variant duplicate":   strings.Replace(clean, `"tool":"exec"`, `"TOOL":"read","tool":"exec"`, 1),
+		"escaped duplicate key":    strings.Replace(clean, `"tool":"exec"`, `"\u0074ool":"read","tool":"exec"`, 1),
+		"nested request duplicate": strings.Replace(clean, `{"k":1}`, `{"k":2,"k":1}`, 1),
+		"folded non-ASCII key":     strings.Replace(clean, `"decision":`, `"decision":{"action":"deny"},"deciſion":`, 1),
+		"escaped folded key":       strings.Replace(clean, `"decision":`, `"decision":{"action":"deny"},"deci\u017fion":`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if record == clean {
+				t.Fatal("mutation did not apply")
+			}
+			if verify(t, record) {
+				t.Fatalf("record verified with uncovered content: %s", record)
+			}
+		})
+	}
 }

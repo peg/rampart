@@ -226,7 +226,7 @@ proxy refuses them as described in the [approval limit](#usage). They do not
 present an approval button. See the [support matrix](../getting-started/support-matrix.md#approval-paths-and-limits)
 for integrations that provide an approval flow.
 
-## Example: Proxmox MCP Policy
+## Example: Infrastructure MCP Policy
 
 ```yaml
 version: "1"
@@ -235,21 +235,21 @@ default_action: allow
 policies:
   - name: block-vm-destruction
     match:
-      tool: ["mcp__proxmox__vm_delete", "mcp__proxmox__snapshot_delete"]
+      tool: ["mcp__infra__vm_delete", "mcp__infra__snapshot_delete"]
     rules:
       - action: deny
         message: "VM/snapshot deletion blocked by policy"
 
   - name: log-vm-power
     match:
-      tool: ["mcp__proxmox__vm_stop", "mcp__proxmox__vm_shutdown"]
+      tool: ["mcp__infra__vm_stop", "mcp__infra__vm_shutdown"]
     rules:
       - action: watch
         message: "VM power operation logged"
 
   - name: block-disk-resize
     match:
-      tool: ["mcp__proxmox__vm_resize_disk"]
+      tool: ["mcp__infra__vm_resize_disk"]
     rules:
       - action: deny
         message: "Disk resize blocked — irreversible operation"

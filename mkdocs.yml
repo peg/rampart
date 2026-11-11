@@ -1,6 +1,6 @@
 site_name: Rampart
 site_url: https://docs.rampart.sh
-site_description: Open-source guardrails for AI agents. A policy firewall for shell commands, file access, and MCP tools.
+site_description: Open-source policy, approval, and audit for AI agents. Evaluates shell commands, file access, and MCP tool calls before they run. Not a sandbox.
 site_author: peg
 repo_url: https://github.com/peg/rampart
 repo_name: peg/rampart
@@ -135,7 +135,6 @@ nav:
     - Hermes (Experimental): integrations/hermes.md
     - Claude Desktop: integrations/claude-desktop.md
     - MCP Proxy: features/mcp-proxy.md
-    - Python Agents: integrations/python-agents.md
     - Any CLI Agent: integrations/any-cli-agent.md
     - Windows Setup: guides/windows.md
   - Policies:
