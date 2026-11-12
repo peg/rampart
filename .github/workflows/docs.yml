@@ -9,6 +9,7 @@ on:
       - 'docs/ARCHITECTURE.md'
       - 'docs/THREAT-MODEL.md'
       - 'docs/architecture.d2'
+      - 'docs/architecture.svg'
       - 'docs-requirements.txt'
       - 'mkdocs.yml'
       - 'scripts/check-api-reference.sh'
@@ -21,6 +22,7 @@ on:
       - 'docs/ARCHITECTURE.md'
       - 'docs/THREAT-MODEL.md'
       - 'docs/architecture.d2'
+      - 'docs/architecture.svg'
       - 'docs-requirements.txt'
       - 'mkdocs.yml'
       - 'scripts/check-api-reference.sh'
@@ -64,6 +66,16 @@ jobs:
           tar -xzf "$archive" -C /tmp
           mkdir -p "$HOME/.local/bin"
           install -m 0755 "/tmp/d2-${D2_VERSION}/bin/d2" "$HOME/.local/bin/d2"
+
+      - name: Verify architecture.svg is current
+        run: |
+          "$HOME/.local/bin/d2" --theme 200 --layout elk --pad 40 \
+            docs/architecture.d2 \
+            "$RUNNER_TEMP/architecture.svg"
+          cmp -s docs/architecture.svg "$RUNNER_TEMP/architecture.svg" || {
+            echo "docs/architecture.svg is stale; render docs/architecture.d2 and commit the result" >&2
+            exit 1
+          }
 
       - name: Build docs
         run: mkdocs build --strict

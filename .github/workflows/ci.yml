@@ -5,7 +5,6 @@ on:
     branches: [main, staging]
   pull_request:
     branches: [main, staging]
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_call:
 
 permissions:
@@ -16,44 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  draft:
-    name: Draft CI
-    if: ${{ github.event_name == 'pull_request' && github.base_ref == 'staging' && github.event.pull_request.draft }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Go toolchain pins are synchronized
-        run: scripts/check-toolchain-sync.sh
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Module files are tidy
-        run: |
-          go mod tidy
-          git diff --exit-code -- go.mod go.sum
-
-      - name: Go files are formatted
-        run: test -z "$(gofmt -l .)"
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Test
-        run: go test ./...
-
   test:
     name: test (${{ matrix.os }})
-    if: ${{ github.event_name != 'pull_request' || github.base_ref != 'staging' || github.event.pull_request.draft == false }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -118,9 +81,9 @@ jobs:
         if: runner.os == 'Linux'
         run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
 
-      - name: Test with race detection and coverage
+      - name: Test with race detection
         if: runner.os == 'Linux'
-        run: go test -race "-coverprofile=coverage.out" ./...
+        run: go test -race ./...
 
       - name: Test platform behavior
         if: runner.os != 'Linux'
@@ -217,17 +180,8 @@ jobs:
         if: runner.os == 'Linux'
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.3.0 && govulncheck ./...
 
-      - name: Upload coverage
-        if: runner.os == 'Linux'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: coverage-ubuntu
-          path: coverage.out
-          retention-days: 7
-
   docker-smoke:
     name: docker smoke (amd64 runtime + arm64 build)
-    if: ${{ github.event_name != 'pull_request' || github.base_ref != 'staging' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -267,7 +221,6 @@ jobs:
 
   release-dry-run:
     name: goreleaser snapshot (cross-platform build check)
-    if: ${{ github.event_name != 'pull_request' || github.base_ref != 'staging' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -294,8 +247,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   hermes-min-python:
-    name: Hermes plugin (Python 3.9)
-    if: ${{ github.event_name != 'pull_request' || github.base_ref != 'staging' || github.event.pull_request.draft == false }}
+    name: Hermes plugin (Python 3.11)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -307,7 +259,7 @@ jobs:
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: '3.9'
+          python-version: '3.11'
 
       - name: Test Hermes integration on minimum Python
         run: |
@@ -316,7 +268,7 @@ jobs:
 
   ci-gate:
     name: CI gate
-    if: ${{ always() && (github.event_name != 'pull_request' || github.base_ref != 'staging' || github.event.pull_request.draft == false) }}
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: [test, docker-smoke, release-dry-run, hermes-min-python]

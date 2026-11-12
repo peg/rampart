@@ -41,7 +41,6 @@ jobs:
         run: |
           errors=0
           for file in policies/community/*.yaml; do
-            [ "$(basename "$file")" = "README.md" ] && continue
             for field in name description author tags min-rampart; do
               if ! grep -q "^# @${field}:" "$file"; then
                 echo "ERROR: $file missing @${field} metadata"
@@ -64,7 +63,6 @@ jobs:
       - name: Lint policies
         run: |
           for file in policies/community/*.yaml; do
-            [ "$(basename "$file")" = "README.md" ] && continue
             echo "Linting $file..."
             ./rampart policy lint "$file"
           done
