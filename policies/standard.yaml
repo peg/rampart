@@ -5,12 +5,11 @@
 # - Backslash removal: \rm → rm
 # - Env prefix stripping: FOO=bar cmd → cmd
 # - Compound commands: cmd1 && cmd2 → matches both
-# - Subcommand extraction: $(cmd), `cmd`, eval 'cmd' → matches inner cmd
+# - Subcommand extraction: $(cmd) and `cmd` → inner commands are matched independently
 # - Substring matching: command_contains catches wrapped commands
 #
-# REMAINING GAPS (require OS-level sandboxing):
-# - Variable expansion: $CMD, ${CMD}
-# - Obfuscation: rev, xxd, printf escapes
+# Forms the normalizer does not recognize, such as variable expansion
+# ($CMD, ${CMD}), can bypass static patterns.
 #
 # For adversarial threat models, combine Rampart with containers,
 # seccomp, or AppArmor. See docs/THREAT-MODEL.md.
