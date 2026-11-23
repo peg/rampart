@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The unattended-run profile is now an overlay** — `policies/ci.yaml`, a
+  full profile that was never embedded in the binary or installed by
+  `rampart init`, is replaced by `policies/examples/headless.yaml`. Install it
+  next to a base profile such as `standard`; its deny rules replace that
+  profile's approval prompts for package installation, privileged execution,
+  persistence changes, cloud uploads, and unclassified or dangerous MCP tools,
+  and the base profile keeps its own rules and updates. A copy of `ci.yaml`
+  you placed in your policy directory is not changed by upgrades; replace it
+  with `standard.yaml` plus the overlay. See the CI/Headless Agents guide.
+
 ## [1.10.0] - 2026-11-10
 
 ### Security
