@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Signed approval links open a confirmation page** — tapping the
+  `resolve_url` in a Slack, Discord, Teams or webhook notification previously
+  returned `404` because the route accepted only `POST`. A `GET` now shows a
+  no-script page with the redacted request and Approve and Deny buttons; the
+  decision is a form `POST` to the same signed URL, so link previews cannot
+  resolve an approval. Signed links still cannot set `persist`, record
+  `signed-link` as the resolver, and work from another device only when
+  `serve` is exposed over TLS or a reverse proxy with `--resolve-base-url`
+  set. JSON API responses are unchanged.
+
 ## [1.10.0] - 2026-11-10
 
 ### Security
