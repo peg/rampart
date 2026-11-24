@@ -633,6 +633,9 @@ type decisionCounterSink struct {
 	notifyConfig      *engine.NotifyConfig
 	logger            *slog.Logger
 	notificationSlots chan struct{}
+	// skipNotification, when set, reports events whose notification another
+	// component sends instead, such as an approval queued by rampart serve.
+	skipNotification func(audit.Event) bool
 
 	mu        sync.Mutex
 	evaluated int
@@ -667,7 +670,7 @@ func (s *decisionCounterSink) Write(event audit.Event) error {
 	s.mu.Unlock()
 
 	// Fire webhook notification if configured
-	if s.notifyConfig != nil && s.notifyConfig.URL != "" {
+	if s.notifyConfig != nil && s.notifyConfig.URL != "" && (s.skipNotification == nil || !s.skipNotification(event)) {
 		call := engine.ToolCall{
 			Tool:      event.Tool,
 			Params:    event.Request,
@@ -688,6 +691,14 @@ func (s *decisionCounterSink) Write(event audit.Event) error {
 	}
 
 	return nil
+}
+
+// notify sends the configured notification for a decision outside Write.
+func (s *decisionCounterSink) notify(call engine.ToolCall, decision engine.Decision) {
+	if s.notifyConfig == nil || s.notifyConfig.URL == "" {
+		return
+	}
+	s.enqueueNotification(call, decision)
 }
 
 func (s *decisionCounterSink) enqueueNotification(call engine.ToolCall, decision engine.Decision) {

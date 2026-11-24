@@ -48,6 +48,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `signed-link` as the resolver, and work from another device only when
   `serve` is exposed over TLS or a reverse proxy with `--resolve-base-url`
   set. JSON API responses are unchanged.
+- **One notification per MCP approval, naming the MCP tool** — with a
+  `notify:` URL, an ask through `rampart mcp` previously sent two webhook
+  posts: a plain one from the proxy and the one from `rampart serve` with the
+  approval link. In enforce mode the proxy now leaves ask notifications to
+  `serve`, and sends its own only when the approval cannot reach `serve`, in
+  which case the call is denied. Deny and other notifications are unchanged.
+  Approval notifications, the signed-link page, the dashboard, `rampart watch`
+  and `rampart pending` named only the generic `mcp` tool type for MCP calls;
+  they now show the server tool name, redacted like the command. The
+  `command` field of notifications and `GET /v1/approvals` is now this display
+  summary, which also falls back to the URL for fetch calls.
 
 ## [1.10.0] - 2026-11-10
 

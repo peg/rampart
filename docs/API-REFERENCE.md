@@ -465,7 +465,10 @@ co-grouped for future authorization.
         "properties": {
           "id": { "type": "string" },
           "tool": { "type": "string" },
-          "command": { "type": "string" },
+          "command": {
+            "type": "string",
+            "description": "Redacted display summary: the command, else the path, else the URL, preceded by the MCP server tool name for MCP proxy calls. Not an identity; `action` is the complete request"
+          },
           "action": { "type": "object" },
           "redacted": { "type": "boolean" },
           "agent": { "type": "string" },
