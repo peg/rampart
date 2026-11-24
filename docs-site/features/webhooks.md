@@ -59,6 +59,21 @@ Rampart sends a JSON POST to your webhook URL:
 }
 ```
 
+### Approval links
+
+When `rampart serve` creates a pending approval, the notification also carries
+`approval_id`, `expires_at`, and a signed `resolve_url`. Opening that link shows
+a small confirmation page with the redacted request and **Approve** and
+**Deny** buttons. Opening or previewing the link never decides the request;
+only pressing a button does, once. The link expires with the approval and
+cannot make a permanent allow rule.
+
+The link points at `localhost` unless you set `--resolve-base-url`, so it works
+only on the machine running `serve`. To approve from a phone or another
+computer, expose `serve` over TLS or a trusted HTTPS reverse proxy and set
+`--resolve-base-url` to that address. Anyone who has the link can decide that
+request, so send approval notifications only to channels limited to reviewers.
+
 ## Platform Examples
 
 === "Discord"

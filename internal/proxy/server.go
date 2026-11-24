@@ -413,6 +413,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/approvals", s.handleCreateApproval)
 	mux.HandleFunc("GET /v1/approvals", s.handleListApprovals)
 	mux.HandleFunc("GET /v1/approvals/{id}", s.handleGetApproval)
+	mux.HandleFunc("GET /v1/approvals/{id}/resolve", s.handleApprovalLinkPage)
 	mux.HandleFunc("POST /v1/approvals/{id}/resolve", s.handleResolveApproval)
 	mux.HandleFunc("POST /v1/approvals/bulk-resolve", s.handleBulkResolve)
 	mux.HandleFunc("POST /v1/hosted-approvals/{auditID}/resolve", s.handleResolveHostedApproval)

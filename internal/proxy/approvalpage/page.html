@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Rampart approval</title>
+<style>{{.CSS}}</style>
+</head>
+<body>
+<main>
+<h1>{{.Heading}}</h1>
+{{if .Detail}}<p>{{.Detail}}</p>{{end}}
+{{if .Pending}}
+<div class="card">
+<dl>
+<dt>Tool</dt><dd><code>{{.Tool}}</code></dd>
+{{if .MCPTool}}<dt>MCP tool</dt><dd><code>{{.MCPTool}}</code></dd>{{end}}
+{{if .Command}}<dt>Action</dt><dd><code>{{.Command}}</code></dd>{{end}}
+{{if .Agent}}<dt>Agent</dt><dd>{{.Agent}}</dd>{{end}}
+{{if .Message}}<dt>Reason</dt><dd>{{.Message}}</dd>{{end}}
+<dt>Expires</dt><dd>{{.Expires}}</dd>
+</dl>
+{{if .Review}}<details><summary>Full request</summary><pre>{{.Review}}</pre></details>{{end}}
+</div>
+<form method="post" action="{{.Action}}">
+<button class="approve" type="submit" name="decision" value="approve">Approve</button>
+<button class="deny" type="submit" name="decision" value="deny">Deny</button>
+</form>
+<p class="muted">Approving allows this one request only. Anyone holding this link can decide it until it expires.</p>
+{{end}}
+</main>
+</body>
+</html>
