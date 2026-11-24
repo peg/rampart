@@ -30,6 +30,11 @@ type hookApprovalClient struct {
 	logger         *slog.Logger
 	autoDiscovered bool // true when serve URL was auto-discovered, not explicitly set
 	errWriter      io.Writer
+	// onQueued, when set, is called once serve has queued the approval, before
+	// the wait for its resolution. serveNotified reports whether serve said it
+	// dispatched a reviewer notification; a serve that does not say is treated
+	// as not having notified.
+	onQueued func(serveNotified bool)
 }
 
 // createApprovalResponse is the JSON returned from POST /v1/approvals.
@@ -38,6 +43,7 @@ type createApprovalResponse struct {
 	ID            string `json:"id"`
 	Status        string `json:"status"`
 	ExpiresAt     string `json:"expires_at"`
+	Notified      bool   `json:"notified"`
 }
 
 // pollApprovalResponse is the JSON returned from GET /v1/approvals/{id}.
@@ -142,6 +148,10 @@ func (c *hookApprovalClient) requestApprovalCtx(ctx context.Context, call engine
 		c.logger.Error("hook: server returned 201 with empty approval ID")
 		fmt.Fprintf(c.stderrWriter(), "⚠ Rampart serve returned empty approval ID — cannot request approval\n")
 		return hookAsk
+	}
+
+	if c.onQueued != nil {
+		c.onQueued(created.Notified)
 	}
 
 	// Print waiting message

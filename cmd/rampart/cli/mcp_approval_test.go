@@ -30,6 +30,13 @@ import (
 // approval and answers polls with pollStatus.
 func fakeApprovalServe(t *testing.T, pollStatus string) (*httptest.Server, func() []byte) {
 	t.Helper()
+	return fakeApprovalServeNotified(t, pollStatus, true)
+}
+
+// fakeApprovalServeNotified queues every approval and reports notified as
+// whether it told reviewers about it.
+func fakeApprovalServeNotified(t *testing.T, pollStatus string, notified bool) (*httptest.Server, func() []byte) {
+	t.Helper()
 	var mu sync.Mutex
 	var created []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -46,7 +53,7 @@ func fakeApprovalServe(t *testing.T, pollStatus string) (*httptest.Server, func(
 			created = body
 			mu.Unlock()
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]any{"action_version": approval.ExternalActionVersion, "id": "a1", "status": "pending"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"action_version": approval.ExternalActionVersion, "id": "a1", "status": "pending", "notified": notified})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/approvals/a1":
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "a1", "status": pollStatus})
 		default:
@@ -161,7 +168,7 @@ func TestMCPServeApprovalResolverFailsClosed(t *testing.T) {
 }
 
 // One MCP ask must produce one reviewer notification: serve's, with a decision
-// link, when serve queues it; the proxy's own only when it never reaches serve.
+// link, when serve queues it and notifies; otherwise the proxy's own.
 func TestMCPProxyNotifiesOncePerDecision(t *testing.T) {
 	policyPath := filepath.Join(t.TempDir(), "policy.yaml")
 	require.NoError(t, os.WriteFile(policyPath, []byte(`
@@ -186,12 +193,14 @@ policies:
 `), 0o600))
 
 	for _, tc := range []struct {
-		name      string
-		tool      string
-		serveDown bool
-		want      []string // proxy-side notifications as "action|command"
+		name        string
+		tool        string
+		serveDown   bool
+		serveSilent bool     // serve queues the approval without notifying
+		want        []string // proxy-side notifications as "action|command"
 	}{
-		{name: "ask queued by serve", tool: "run_marker", want: nil},
+		{name: "ask queued and notified by serve", tool: "run_marker", want: nil},
+		{name: "ask queued without a serve notification", tool: "run_marker", serveSilent: true, want: []string{"ask|run_marker — echo marker"}},
 		{name: "ask not queued", tool: "run_marker", serveDown: true, want: []string{"ask|run_marker — echo marker"}},
 		{name: "deny", tool: "drop_marker", want: []string{"deny|drop_marker — echo marker"}},
 	} {
@@ -216,7 +225,7 @@ policies:
 			}))
 			t.Cleanup(webhook.Close)
 
-			srv, _ := fakeApprovalServe(t, "approved")
+			srv, _ := fakeApprovalServeNotified(t, "approved", !tc.serveSilent)
 			if tc.serveDown {
 				srv.Close()
 			}

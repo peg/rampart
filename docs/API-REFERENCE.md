@@ -408,7 +408,11 @@ Created (`201`):
     "action_version": { "type": "integer", "enum": [0, 1] },
     "id": { "type": "string" },
     "status": { "type": "string" },
-    "expires_at": { "type": "string", "format": "date-time" }
+    "expires_at": { "type": "string", "format": "date-time" },
+    "notified": {
+      "type": "boolean",
+      "description": "Whether this server handed an approval notification to its configured `notify` webhook. Delivery is not confirmed"
+    }
   }
 }
 ```

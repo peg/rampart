@@ -81,9 +81,14 @@ computer, expose `serve` over TLS or a trusted HTTPS reverse proxy and set
 request, so send approval notifications only to channels limited to reviewers.
 
 `rampart mcp` in enforce mode leaves approval notifications to `serve`, so an
-ask produces one notification with its link. If the approval cannot reach
-`serve` (for example, `serve` is not running), the call is denied and the
-proxy sends its own `ask` notification without a link.
+ask produces one notification with its link. `serve` notifies from the
+`notify:` block of its own policy. If `serve` queues the approval without
+notifying (for example, its policy has no `notify:` block), the proxy sends an
+`ask` notification without a link from the `notify:` block of the policy
+`rampart mcp` loaded, and the call still waits in the queue. If the approval
+cannot reach `serve` (for example, `serve` is not running), the call is denied
+and the proxy sends the same plain notification. The proxy sends `ask`
+notifications only when its `on:` list includes `ask`.
 
 ## Platform Examples
 
