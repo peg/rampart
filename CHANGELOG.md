@@ -16,6 +16,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release with the fix, so the module is pinned to that commit. Rampart uses
   the library only as a client, in the OpenClaw approval bridge.
 
+### Changed
+
+- **The unattended-run profile is now an overlay** — `policies/ci.yaml`, a
+  full profile that was never embedded in the binary or installed by
+  `rampart init`, is replaced by `policies/examples/headless.yaml`. Install it
+  next to a base profile such as `standard`; its deny rules replace that
+  profile's approval prompts for package installation, privileged execution,
+  persistence changes, cloud uploads, and unclassified or dangerous MCP tools,
+  and the base profile keeps its own rules and updates. A copy of `ci.yaml`
+  you placed in your policy directory is not changed by upgrades; replace it
+  with `standard.yaml` plus the overlay. See the CI/Headless Agents guide.
+
+### Fixed
+
+- `rampart mcp` now sends `ask` and `require_approval` decisions in enforce
+  mode to the running `rampart serve` approval queue, using the same client as
+  the Codex, Gemini and Cursor hooks, and holds the call until the request is
+  resolved or expires, waiting at most five minutes. Approval forwards the
+  original request unchanged. Denial, expiry, timeout, a missing token, or an
+  unreachable service returns a JSON-RPC error. Every ask through the proxy was
+  previously refused. The MCP client owns its own request timeout and may
+  abandon a longer wait, and later client messages wait behind a pending
+  approval.
+- **Signed approval links open a confirmation page** — tapping the
+  `resolve_url` in a Slack, Discord, Teams or webhook notification previously
+  returned `404` because the route accepted only `POST`. A `GET` now shows a
+  no-script page with the redacted request and Approve and Deny buttons; the
+  decision is a form `POST` to the same signed URL, so link previews cannot
+  resolve an approval. Signed links still cannot set `persist`, record
+  `signed-link` as the resolver, and work from another device only when
+  `serve` is exposed over TLS or a reverse proxy with `--resolve-base-url`
+  set. JSON API responses are unchanged.
+
 ## [1.10.0] - 2026-11-10
 
 ### Security

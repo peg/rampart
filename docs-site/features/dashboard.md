@@ -59,10 +59,11 @@ APIs; they cannot turn an agent's own request into operator authorization.
 |-----------|---------------|-------|
 | Dashboard HTML/CSS/JS | No | Static files, no embedded secrets |
 | `GET /v1/approvals` | Yes (admin-scoped Bearer) | Lists pending approvals and safe run groupings |
+| `GET /v1/approvals/{id}/resolve` | Yes (signed URL) | Confirmation page only; never resolves |
 | `POST /v1/approvals/{id}/resolve` | Yes (admin-scoped Bearer or signed URL) | Resolves one pending approval |
 | `POST /v1/approvals/bulk-resolve` | Yes (admin-scoped Bearer) | Requires exact reviewed IDs and an explicit scope; `scope: "run"` grants future-call authority |
 
-**Signed URLs**: When webhooks fire for approval-gated decisions, the notification includes a self-authenticating signed URL. Recipients can approve/deny by clicking the link without needing the Bearer token.
+**Signed URLs**: When webhooks fire for approval-gated decisions, the notification includes a self-authenticating signed URL. Opening it shows a confirmation page with Approve and Deny buttons; the decision is made only when a button is pressed, so link previews cannot resolve the request. No Bearer token is needed. The link must reach a `rampart serve` address the reviewer can open: by default it points at `localhost`, so approving from another device requires exposing `serve` over TLS or a trusted HTTPS reverse proxy and setting `--resolve-base-url` to that address.
 
 ## Network Access
 

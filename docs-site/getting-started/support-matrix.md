@@ -224,8 +224,8 @@ has a working approval UI. Use the owner for the configured path:
 | --- | --- | --- |
 | OpenClaw native plugin | OpenClaw's native approval UI | Allow one call or deny. Complete redacted review must fit the host's limit; otherwise the plugin blocks. These requests are not duplicated in `rampart pending`. |
 | Other native approval integrations | The host's UI, where supported | The host owns delivery and resume. Consult the integration's limits; Hermes remains experimental. |
-| Rampart external queue, including Codex, Gemini and Cursor hooks | Rampart dashboard or `rampart pending --details`, then `rampart approve <id>` / `rampart deny <id>` | The waiting integration handles the result. An unavailable resolver cannot authorize the action. Gemini remains experimental. |
-| Cline and standalone `rampart mcp` | No connected approval resolver | `ask` cancels or refuses the call. Starting `rampart serve` alone does not add an approval path to either integration. |
+| Rampart external queue, including Codex, Gemini and Cursor hooks and standalone `rampart mcp` | Rampart dashboard or `rampart pending --details`, then `rampart approve <id>` / `rampart deny <id>` | The waiting integration handles the result. An unavailable resolver cannot authorize the action. Gemini remains experimental. The MCP client's own request timeout can end the wait first. |
+| Cline | No connected approval resolver | `ask` cancels the call. Starting `rampart serve` alone does not add an approval path. |
 | Custom HTTP API clients | Rampart's queue or an explicitly configured host owner | The caller implements waiting and execution; an approved API response does not execute a tool. |
 
 Approving a pending action and granting permission to future actions are
