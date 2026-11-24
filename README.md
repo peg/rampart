@@ -240,8 +240,9 @@ rampart deny <id>
 The OpenClaw native plugin offers `allow-once` and `deny` in OpenClaw's own UI;
 those requests do not also appear in Rampart's queue. Persistent allowances
 require explicit operator policy. Compatible Hermes installations likewise use
-host-owned approval and resume. Standalone `rampart mcp` currently blocks `ask`
-requests; starting `rampart serve` does not connect a resolver to that proxy.
+host-owned approval and resume. Standalone `rampart mcp` sends `ask` requests to
+the queue of a running `rampart serve` and holds the call until it is resolved;
+without a reachable service it refuses the call.
 
 See the [approval paths and limits](https://docs.rampart.sh/getting-started/support-matrix/#approval-paths-and-limits)
 before choosing an integration.
