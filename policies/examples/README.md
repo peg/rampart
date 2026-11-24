@@ -8,6 +8,7 @@ Ready-to-use policy templates. Copy one, customize it, go.
 | [`infrastructure.yaml`](infrastructure.yaml) | allow | Kubernetes, Terraform, Docker — approves all mutations |
 | [`data-science.yaml`](data-science.yaml) | allow | Python, ML, data pipelines — blocks exfiltration, protects datasets |
 | [`lockdown.yaml`](lockdown.yaml) | **deny** | High-security — only explicitly allowed commands run |
+| [`headless.yaml`](headless.yaml) | none (overlay) | CI and other unattended runs — install next to a base profile; denies installs, privilege, persistence, uploads and unreviewed MCP |
 
 ## Quick Start
 

@@ -1,0 +1,128 @@
+# Headless Overlay
+# For: CI jobs and other unattended agent runs with nobody to approve requests
+# Base: none. Install next to a base profile such as standard.
+#
+# Every policy file in the policy directory loads, and the most restrictive
+# decision wins. These deny rules therefore replace the base profile's
+# approval prompts for the listed actions, and the base profile keeps its own
+# deny rules and updates. There is intentionally no default_action.
+#
+# Usage: copy to ~/.rampart/policies/headless.yaml
+# Validate: rampart test policies/examples/headless.yaml
+
+version: "1"
+
+policies:
+  - name: headless-no-package-install
+    description: "Deny package installation in unattended runs"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "pip install **"
+            - "pip3 install **"
+            - "python -m pip install **"
+            - "python3 -m pip install **"
+            - "npm install **"
+            - "npm i **"
+            - "yarn add **"
+            - "pnpm add **"
+            - "go get **"
+            - "go install **"
+            - "cargo install **"
+            - "apt install **"
+            - "apt-get install **"
+            - "brew install **"
+            - "winget install **"
+            - "choco install **"
+        message: "Package installation is denied in unattended runs"
+
+  - name: headless-no-privilege
+    description: "Deny privileged execution in unattended runs"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "sudo **"
+            - "doas **"
+            - "runas **"
+            - "runas.exe **"
+        message: "Privileged execution is denied in unattended runs"
+
+  - name: headless-no-persistence
+    description: "Deny persistence changes in unattended runs"
+    match:
+      tool: ["exec", "write", "edit"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "crontab **"
+            - "** | crontab -"
+            - "systemctl enable **"
+            - "systemctl --user enable **"
+            - "launchctl load **"
+            - "launchctl bootstrap **"
+        message: "Persistence changes are denied in unattended runs"
+      - action: deny
+        when:
+          path_matches:
+            - "**/.config/systemd/user/**"
+            - "**/Library/LaunchAgents/**"
+            - "**/Library/LaunchDaemons/**"
+            - "/etc/cron.d/**"
+            - "/etc/crontab"
+        message: "Persistence file writes are denied in unattended runs"
+
+  - name: headless-no-cloud-upload
+    description: "Deny cloud storage uploads in unattended runs"
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "aws s3 cp ** s3://**"
+            - "aws s3 sync ** s3://**"
+            - "gcloud storage cp ** gs://**"
+            - "gsutil cp ** gs://**"
+            - "az storage blob upload **"
+        message: "Cloud uploads are denied in unattended runs"
+
+  - name: headless-no-unreviewed-mcp
+    description: "Deny unclassified and dangerous MCP tools in unattended runs"
+    match:
+      tool: ["mcp", "mcp-dangerous"]
+    rules:
+      - action: deny
+        message: "Unclassified or dangerous MCP operations are denied in unattended runs"
+
+tests:
+  - name: "denies package installation"
+    tool: exec
+    params: { command: "npm install left-pad" }
+    expect: deny
+  - name: "denies privileged execution"
+    tool: exec
+    params: { command: "sudo systemctl restart nginx" }
+    expect: deny
+  - name: "denies crontab changes"
+    tool: exec
+    params: { command: "crontab -e" }
+    expect: deny
+  - name: "denies launch agent writes"
+    tool: write
+    params: { path: "/Users/ci/Library/LaunchAgents/job.plist" }
+    expect: deny
+  - name: "denies cloud uploads"
+    tool: exec
+    params: { command: "aws s3 cp build.tar s3://bucket/build.tar" }
+    expect: deny
+  - name: "denies unclassified MCP tools"
+    tool: mcp
+    params: {}
+    expect: deny

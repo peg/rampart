@@ -12,6 +12,7 @@ on:
       - 'docs/architecture.svg'
       - 'docs-requirements.txt'
       - 'mkdocs.yml'
+      - 'policies/examples/headless.yaml'
       - 'scripts/check-api-reference.sh'
       - '.github/workflows/docs.yml'
   push:
@@ -25,6 +26,7 @@ on:
       - 'docs/architecture.svg'
       - 'docs-requirements.txt'
       - 'mkdocs.yml'
+      - 'policies/examples/headless.yaml'
       - 'scripts/check-api-reference.sh'
       - '.github/workflows/docs.yml'
 

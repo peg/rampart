@@ -67,7 +67,7 @@ A shorter host hook timeout can end the wait first, subject to that host's
 failure behavior.
 
 For unattended jobs that must never wait for review, use explicit `deny` rules
-or the `ci` profile. See [CI/Headless Agents](ci-headless.md).
+such as the headless overlay. See [CI/Headless Agents](ci-headless.md).
 
 ## Host limits
 
