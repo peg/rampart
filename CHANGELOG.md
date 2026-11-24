@@ -52,8 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `notify:` URL, an ask through `rampart mcp` previously sent two webhook
   posts: a plain one from the proxy and the one from `rampart serve` with the
   approval link. In enforce mode the proxy now leaves ask notifications to
-  `serve`, and sends its own only when the approval cannot reach `serve`, in
-  which case the call is denied. Deny and other notifications are unchanged.
+  `serve`, and sends its own only when `serve` did not notify: the approval
+  could not reach `serve`, in which case the call is denied, or `serve` queued
+  it but its own policy sends no approval notification. The `201` response of
+  `POST /v1/approvals` gains a `notified` boolean for this. Deny and other notifications are unchanged.
   Approval notifications, the signed-link page, the dashboard, `rampart watch`
   and `rampart pending` named only the generic `mcp` tool type for MCP calls;
   they now show the server tool name, redacted like the command. The

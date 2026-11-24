@@ -106,6 +106,41 @@ func TestPendingMCPApprovalNamesServerTool(t *testing.T) {
 	assert.Equal(t, "delete_repo — org/repo?token=[REDACTED]", list.Approvals[0].Command)
 }
 
+// A client with its own notification channel relies on "notified" to know
+// whether this server told reviewers about the approval it queued.
+func TestCreateApprovalReportsWhetherReviewersWereNotified(t *testing.T) {
+	webhook := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer webhook.Close()
+	notifyAsk := WithNotify(&engine.NotifyConfig{URL: webhook.URL, Platform: "webhook", On: []string{"ask"}})
+	signer := WithSigner(signing.NewSigner([]byte("0123456789abcdef0123456789abcdef")))
+	baseURL := WithResolveBaseURL("https://approve.example.com")
+
+	for _, tc := range []struct {
+		name string
+		opts []Option
+		want bool
+	}{
+		{"notify configured with a signed link", []Option{notifyAsk, signer, baseURL}, true},
+		{"no notify configured", []Option{signer, baseURL}, false},
+		{"notify does not cover approvals", []Option{WithNotify(&engine.NotifyConfig{URL: webhook.URL, Platform: "webhook", On: []string{"deny"}}), signer, baseURL}, false},
+		{"no signed link available", []Option{notifyAsk, baseURL}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := New(nil, nil, append([]Option{WithToken("test-token")}, tc.opts...)...)
+			t.Cleanup(srv.approvals.Close)
+			body := `{"action_version":1,"tool":"mcp","agent":"test","session":"s","params":{"mcp_tool":"canary_marker"},"message":"review"}`
+			req := httptest.NewRequest(http.MethodPost, "/v1/approvals", strings.NewReader(body))
+			req.Header.Set("Authorization", "Bearer test-token")
+			rr := httptest.NewRecorder()
+			srv.handler().ServeHTTP(rr, req)
+			require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+			var created map[string]any
+			require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &created))
+			assert.Equal(t, tc.want, created["notified"])
+		})
+	}
+}
+
 func TestNotificationDispatchIsBounded(t *testing.T) {
 	srv := New(nil, nil)
 	started := make(chan struct{}, maxConcurrentNotifications)

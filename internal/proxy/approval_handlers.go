@@ -81,15 +81,16 @@ func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
 		"agent", req.Agent,
 	)
 
-	if s.shouldNotify(decision.Action.String()) {
-		s.enqueueNotification("approval", func() { s.sendApprovalWebhook(call, decision, pending) })
-	}
+	// A client with its own notification channel, such as rampart mcp, uses
+	// "notified" to tell reviewers itself when this server has not.
+	notified := s.dispatchApprovalNotification(call, decision, pending)
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":             pending.ID,
 		"status":         pending.Status.String(),
 		"expires_at":     pending.ExpiresAt.Format(time.RFC3339),
 		"action_version": req.ActionVersion,
+		"notified":       notified,
 	})
 }
 
