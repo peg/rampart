@@ -108,6 +108,23 @@ func TestApprovalLinkGET_RendersPageWithoutResolving(t *testing.T) {
 	assert.Empty(t, sink.snapshot(), "GET must not write an approval resolution audit event")
 }
 
+func TestApprovalLinkGET_NamesMCPTool(t *testing.T) {
+	srv, signer, _ := newApprovalLinkServer(t)
+	pending, err := srv.approvals.Create(engine.ToolCall{
+		Tool:   "mcp",
+		Params: map[string]any{"mcp_method": "tools/call", "mcp_tool": `delete_repo<script>`},
+	}, engine.Decision{})
+	require.NoError(t, err)
+
+	body := serve(srv, httptest.NewRequest(http.MethodGet, signedResolvePath(t, signer, pending), nil)).Body.String()
+	assert.Contains(t, body, "<dt>MCP tool</dt><dd><code>delete_repo&lt;script&gt;</code></dd>")
+
+	plain, err := srv.approvals.Create(engine.ToolCall{Tool: "exec"}, engine.Decision{})
+	require.NoError(t, err)
+	body = serve(srv, httptest.NewRequest(http.MethodGet, signedResolvePath(t, signer, plain), nil)).Body.String()
+	assert.NotContains(t, body, "MCP tool")
+}
+
 func TestApprovalLinkGET_InvalidLinksLeakNothing(t *testing.T) {
 	srv, signer, _ := newApprovalLinkServer(t)
 	pending, err := srv.approvals.Create(engine.ToolCall{Tool: "exec", Agent: "secret-agent-name"}, engine.Decision{})

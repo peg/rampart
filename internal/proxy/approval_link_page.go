@@ -54,6 +54,7 @@ type approvalPageView struct {
 	Detail  string
 	Pending bool
 	Tool    string
+	MCPTool string
 	Command string
 	Agent   string
 	Message string
@@ -103,11 +104,15 @@ func (s *Server) handleApprovalLinkPage(w http.ResponseWriter, r *http.Request) 
 	if command == "" {
 		command = req.Call.Path()
 	}
+	// MCP calls all carry a generic tool type; the server tool being invoked
+	// is what the reviewer needs to see.
+	mcpTool, _ := req.Call.Params["mcp_tool"].(string)
 	action := "resolve?" + url.Values{"sig": {sig}, "exp": {strconv.FormatInt(exp, 10)}}.Encode()
 	writeApprovalPage(w, http.StatusOK, approvalPageView{
 		Heading: "Approval requested",
 		Pending: true,
 		Tool:    review.Tool,
+		MCPTool: notify.SanitizeCommand(mcpTool),
 		Command: notify.SanitizeCommand(command),
 		Agent:   review.Agent,
 		Message: notify.SanitizeCommand(req.Decision.Message),

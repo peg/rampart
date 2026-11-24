@@ -15,6 +15,7 @@
 <div class="card">
 <dl>
 <dt>Tool</dt><dd><code>{{.Tool}}</code></dd>
+{{if .MCPTool}}<dt>MCP tool</dt><dd><code>{{.MCPTool}}</code></dd>{{end}}
 {{if .Command}}<dt>Action</dt><dd><code>{{.Command}}</code></dd>{{end}}
 {{if .Agent}}<dt>Agent</dt><dd>{{.Agent}}</dd>{{end}}
 {{if .Message}}<dt>Reason</dt><dd>{{.Message}}</dd>{{end}}
