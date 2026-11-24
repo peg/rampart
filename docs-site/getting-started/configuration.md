@@ -307,9 +307,9 @@ policies:
 How you'll see the approval prompt depends on your setup:
 
 - **Claude Code** — native permission dialog (the same one Claude uses for `ask`)
-- **Standalone MCP clients** — `ask` fails closed immediately because the stdio
-  proxy has no safely reachable approval resolver; use an explicit allow/deny
-  rule for now
+- **Standalone MCP clients** — the `rampart mcp` proxy holds the call in the
+  `rampart serve` approval queue and refuses it if the service is unreachable;
+  the MCP client's own request timeout may end the wait first
 - **OpenClaw** — sends a chat message you can approve inline
 - **Webhooks** — sends a notification with a signed approve/deny link
 

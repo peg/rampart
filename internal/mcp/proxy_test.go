@@ -581,6 +581,76 @@ func TestHandleToolsCall_RequireApprovalWithoutResolverFailsImmediately(t *testi
 	}
 }
 
+func TestHandleToolsCall_ApprovalResolverIdentityAndOutcome(t *testing.T) {
+	line := []byte(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"exec_command","arguments":{"command":"echo marker","n":9007199254740993}}}` + "\n")
+	for _, tc := range []struct {
+		name    string
+		result  error
+		forward bool
+	}{
+		{"approved", nil, true},
+		{"denied", fmt.Errorf("approval was denied"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			childIn := &bytes.Buffer{}
+			parentOut := &bytes.Buffer{}
+			var got engine.ToolCall
+			resolver := func(_ context.Context, call engine.ToolCall, _ string) error {
+				got = call
+				return tc.result
+			}
+			p := NewProxy(buildAskEngine(t), &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+				WithMode("enforce"), WithApprovalResolver(resolver), WithLogger(silentLogger()))
+			p.parentOut = parentOut
+			if err := p.handleClientLine(line); err != nil {
+				t.Fatalf("handleClientLine: %v", err)
+			}
+
+			if got.Params["mcp_tool"] != "exec_command" || got.Params["command"] != "echo marker" ||
+				got.Input["n"] != json.Number("9007199254740993") {
+				t.Fatalf("resolver saw a different action: %#v", got)
+			}
+			if tc.forward {
+				if !bytes.Equal(childIn.Bytes(), line) || parentOut.Len() != 0 {
+					t.Fatalf("approved request was not forwarded unchanged: child=%q client=%q", childIn.String(), parentOut.String())
+				}
+				return
+			}
+			if childIn.Len() != 0 {
+				t.Fatal("denied request reached the child process")
+			}
+			var response Response
+			if err := json.Unmarshal(bytes.TrimSpace(parentOut.Bytes()), &response); err != nil || response.Error == nil {
+				t.Fatalf("expected JSON-RPC error, got %q (%v)", parentOut.String(), err)
+			}
+			if string(response.ID) != "7" || !strings.Contains(response.Error.Message, "approval was denied") {
+				t.Fatalf("unexpected deny response: %s", parentOut.String())
+			}
+		})
+	}
+}
+
+func TestHandleToolsCall_ApprovalResolverApprovalAfterStopIsNotForwarded(t *testing.T) {
+	childIn := &bytes.Buffer{}
+	parentOut := &bytes.Buffer{}
+	var p *Proxy
+	resolver := func(ctx context.Context, _ engine.ToolCall, _ string) error {
+		p.closeStop()
+		<-ctx.Done()
+		return nil
+	}
+	p = NewProxy(buildAskEngine(t), &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
+		WithMode("enforce"), WithApprovalResolver(resolver), WithLogger(silentLogger()))
+	p.parentOut = parentOut
+	line := []byte(makeToolsCallJSON(8, "exec_command", map[string]any{"command": "ls"}) + "\n")
+	if err := p.handleClientLine(line); err != nil {
+		t.Fatalf("handleClientLine: %v", err)
+	}
+	if childIn.Len() != 0 {
+		t.Fatal("request reached the child after the proxy stopped")
+	}
+}
+
 func TestHandleToolsCall_RequireApprovalDenied(t *testing.T) {
 	eng := buildAskEngine(t)
 	childIn := &bytes.Buffer{}
