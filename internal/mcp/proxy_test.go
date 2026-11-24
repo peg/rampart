@@ -595,7 +595,7 @@ func TestHandleToolsCall_ApprovalResolverIdentityAndOutcome(t *testing.T) {
 			childIn := &bytes.Buffer{}
 			parentOut := &bytes.Buffer{}
 			var got engine.ToolCall
-			resolver := func(_ context.Context, call engine.ToolCall, _ string) error {
+			resolver := func(_ context.Context, call engine.ToolCall, _ engine.Decision) error {
 				got = call
 				return tc.result
 			}
@@ -634,7 +634,7 @@ func TestHandleToolsCall_ApprovalResolverApprovalAfterStopIsNotForwarded(t *test
 	childIn := &bytes.Buffer{}
 	parentOut := &bytes.Buffer{}
 	var p *Proxy
-	resolver := func(ctx context.Context, _ engine.ToolCall, _ string) error {
+	resolver := func(ctx context.Context, _ engine.ToolCall, _ engine.Decision) error {
 		p.closeStop()
 		<-ctx.Done()
 		return nil

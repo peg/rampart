@@ -98,7 +98,7 @@ policies:
 	childOutR, childOutW := io.Pipe()
 	proxy := mcp.NewProxy(eng, audit.NewRedactingSink(sink), childInW, childOutR,
 		mcp.WithMode("enforce"), mcp.WithLogger(testLogger()),
-		mcp.WithApprovalResolver(newMCPServeApprovalResolver(5*time.Second, io.Discard, testLogger())))
+		mcp.WithApprovalResolver(newMCPServeApprovalResolver(5*time.Second, io.Discard, testLogger(), nil)))
 
 	line := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run_marker","arguments":{"command":"echo marker","n":9007199254740993}}}` + "\n"
 	var parentOut bytes.Buffer
@@ -149,13 +149,100 @@ func TestMCPServeApprovalResolverFailsClosed(t *testing.T) {
 				srv.Close()
 			}
 			isolateServeEnv(t, srv.URL, tc.token)
-			resolve := newMCPServeApprovalResolver(1500*time.Millisecond, io.Discard, testLogger())
-			err := resolve(context.Background(), call, "review")
+			resolve := newMCPServeApprovalResolver(1500*time.Millisecond, io.Discard, testLogger(), nil)
+			err := resolve(context.Background(), call, engine.Decision{Action: engine.ActionAsk, Message: "review"})
 			require.Error(t, err)
 			require.Contains(t, err.Error(), tc.wantErr)
 			if tc.token == "" || tc.down {
 				require.Empty(t, created(), "no approval should be created")
 			}
+		})
+	}
+}
+
+// One MCP ask must produce one reviewer notification: serve's, with a decision
+// link, when serve queues it; the proxy's own only when it never reaches serve.
+func TestMCPProxyNotifiesOncePerDecision(t *testing.T) {
+	policyPath := filepath.Join(t.TempDir(), "policy.yaml")
+	require.NoError(t, os.WriteFile(policyPath, []byte(`
+default_action: allow
+policies:
+  - name: ask-dangerous
+    match:
+      tool: "mcp-dangerous"
+    rules:
+      - action: ask
+        message: "review marker"
+        when:
+          default: true
+  - name: deny-destructive
+    match:
+      tool: "mcp-destructive"
+    rules:
+      - action: deny
+        message: "deny marker"
+        when:
+          default: true
+`), 0o600))
+
+	for _, tc := range []struct {
+		name      string
+		tool      string
+		serveDown bool
+		want      []string // proxy-side notifications as "action|command"
+	}{
+		{name: "ask queued by serve", tool: "run_marker", want: nil},
+		{name: "ask not queued", tool: "run_marker", serveDown: true, want: []string{"ask|run_marker — echo marker"}},
+		{name: "deny", tool: "drop_marker", want: []string{"deny|drop_marker — echo marker"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			notificationMutex.Lock()
+			lastNotificationTime = time.Time{}
+			notificationMutex.Unlock()
+			t.Cleanup(func() {
+				notificationMutex.Lock()
+				lastNotificationTime = time.Time{}
+				notificationMutex.Unlock()
+			})
+
+			var mu sync.Mutex
+			var got []string
+			webhook := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				var payload map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&payload)
+				mu.Lock()
+				got = append(got, payload["action"].(string)+"|"+payload["command"].(string))
+				mu.Unlock()
+			}))
+			t.Cleanup(webhook.Close)
+
+			srv, _ := fakeApprovalServe(t, "approved")
+			if tc.serveDown {
+				srv.Close()
+			}
+			isolateServeEnv(t, srv.URL, "synthetic-token")
+
+			eng, err := engine.New(engine.NewFileStore(policyPath), testLogger())
+			require.NoError(t, err)
+			sink, resolver := newMCPDecisionSink(&mockAuditSink{},
+				&engine.NotifyConfig{URL: webhook.URL, On: []string{"ask", "deny"}}, "enforce", io.Discard, testLogger())
+
+			childInR, childInW := io.Pipe()
+			childOutR, childOutW := io.Pipe()
+			go func() {
+				_, _ = io.Copy(io.Discard, childInR)
+				_ = childOutW.Close()
+			}()
+			proxy := mcp.NewProxy(eng, sink, childInW, childOutR,
+				mcp.WithMode("enforce"), mcp.WithLogger(testLogger()), mcp.WithApprovalResolver(resolver))
+			line := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + tc.tool + `","arguments":{"command":"echo marker"}}}` + "\n"
+			require.NoError(t, proxy.Run(context.Background(), strings.NewReader(line), io.Discard))
+
+			// Notifications are asynchronous; allow any stray one to arrive.
+			time.Sleep(500 * time.Millisecond)
+			mu.Lock()
+			defer mu.Unlock()
+			require.Equal(t, tc.want, got)
 		})
 	}
 }

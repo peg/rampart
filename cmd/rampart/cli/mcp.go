@@ -147,7 +147,7 @@ func newMCPProxyCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 			if cfg, loadErr := store.Load(); loadErr == nil && cfg.Notify != nil {
 				mcpNotifyConfig = cfg.Notify
 			}
-			countedSink := newDecisionCounterSink(audit.NewRedactingSink(sink), mcpNotifyConfig, logger)
+			countedSink, approvalResolver := newMCPDecisionSink(audit.NewRedactingSink(sink), mcpNotifyConfig, mode, cmd.ErrOrStderr(), logger)
 			defer func() {
 				_ = countedSink.Close()
 			}()
@@ -177,7 +177,7 @@ func newMCPProxyCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 				mcp.WithLogger(logger),
 				mcp.WithAgentID(agentID),
 				mcp.WithSessionID(sessionID),
-				mcp.WithApprovalResolver(newMCPServeApprovalResolver(mcpApprovalTimeout, cmd.ErrOrStderr(), logger)),
+				mcp.WithApprovalResolver(approvalResolver),
 			)
 
 			proxyCtx, cancel := context.WithCancel(cmd.Context())

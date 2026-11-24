@@ -59,6 +59,12 @@ Rampart sends a JSON POST to your webhook URL:
 }
 ```
 
+`command` is the redacted command, path or URL. For a call through
+`rampart mcp`, `tool` is the policy tool type such as `mcp` or
+`mcp-destructive`, and `command` starts with the MCP server's tool name, for
+example `delete_repo — org/repo`. That name comes from the agent and MCP
+server.
+
 ### Approval links
 
 When `rampart serve` creates a pending approval, the notification also carries
@@ -73,6 +79,11 @@ only on the machine running `serve`. To approve from a phone or another
 computer, expose `serve` over TLS or a trusted HTTPS reverse proxy and set
 `--resolve-base-url` to that address. Anyone who has the link can decide that
 request, so send approval notifications only to channels limited to reviewers.
+
+`rampart mcp` in enforce mode leaves approval notifications to `serve`, so an
+ask produces one notification with its link. If the approval cannot reach
+`serve` (for example, `serve` is not running), the call is denied and the
+proxy sends its own `ask` notification without a link.
 
 ## Platform Examples
 

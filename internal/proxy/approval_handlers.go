@@ -131,7 +131,7 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 		item := map[string]any{
 			"id":               req.ID,
 			"tool":             req.Call.Tool,
-			"command":          req.Call.Command(),
+			"command":          approval.SummarizeCall(req.Call).String(),
 			"action":           approval.ReviewCall(req.Call),
 			"redacted":         req.HasRedactions(),
 			"agent":            req.Call.Agent,

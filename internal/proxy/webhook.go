@@ -21,10 +21,7 @@ func (s *Server) executeWebhookAction(call engine.ToolCall, decision engine.Deci
 }
 
 func (s *Server) sendWebhook(call engine.ToolCall, decision engine.Decision) {
-	command := call.Command()
-	if command == "" {
-		command = call.Path()
-	}
+	command := approval.SummarizeCall(call).String()
 	policyName := "unknown"
 	if len(decision.MatchedPolicies) > 0 {
 		policyName = decision.MatchedPolicies[0]
@@ -49,10 +46,7 @@ func (s *Server) sendWebhook(call engine.ToolCall, decision engine.Decision) {
 }
 
 func (s *Server) sendApprovalWebhook(call engine.ToolCall, decision engine.Decision, pending *approval.Request) {
-	command := call.Command()
-	if command == "" {
-		command = call.Path()
-	}
+	command := approval.SummarizeCall(call).String()
 	policyName := "unknown"
 	if len(decision.MatchedPolicies) > 0 {
 		policyName = decision.MatchedPolicies[0]
