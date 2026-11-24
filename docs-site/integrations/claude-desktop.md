@@ -81,10 +81,13 @@ For cloud MCP servers, use a more restrictive policy (deny by default, explicit 
 
 ## Ask Behavior
 
-The standalone stdio proxy has no safely reachable approval resolver. When a
-policy action is `ask`, it fails closed immediately and returns a JSON-RPC error
-to Claude Desktop with code `-32600`. Use explicit operator-reviewed `allow` or
-`deny` rules. Starting `rampart serve` does not connect a resolver to this proxy.
+When a policy action is `ask`, the proxy creates a request in the running
+`rampart serve` queue and holds the call until you resolve it with the dashboard
+or `rampart approve <id>` / `rampart deny <id>`, or the request expires. The
+proxy waits at most five minutes.
+Approval forwards the original request. Denial, expiry, or an unreachable
+service returns a JSON-RPC error with code `-32600`. Claude Desktop owns its
+own request timeout and may abandon a call that waits longer.
 
 ## Monitor
 

@@ -177,6 +177,7 @@ func newMCPProxyCmd(opts *rootOptions, deps *mcpDeps) *cobra.Command {
 				mcp.WithLogger(logger),
 				mcp.WithAgentID(agentID),
 				mcp.WithSessionID(sessionID),
+				mcp.WithApprovalResolver(newMCPServeApprovalResolver(mcpApprovalTimeout, cmd.ErrOrStderr(), logger)),
 			)
 
 			proxyCtx, cancel := context.WithCancel(cmd.Context())

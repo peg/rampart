@@ -28,6 +28,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   you placed in your policy directory is not changed by upgrades; replace it
   with `standard.yaml` plus the overlay. See the CI/Headless Agents guide.
 
+### Fixed
+
+- `rampart mcp` now sends `ask` and `require_approval` decisions in enforce
+  mode to the running `rampart serve` approval queue, using the same client as
+  the Codex, Gemini and Cursor hooks, and holds the call until the request is
+  resolved or expires, waiting at most five minutes. Approval forwards the
+  original request unchanged. Denial, expiry, timeout, a missing token, or an
+  unreachable service returns a JSON-RPC error. Every ask through the proxy was
+  previously refused. The MCP client owns its own request timeout and may
+  abandon a longer wait, and later client messages wait behind a pending
+  approval.
+
 ## [1.10.0] - 2026-11-10
 
 ### Security
