@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **WebSocket frames to the OpenClaw gateway use a cryptographically random
+  mask key** — `github.com/gorilla/websocket` moves from v1.5.3 to the upstream
+  commit that resolves GO-2026-6278 (GHSA-w67g-5rqw-f597), where the client
+  mask key came from a non-cryptographic generator. Upstream has not tagged a
+  release with the fix, so the module is pinned to that commit. Rampart uses
+  the library only as a client, in the OpenClaw approval bridge.
+
 ### Changed
 
 - **The unattended-run profile is now an overlay** — `policies/ci.yaml`, a
