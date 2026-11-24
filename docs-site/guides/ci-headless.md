@@ -10,17 +10,31 @@ wait for an operator. Use explicit `deny` rules when nobody will review the
 job. `ask` is appropriate only when the integration has a reachable approval
 owner and the job can tolerate its wait and timeout behavior.
 
-## Use a policy with no approval prompts
+## Deny instead of asking
+
+Keep a base profile such as `standard` and add the headless overlay from the
+repository's `policies/examples/` directory next to it:
 
 ```bash
-rampart init --profile ci
-rampart policy lint rampart.yaml
+curl -fsSL -o ~/.rampart/policies/headless.yaml \
+  https://raw.githubusercontent.com/peg/rampart/main/policies/examples/headless.yaml
+rampart test ~/.rampart/policies/headless.yaml
 ```
 
-The shipped `ci` profile uses denies for its sensitive operations, including
-package installation, cloud uploads, and persistence changes. It does not
-rewrite other policy files or automatically convert every custom `ask` rule.
-Review the active policy set and test the commands your job needs.
+Every file in the policy directory loads and the most restrictive decision
+wins, so the overlay's denies replace the base profile's approval prompts for
+package installation, privileged execution, persistence changes, cloud
+uploads, and unclassified or dangerous MCP tools. The base profile keeps its own
+deny rules and receives updates as before. The overlay has no
+`default_action`, so it never allows anything the base profile would not.
+
+```yaml
+--8<-- "policies/examples/headless.yaml"
+```
+
+The overlay does not convert every `ask` rule in the base profile or in your
+custom policies. Review the active policy set and test the commands your job
+needs, for example `rampart test "npm ci"`.
 
 Configure your actual host with its [integration guide](../integrations/index.md)
 and verify that it invokes the installed boundary. The presence of a policy

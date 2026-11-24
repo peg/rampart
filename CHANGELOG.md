@@ -16,6 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release with the fix, so the module is pinned to that commit. Rampart uses
   the library only as a client, in the OpenClaw approval bridge.
 
+### Changed
+
+- **The unattended-run profile is now an overlay** — `policies/ci.yaml`, a
+  full profile that was never embedded in the binary or installed by
+  `rampart init`, is replaced by `policies/examples/headless.yaml`. Install it
+  next to a base profile such as `standard`; its deny rules replace that
+  profile's approval prompts for package installation, privileged execution,
+  persistence changes, cloud uploads, and unclassified or dangerous MCP tools,
+  and the base profile keeps its own rules and updates. A copy of `ci.yaml`
+  you placed in your policy directory is not changed by upgrades; replace it
+  with `standard.yaml` plus the overlay. See the CI/Headless Agents guide.
+
 ### Fixed
 
 - `rampart mcp` now sends `ask` and `require_approval` decisions in enforce

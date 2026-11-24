@@ -144,18 +144,41 @@ func TestStandardPolicyGatesUnknownAndDangerousMCPTools(t *testing.T) {
 	}
 }
 
-func TestCIPolicyBlocksUnknownAndDangerousMCPTools(t *testing.T) {
-	path := filepath.Join("..", "..", "policies", "ci.yaml")
+func TestHeadlessOverlayDeniesUnattendedActionsOverStandard(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	eng, err := New(NewFileStore(path), logger)
+	standardPath := filepath.Join("..", "..", "policies", "standard.yaml")
+	base, err := New(NewFileStore(standardPath), logger)
 	if err != nil {
-		t.Fatalf("load CI policy: %v", err)
+		t.Fatalf("load standard policy: %v", err)
+	}
+	layered, err := New(NewLayeredStore(NewFileStore(standardPath), filepath.Join("..", "..", "policies", "examples", "headless.yaml"), logger), logger)
+	if err != nil {
+		t.Fatalf("load standard with headless overlay: %v", err)
 	}
 
-	for _, tool := range []string{"mcp", "mcp-dangerous", "mcp-destructive"} {
-		decision := eng.Evaluate(ToolCall{Agent: "ci", Tool: tool})
-		if decision.Action != ActionDeny {
-			t.Fatalf("CI %s decision = %s, want deny", tool, decision.Action)
+	denied := []ToolCall{
+		{Tool: "exec", Params: map[string]any{"command": "npm install left-pad"}},
+		{Tool: "exec", Params: map[string]any{"command": "python3 -m pip install requests"}},
+		{Tool: "exec", Params: map[string]any{"command": "sudo systemctl restart nginx"}},
+		{Tool: "exec", Params: map[string]any{"command": "crontab -e"}},
+		{Tool: "exec", Params: map[string]any{"command": "aws s3 cp build.tar s3://bucket/build.tar"}},
+		{Tool: "write", Params: map[string]any{"path": "/home/ci/.config/systemd/user/job.service"}},
+		{Tool: "mcp"},
+		{Tool: "mcp-dangerous"},
+		{Tool: "mcp-destructive"},
+	}
+	for _, call := range denied {
+		call.Agent = "ci"
+		if got := layered.Evaluate(call).Action; got != ActionDeny {
+			t.Errorf("%s %v action = %s, want deny", call.Tool, call.Params, got)
+		}
+	}
+
+	// Ordinary build steps keep the base profile's decision.
+	for _, command := range []string{"npm test", "npm ci", "go test ./...", "git status", "rm -rf /"} {
+		call := ToolCall{Agent: "ci", Tool: "exec", Params: map[string]any{"command": command}}
+		if got, want := layered.Evaluate(call).Action, base.Evaluate(call).Action; got != want {
+			t.Errorf("%q action = %s, want standard decision %s", command, got, want)
 		}
 	}
 }
