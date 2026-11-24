@@ -73,7 +73,15 @@ func SanitizeSuggestions(suggestions []string) []string {
 	return safe
 }
 
-func sanitizeEvent(event NotifyEvent) NotifyEvent {
+// prepareEvent is applied by every notifier before delivery. It redacts the
+// command and reports every approval decision as "ask": "require_approval" is
+// no longer a policy action, but the rampart serve queue still records
+// externally requested approvals with it, and receivers must not have to
+// match both spellings.
+func prepareEvent(event NotifyEvent) NotifyEvent {
 	event.Command = SanitizeCommand(event.Command)
+	if event.Action == "require_approval" {
+		event.Action = "ask"
+	}
 	return event
 }

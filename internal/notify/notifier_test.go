@@ -481,6 +481,10 @@ func TestGenericNotifier_SendRequireApproval(t *testing.T) {
 		t.Fatalf("Send() error = %v", err)
 	}
 
+	// Receivers see one spelling for approvals, whichever path queued them.
+	if got := receivedPayload["action"]; got != "ask" {
+		t.Fatalf("action = %v, want ask", got)
+	}
 	if got := receivedPayload["approval_id"]; got != event.ApprovalID {
 		t.Fatalf("approval_id = %v, want %s", got, event.ApprovalID)
 	}

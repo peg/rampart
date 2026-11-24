@@ -55,12 +55,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `serve`, and sends its own only when `serve` did not notify: the approval
   could not reach `serve`, in which case the call is denied, or `serve` queued
   it but its own policy sends no approval notification. The `201` response of
-  `POST /v1/approvals` gains a `notified` boolean for this. Deny and other notifications are unchanged.
+  `POST /v1/approvals` gains a `notified` boolean for this. Deny and other
+  notifications are unchanged.
   Approval notifications, the signed-link page, the dashboard, `rampart watch`
   and `rampart pending` named only the generic `mcp` tool type for MCP calls;
   they now show the server tool name, redacted like the command. The
   `command` field of notifications and `GET /v1/approvals` is now this display
   summary, which also falls back to the URL for fetch calls.
+- **Approval notifications always report `action: "ask"`** — an approval
+  requested through the `rampart serve` queue, such as one from `rampart mcp`
+  or a hook, was delivered as `require_approval`, while the same ask notified
+  by the proxy said `ask`. Receivers now see one spelling. `on:` filters accept
+  either spelling as before.
 
 ## [1.10.0] - 2026-11-10
 

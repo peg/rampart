@@ -54,7 +54,7 @@ type teamsFact struct {
 
 // Send sends a notification to Teams using MessageCard format.
 func (n *TeamsNotifier) Send(event NotifyEvent) error {
-	event = sanitizeEvent(event)
+	event = prepareEvent(event)
 	// Choose theme color and title based on action
 	themeColor := "f85149" // red for deny
 	title := "🛡️ Rampart: Command Denied"
