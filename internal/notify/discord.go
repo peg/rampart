@@ -53,7 +53,7 @@ type discordField struct {
 
 // Send sends a notification to Discord using embeds format.
 func (n *DiscordNotifier) Send(event NotifyEvent) error {
-	event = sanitizeEvent(event)
+	event = prepareEvent(event)
 	// Choose color and title based on action
 	color := 0xf85149 // red for deny
 	title := "Rampart: Command Denied"

@@ -59,7 +59,8 @@ Rampart sends a JSON POST to your webhook URL:
 }
 ```
 
-`command` is the redacted command, path or URL. For a call through
+`action` is `deny`, `watch` or `ask`; every approval request is reported as
+`ask`. `command` is the redacted command, path or URL. For a call through
 `rampart mcp`, `tool` is the policy tool type such as `mcp` or
 `mcp-destructive`, and `command` starts with the MCP server's tool name, for
 example `delete_repo — org/repo`. That name comes from the agent and MCP

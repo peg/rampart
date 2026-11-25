@@ -66,7 +66,7 @@ type slackText struct {
 
 // Send sends a notification to Slack using Block Kit format.
 func (n *SlackNotifier) Send(event NotifyEvent) error {
-	event = sanitizeEvent(event)
+	event = prepareEvent(event)
 	// Choose color based on action
 	color := "#f85149" // red for deny
 	actionText := "Command Denied"
