@@ -1108,13 +1108,26 @@ policies:
             - "source /dev/fd/"
             - ". /dev/fd/"
         message: "Obfuscated command execution blocked"
-      # xxd reverse pipe to shell
+      # Content piped into a shell, and xxd reverse dumps. command_contains and
+      # command_matches are ORed. "| sh" is spelled out with each following
+      # delimiter so pipes into sha256sum, shasum, shuf, or shred still pass.
       - action: deny
         when:
           command_contains:
             - "| bash"
-            - "| sh"
+            - "| sh "
+            - "| sh\t"
+            - "| sh\n"
+            - "| sh\r"
+            - "| sh;"
+            - "| sh&"
+            - "| sh|"
+            - "| sh)"
+            - "| sh<"
+            - "| sh>"
+            - "| sh`"
           command_matches:
+            - "**| sh"
             - "xxd -r *"
         message: "Obfuscated command execution blocked"
 
