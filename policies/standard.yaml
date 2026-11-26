@@ -9,7 +9,8 @@
 # - Substring matching: command_contains catches wrapped commands
 #
 # Forms the normalizer does not recognize, such as variable expansion
-# ($CMD, ${CMD}), can bypass static patterns.
+# ($CMD, ${CMD}) and encoded or generated commands (rev, xxd, printf
+# escapes), can bypass static patterns.
 #
 # For adversarial threat models, combine Rampart with containers,
 # seccomp, or AppArmor. See docs/THREAT-MODEL.md.
