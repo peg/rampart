@@ -1111,6 +1111,8 @@ policies:
       # Content piped into a shell, and xxd reverse dumps. command_contains and
       # command_matches are ORed. "| sh" is spelled out with each following
       # delimiter so pipes into sha256sum, shasum, shuf, or shred still pass.
+      # Expansion, quoting, escape, and glob characters stay denied because the
+      # shell can still resolve the word to sh (sh$IFS, sh"", sh\, sh{,}, sh*).
       - action: deny
         when:
           command_contains:
@@ -1119,6 +1121,9 @@ policies:
             - "| sh\t"
             - "| sh\n"
             - "| sh\r"
+            - "| sh\v"
+            - "| sh\f"
+            - "| sh.exe"
             - "| sh;"
             - "| sh&"
             - "| sh|"
@@ -1126,6 +1131,14 @@ policies:
             - "| sh<"
             - "| sh>"
             - "| sh`"
+            - "| sh$"
+            - "| sh\\"
+            - "| sh\""
+            - "| sh'"
+            - "| sh{"
+            - "| sh*"
+            - "| sh?"
+            - "| sh["
           command_matches:
             - "**| sh"
             - "xxd -r *"
