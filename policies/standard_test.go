@@ -160,7 +160,7 @@ func TestStandardPolicyDecisions(t *testing.T) {
 		{name: "deny pipe into quoted sh suffix", tool: "exec", command: `cat script.sh | sh""`, expected: engine.ActionDeny},
 		{name: "deny pipe into brace-expanded sh", tool: "exec", command: "cat script.sh | sh{,}", expected: engine.ActionDeny},
 		{name: "deny pipe into sh.exe", tool: "exec", command: "cat script.sh | sh.exe -s", expected: engine.ActionDeny},
-		{name: "deny pipe into globbed sh",tool: "exec", command: "cat script.sh | sh*", expected: engine.ActionDeny},
+		{name: "deny pipe into globbed sh", tool: "exec", command: "cat script.sh | sh*", expected: engine.ActionDeny},
 		{name: "allow pipe into sha256sum", tool: "exec", command: "cat release.tar.gz | sha256sum", expected: engine.ActionAllow},
 		{name: "allow pipe into shasum", tool: "exec", command: "echo hello | shasum -a 256", expected: engine.ActionAllow},
 		{name: "allow pipe into shuf", tool: "exec", command: "ls | shuf -n 1", expected: engine.ActionAllow},
