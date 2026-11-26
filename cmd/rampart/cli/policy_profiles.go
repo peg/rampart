@@ -16,7 +16,6 @@ var builtInProfiles = map[string]bool{
 	"standard.yaml":               true,
 	"paranoid.yaml":               true,
 	"yolo.yaml":                   true,
-	"demo.yaml":                   true,
 	"block-prompt-injection.yaml": true,
 	"research-agent.yaml":         true,
 	"mcp-server.yaml":             true,

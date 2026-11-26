@@ -87,9 +87,10 @@ An `ask` rule requires human review. The integration determines where it appears
 and whether it can resume a held call:
 
 - Claude Code normally uses its native prompt; OpenClaw uses its native UI.
-- Codex and Cursor use Rampart's external queue and require `rampart serve`.
-- Cline and standalone `rampart mcp` refuse asks because they have no connected
-  resolver. Starting `serve` alone does not add one.
+- Codex, Cursor and standalone `rampart mcp` use Rampart's external queue and
+  require `rampart serve`.
+- Cline refuses asks because it has no connected resolver. Starting `serve`
+  alone does not add one.
 
 For Rampart-owned pending requests, open the dashboard at
 `http://localhost:9090/dashboard/`, or run `rampart pending --details`, followed

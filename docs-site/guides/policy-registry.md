@@ -47,7 +47,7 @@ rampart policy fetch research-agent --dry-run
 rampart policy remove research-agent
 ```
 
-Built-in profiles (`standard`, `paranoid`, `yolo`, `ci`, `research-agent`, `mcp-server`) are protected and cannot be removed this way. Use `rampart init --force` to reset a built-in profile.
+Built-in profiles (`standard`, `paranoid`, `yolo`, `research-agent`, `mcp-server`) are protected and cannot be removed this way. Use `rampart init --force` to reset a built-in profile.
 
 ## Available policies
 

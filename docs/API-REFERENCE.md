@@ -38,6 +38,8 @@ Notes:
 - `GET /v1/events/stream` accepts an admin-scoped bearer credential either in
   the header or as a `?token=<token>` query parameter.
 - `POST /v1/approvals/{id}/resolve` may also be authorized by signed URL query params (`sig`, `exp`) when server-side signing is enabled.
+- `GET /v1/approvals/{id}/resolve` requires a valid signed URL and only renders
+  an HTML confirmation page; it never resolves the approval.
 
 ## API Conventions
 
@@ -406,7 +408,11 @@ Created (`201`):
     "action_version": { "type": "integer", "enum": [0, 1] },
     "id": { "type": "string" },
     "status": { "type": "string" },
-    "expires_at": { "type": "string", "format": "date-time" }
+    "expires_at": { "type": "string", "format": "date-time" },
+    "notified": {
+      "type": "boolean",
+      "description": "Whether this server handed an approval notification to its configured `notify` webhook. Delivery is not confirmed"
+    }
   }
 }
 ```
@@ -463,7 +469,10 @@ co-grouped for future authorization.
         "properties": {
           "id": { "type": "string" },
           "tool": { "type": "string" },
-          "command": { "type": "string" },
+          "command": {
+            "type": "string",
+            "description": "Redacted display summary: the command, else the path, else the URL, preceded by the MCP server tool name for MCP proxy calls. Not an identity; `action` is the complete request"
+          },
           "action": { "type": "object" },
           "redacted": { "type": "boolean" },
           "agent": { "type": "string" },
@@ -574,6 +583,17 @@ operator can approve once or author an explicit policy.
 
 Signed URLs may approve or deny this one request, but cannot use
 `persist: true`; durable policy changes require admin-token authentication.
+A signed request always records `resolved_by: "signed-link"`.
+
+#### Confirmation-page form
+With a valid signed URL, the body may instead be
+`Content-Type: application/x-www-form-urlencoded` containing exactly one field,
+`decision=approve` or `decision=deny`, as submitted by the
+`GET /v1/approvals/{id}/resolve` page. Any other field, including `persist`,
+returns `400`. Form submissions receive an HTML result page with the same
+status codes listed below and the page headers described for the `GET`
+route. Form bodies are not accepted with bearer authentication, and JSON
+requests are unchanged.
 
 ### Request Body Schema
 
@@ -606,7 +626,7 @@ Signed URLs may approve or deny this one request, but cannot use
 
 ### Status Codes
 - `200 OK`
-- `400 Bad Request` invalid JSON
+- `400 Bad Request` invalid JSON or confirmation-page form
 - `401 Unauthorized` invalid token/signature
 - `403 Forbidden` valid bearer credential without admin scope
 - `404 Not Found` unknown approval ID
@@ -621,6 +641,30 @@ curl -X POST "http://127.0.0.1:9090/v1/approvals/01J.../resolve" \
   -H "Content-Type: application/json" \
   -d '{"approved":true,"resolved_by":"security-team","persist":false}'
 ```
+
+## GET /v1/approvals/{id}/resolve
+Renders the HTML confirmation page that a signed approval link opens. It is
+for people following a notification link and never changes approval state, so
+link previews and prefetchers cannot approve a request. The page shows the
+redacted tool, action, agent, reason, and expiry, and posts the chosen decision
+back to `POST /v1/approvals/{id}/resolve` with the same `sig` and `exp`.
+
+### Request Parameters
+- `sig`, `exp` query parameters from a server-generated signed URL. Bearer
+  tokens are not accepted here.
+
+### Responses
+All responses are `text/html` with `Cache-Control: no-store`,
+`Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`,
+`X-Content-Type-Options: nosniff`, and a `Content-Security-Policy` that allows
+no scripts and only same-origin form submission.
+
+- `200 OK` pending approval; confirmation page with Approve and Deny buttons
+- `403 Forbidden` missing, invalid, or expired signature, or signing disabled
+- `404 Not Found` valid signature for an approval the server no longer holds
+- `410 Gone` approval already approved, denied, or expired
+
+The `403` and `404` pages are identical and contain no approval details.
 
 ## POST /v1/approvals/bulk-resolve
 Bulk approves or denies pending approvals for one exact
@@ -1402,3 +1446,4 @@ Returns JSON 404.
 - Keep `~/.rampart/token` permissions restrictive (owner read/write).
 - Prefer header-based bearer auth over query parameters; use `?token=` only where header injection is not possible (for SSE clients).
 - Signed resolve URLs (`sig`/`exp`) should be considered sensitive and short-lived.
+  Anyone holding one can approve or deny that request until it expires.

@@ -102,6 +102,22 @@ func WithApprovalStore(store *approval.Store) Option {
 	}
 }
 
+// ApprovalResolver asks a human to resolve an approval for exactly call, as
+// required by decision, whose Message is never empty. It returns nil only when
+// the approval was explicitly granted; any error, timeout, cancellation, or
+// uncertainty must be returned as a non-nil error and causes the request to be
+// denied.
+type ApprovalResolver func(ctx context.Context, call engine.ToolCall, decision engine.Decision) error
+
+// WithApprovalResolver sets an external resolver for ask and require_approval
+// decisions, such as the running rampart serve approval queue. An approval
+// store set with WithApprovalStore takes precedence.
+func WithApprovalResolver(resolver ApprovalResolver) Option {
+	return func(p *Proxy) {
+		p.resolver = resolver
+	}
+}
+
 // WithAgentID sets the agent identity used in policy evaluation and audit events.
 // Defaults to "mcp-client" if not set.
 func WithAgentID(id string) Option {
@@ -132,6 +148,7 @@ type Proxy struct {
 	filterTools bool
 	toolMapping map[string]string
 	approvals   *approval.Store
+	resolver    ApprovalResolver
 	agentID     string
 	sessionID   string
 
@@ -514,7 +531,12 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 		return nil
 	}
 
-	if p.mode == "enforce" && (decision.Action == engine.ActionRequireApproval || decision.Action == engine.ActionAsk) {
+	needsApproval := p.mode == "enforce" && (decision.Action == engine.ActionRequireApproval || decision.Action == engine.ActionAsk)
+	if needsApproval && p.approvals == nil && p.resolver != nil {
+		if approved, err := p.resolveExternalApproval(ctx, req.ID, call, decision); !approved {
+			return err
+		}
+	} else if needsApproval {
 		message := strings.TrimSpace(decision.Message)
 		if message == "" {
 			message = "request requires approval"
@@ -534,7 +556,7 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 		p.logger.Info("mcp: approval required",
 			"id", pending.ID,
 			"tool", mappedTool,
-			"command", call.Command(),
+			"action", approval.SummarizeCall(call).String(),
 			"message", decision.Message,
 			"expires", pending.ExpiresAt.Format(time.RFC3339),
 		)
@@ -596,6 +618,45 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 		p.logger.Debug("mcp: tools/call correlation invalidated in monitor mode; passing through untracked")
 	}
 	return p.writeToChild(rawLine)
+}
+
+// resolveExternalApproval blocks until the resolver settles the approval for
+// exactly the evaluated call. It reports true only for an explicit approval;
+// every other outcome is a deny, written to the client when the request has an
+// ID. Proxy shutdown cancels the wait without forwarding.
+func (p *Proxy) resolveExternalApproval(ctx context.Context, id json.RawMessage, call engine.ToolCall, decision engine.Decision) (bool, error) {
+	message := strings.TrimSpace(decision.Message)
+	if message == "" {
+		message = "request requires approval"
+	}
+	decision.Message = message
+	waitCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		select {
+		case <-p.stopCh:
+			cancel()
+		case <-waitCtx.Done():
+		}
+	}()
+
+	p.logger.Info("mcp: approval required; waiting for rampart serve approval queue",
+		"tool", call.Tool,
+		"action", approval.SummarizeCall(call).String(),
+		"message", message,
+	)
+	err := p.resolver(waitCtx, call, decision)
+	if err == nil && waitCtx.Err() == nil {
+		return true, nil
+	}
+	if waitCtx.Err() != nil {
+		return false, nil
+	}
+	p.logger.Warn("mcp: approval not granted; denying", "tool", call.Tool, "reason", err)
+	if !HasID(id) {
+		return false, nil
+	}
+	return false, p.writeErrorToClient(id, jsonRPCDenyCode, "Rampart: "+message+"; "+err.Error())
 }
 
 func responseID(id json.RawMessage) json.RawMessage {

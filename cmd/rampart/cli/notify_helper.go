@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/internal/notify"
 )
@@ -65,11 +66,9 @@ func sendNotificationWithTimeout(config *engine.NotifyConfig, call engine.ToolCa
 	lastNotificationTime = now
 	notificationMutex.Unlock()
 
-	// Extract command/path from tool parameters
-	command := extractCommand(call)
-
-	// Sanitize command before sending to webhook
-	sanitizedCommand := sanitizeCommand(command)
+	// The shared reviewer summary sanitizes the command, path or URL and names
+	// the server tool for MCP proxy calls.
+	sanitizedCommand := approval.SummarizeCall(call).String()
 
 	// Get the matched policy name
 	policyName := "unknown"

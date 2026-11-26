@@ -351,9 +351,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 			"message", decision.Message,
 		)
 
-		if s.shouldNotify(decision.Action.String()) {
-			s.enqueueNotification("approval", func() { s.sendApprovalWebhook(call, decision, pending) })
-		}
+		s.dispatchApprovalNotification(call, decision, pending)
 
 		resp["approval_id"] = pending.ID
 		resp["approval_status"] = "pending"

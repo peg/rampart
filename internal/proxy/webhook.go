@@ -21,10 +21,7 @@ func (s *Server) executeWebhookAction(call engine.ToolCall, decision engine.Deci
 }
 
 func (s *Server) sendWebhook(call engine.ToolCall, decision engine.Decision) {
-	command := call.Command()
-	if command == "" {
-		command = call.Path()
-	}
+	command := approval.SummarizeCall(call).String()
 	policyName := "unknown"
 	if len(decision.MatchedPolicies) > 0 {
 		policyName = decision.MatchedPolicies[0]
@@ -49,10 +46,7 @@ func (s *Server) sendWebhook(call engine.ToolCall, decision engine.Decision) {
 }
 
 func (s *Server) sendApprovalWebhook(call engine.ToolCall, decision engine.Decision, pending *approval.Request) {
-	command := call.Command()
-	if command == "" {
-		command = call.Path()
-	}
+	command := approval.SummarizeCall(call).String()
 	policyName := "unknown"
 	if len(decision.MatchedPolicies) > 0 {
 		policyName = decision.MatchedPolicies[0]
@@ -84,9 +78,26 @@ func (s *Server) sendApprovalWebhook(call engine.ToolCall, decision engine.Decis
 	}
 }
 
-func (s *Server) enqueueNotification(kind string, send func()) {
+// dispatchApprovalNotification hands the approval notification for pending to
+// delivery and reports whether it did. It reports false when this server's
+// policy does not notify for the decision, no signed link can be built, or
+// delivery is at capacity, so a caller with its own notification channel can
+// tell that reviewers have not been told. True does not confirm delivery.
+func (s *Server) dispatchApprovalNotification(call engine.ToolCall, decision engine.Decision, pending *approval.Request) bool {
+	if !s.shouldNotify(decision.Action.String()) {
+		return false
+	}
+	if s.approvalResolveURL(pending.ID, pending.ExpiresAt.UTC()) == "" {
+		s.logger.Error("proxy: approval notification suppressed because no signed resolve URL is available", "approval_id", pending.ID)
+		return false
+	}
+	return s.enqueueNotification("approval", func() { s.sendApprovalWebhook(call, decision, pending) })
+}
+
+// enqueueNotification reports whether send was handed to delivery.
+func (s *Server) enqueueNotification(kind string, send func()) bool {
 	if send == nil {
-		return
+		return false
 	}
 	select {
 	case s.notificationSlots <- struct{}{}:
@@ -94,7 +105,9 @@ func (s *Server) enqueueNotification(kind string, send func()) {
 			defer func() { <-s.notificationSlots }()
 			send()
 		}()
+		return true
 	default:
 		s.logger.Warn("proxy: notification dropped because delivery capacity is full", "kind", kind)
+		return false
 	}
 }

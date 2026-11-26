@@ -27,7 +27,7 @@ import (
 // NotifyEvent contains the data for a webhook notification.
 // Breaking change: JSON field names are now snake_case for all fields.
 type NotifyEvent struct {
-	Action    string `json:"action"`    // "deny", "watch", "ask", or legacy "require_approval"
+	Action    string `json:"action"`    // "deny", "watch" or "ask"; delivered "require_approval" becomes "ask"
 	Tool      string `json:"tool"`      // e.g. "exec", "read", "write"
 	Command   string `json:"command"`   // the command or path
 	Policy    string `json:"policy"`    // policy name that matched
@@ -77,7 +77,7 @@ func NewGenericNotifier(url string) *GenericNotifier {
 
 // Send posts the event as JSON to the webhook URL.
 func (n *GenericNotifier) Send(event NotifyEvent) error {
-	event = sanitizeEvent(event)
+	event = prepareEvent(event)
 	data, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("marshal event: %w", err)

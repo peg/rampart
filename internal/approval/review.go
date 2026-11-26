@@ -6,6 +6,7 @@ package approval
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
@@ -29,6 +30,49 @@ type ActionReview struct {
 	// DisplayText retains exact numeric values through clients whose JSON
 	// decoders use floating point. It contains only the redacted fields above.
 	DisplayText string `json:"display_text,omitempty"`
+}
+
+// CallSummary is the short, sanitized description of a call shown to the
+// person deciding it in notifications, approval pages and pending lists. It is
+// presentation only: never use it for policy matching or approval identity.
+type CallSummary struct {
+	// MCPTool is the server tool name of an MCP proxy call. Policy sees only a
+	// generic tool type such as "mcp" for these calls. The value is supplied by
+	// the agent and MCP server.
+	MCPTool string
+	// Target is the command, else the path, else the URL.
+	Target string
+}
+
+// SummarizeCall builds the reviewer-facing summary for call.
+func SummarizeCall(call engine.ToolCall) CallSummary {
+	target := call.Command()
+	if target == "" {
+		target = call.Path()
+	}
+	if target == "" {
+		target = call.URL()
+	}
+	mcpTool, _ := call.Params["mcp_tool"].(string)
+	return CallSummary{
+		MCPTool: notify.SanitizeCommand(strings.TrimSpace(mcpTool)),
+		Target:  notify.SanitizeCommand(target),
+	}
+}
+
+// String joins the summary into one line, naming the MCP tool first. Output
+// boundaries sanitize the line again, so the separator avoids "=" and ":"
+// (a tool named "token" must not redact the target) and nothing follows the
+// target (a redacted value must not absorb a trailing delimiter).
+func (s CallSummary) String() string {
+	switch {
+	case s.MCPTool == "":
+		return s.Target
+	case s.Target == "":
+		return s.MCPTool
+	default:
+		return s.MCPTool + " — " + s.Target
+	}
 }
 
 // ReviewCall preserves every represented parameter instead of extracting a

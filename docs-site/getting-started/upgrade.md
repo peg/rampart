@@ -200,6 +200,15 @@ Check the [CHANGELOG](https://github.com/peg/rampart/blob/main/CHANGELOG.md) bef
 
 Notable past changes:
 
+- **v1.11.0**: In enforce mode, an ask through `rampart mcp` now waits up to
+  five minutes for a decision in the `rampart serve` approval queue instead of
+  being refused; an MCP client with a shorter request timeout may give up
+  first. Webhook receivers that match `action: "require_approval"` should also
+  accept `ask`, which every approval notification now reports, and the
+  `command` field of approval notifications and `GET /v1/approvals` is now a
+  display summary that names the MCP tool. If you copied `policies/ci.yaml`
+  into your policy directory, upgrades leave it unchanged; replace it with
+  `standard.yaml` plus the `headless` overlay.
 - **v1.10.0**: No action is needed after upgrading. Claude Code no longer
   receives an `allow` from Rampart for a policy allow, so Claude Code's own
   permission prompts and rules apply again. If you relied on Rampart to

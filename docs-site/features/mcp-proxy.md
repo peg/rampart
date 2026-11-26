@@ -23,12 +23,24 @@ rampart mcp -- npx @modelcontextprotocol/server-filesystem /path
 rampart mcp --mode monitor -- npx @modelcontextprotocol/server-filesystem .
 ```
 
-!!! warning "Standalone approval limit"
-    `rampart mcp` evaluates policies locally but has no connected approval
-    resolver. In enforce mode, `ask` immediately refuses the call; it does not
-    create a request in `rampart pending` or the dashboard. Starting
-    `rampart serve` alone does not change this. Use explicit operator-reviewed
-    `allow` or `deny` rules for this path.
+!!! warning "Approval limits"
+    `rampart mcp` evaluates policies locally. In enforce mode, an `ask` creates
+    a request in the running `rampart serve` queue, shown by `rampart pending`
+    and the dashboard, and holds the call until the request is resolved or
+    expires under the service's approval timeout, waiting at most five
+    minutes. Approval forwards the original request unchanged. Denial, expiry,
+    timeout, an unreachable service, a missing token, or any other approval
+    error returns a JSON-RPC error, and nothing reaches the server.
+
+    The MCP client owns its own request timeout and may abandon the call
+    before a reviewer responds. While one call waits, the proxy does not
+    forward later client messages, including a cancellation of that call. If
+    a reviewer approves after the client gave up, the proxy still forwards the
+    original call, and the cancellation reaches the server only afterward, so
+    deny requests the client no longer needs. If the five-minute wait ends
+    first, the call is refused and its request can remain in the queue;
+    approving it afterward runs nothing. Prefer explicit operator-reviewed
+    `allow` or `deny` rules for frequent operations.
 
 ## MCP Client Configuration
 
@@ -60,7 +72,7 @@ server: "MCP Server" {shape: oval}
 error: "Error Response" {
   style.fill: "#2d1b1b"; style.stroke: "#da3633"; style.font-color: "#f85149"; style.border-radius: 6
 }
-approval: "Approval Required\n(fail closed)" {
+approval: "rampart serve\\napproval queue" {
   style.fill: "#2d2508"; style.stroke: "#d29922"; style.font-color: "#d29922"; style.border-radius: 6
 }
 
@@ -69,7 +81,8 @@ rampart -> engine: "evaluate"
 engine -> server: "allow"
 engine -> error: "deny"
 engine -> approval: "ask"
-approval -> error: "no standalone resolver"
+approval -> server: "approved"
+approval -> error: "denied, expired,\\nor unreachable"
 server -> rampart: "response"
 rampart -> client: "response"
 ```
@@ -104,8 +117,8 @@ policy:
 | Category | Keywords | Default Action |
 |----------|----------|---------------|
 | `mcp-destructive` | delete, destroy, remove, drop | `deny` |
-| `mcp-dangerous` | stop, restart, execute, modify | `ask` (blocked by the standalone proxy) |
-| `mcp` | Any tool name Rampart cannot classify | `ask` (blocked by the standalone proxy) |
+| `mcp-dangerous` | stop, restart, execute, modify | `ask` (requires `rampart serve`) |
+| `mcp` | Any tool name Rampart cannot classify | `ask` (requires `rampart serve`) |
 
 ## MCP Proxy vs Shell Hook
 
@@ -200,7 +213,7 @@ policies:
       tool: ["mcp-dangerous"]
     rules:
       - action: ask
-        message: "Risky MCP operation requires approval; standalone proxy refuses this call"
+        message: "Risky MCP operation requires approval"
 
   - name: block-file-deletion
     match:
@@ -216,15 +229,14 @@ policies:
       tool: ["mcp"]
     rules:
       - action: ask
-        message: "Unclassified MCP tool requires approval; standalone proxy refuses this call"
+        message: "Unclassified MCP tool requires approval"
 ```
 
 See [`configs/examples/mcp-server.yaml`](https://github.com/peg/rampart/blob/main/configs/examples/mcp-server.yaml) for a ready-to-use template.
 
-The `ask` rules above retain their approval-required meaning, but the standalone
-proxy refuses them as described in the [approval limit](#usage). They do not
-present an approval button. See the [support matrix](../getting-started/support-matrix.md#approval-paths-and-limits)
-for integrations that provide an approval flow.
+The `ask` rules above wait in the `rampart serve` approval queue, subject to the
+[approval limits](#usage). See the [support matrix](../getting-started/support-matrix.md#approval-paths-and-limits)
+for how each integration handles approval.
 
 ## Example: Infrastructure MCP Policy
 

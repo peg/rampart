@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-11-25
+
+### Security
+
+- **WebSocket frames to the OpenClaw gateway use a cryptographically random
+  mask key** — `github.com/gorilla/websocket` moves from v1.5.3 to the upstream
+  commit that resolves GO-2026-6278 (GHSA-w67g-5rqw-f597), where the client
+  mask key came from a non-cryptographic generator. Upstream has not tagged a
+  release with the fix, so the module is pinned to that commit. Rampart uses
+  the library only as a client, in the OpenClaw approval bridge.
+
+### Changed
+
+- **The unattended-run profile is now an overlay** — `policies/ci.yaml`, a
+  full profile that was never embedded in the binary or installed by
+  `rampart init`, is replaced by `policies/examples/headless.yaml`. Install it
+  next to a base profile such as `standard`; its deny rules replace that
+  profile's approval prompts for package installation, privileged execution,
+  persistence changes, cloud uploads, and unclassified or dangerous MCP tools,
+  and the base profile keeps its own rules and updates. A copy of `ci.yaml`
+  you placed in your policy directory is not changed by upgrades; replace it
+  with `standard.yaml` plus the overlay. See the CI/Headless Agents guide.
+
+### Fixed
+
+- Pipes into commands whose names start with `sh`, such as `sha256sum`,
+  `shasum`, `shuf`, and `shred`, are no longer denied as obfuscated execution
+  by the standard profile. Every `| sh` and `| bash` form the profile denied
+  before is still denied.
+
+- `rampart mcp` now sends `ask` and `require_approval` decisions in enforce
+  mode to the running `rampart serve` approval queue, using the same client as
+  the Codex, Gemini and Cursor hooks, and holds the call until the request is
+  resolved or expires, waiting at most five minutes. Approval forwards the
+  original request unchanged. Denial, expiry, timeout, a missing token, or an
+  unreachable service returns a JSON-RPC error. Every ask through the proxy was
+  previously refused. The MCP client owns its own request timeout and may
+  abandon a longer wait, and later client messages wait behind a pending
+  approval.
+- **Signed approval links open a confirmation page** — tapping the
+  `resolve_url` in a Slack, Discord, Teams or webhook notification previously
+  returned `404` because the route accepted only `POST`. A `GET` now shows a
+  no-script page with the redacted request and Approve and Deny buttons; the
+  decision is a form `POST` to the same signed URL, so link previews cannot
+  resolve an approval. Signed links still cannot set `persist`, record
+  `signed-link` as the resolver, and work from another device only when
+  `serve` is exposed over TLS or a reverse proxy with `--resolve-base-url`
+  set. JSON API responses are unchanged.
+- **One notification per MCP approval, naming the MCP tool** — with a
+  `notify:` URL, an ask through `rampart mcp` previously sent two webhook
+  posts: a plain one from the proxy and the one from `rampart serve` with the
+  approval link. In enforce mode the proxy now leaves ask notifications to
+  `serve`, and sends its own only when `serve` did not notify: the approval
+  could not reach `serve`, in which case the call is denied, or `serve` queued
+  it but its own policy sends no approval notification. The `201` response of
+  `POST /v1/approvals` gains a `notified` boolean for this. Deny and other
+  notifications are unchanged.
+  Approval notifications, the signed-link page, the dashboard, `rampart watch`
+  and `rampart pending` named only the generic `mcp` tool type for MCP calls;
+  they now show the server tool name, redacted like the command. The
+  `command` field of notifications and `GET /v1/approvals` is now this display
+  summary, which also falls back to the URL for fetch calls.
+- **Approval notifications always report `action: "ask"`** — an approval
+  requested through the `rampart serve` queue, such as one from `rampart mcp`
+  or a hook, was delivered as `require_approval`, while the same ask notified
+  by the proxy said `ask`. Receivers now see one spelling. `on:` filters accept
+  either spelling as before.
+
 ## [1.10.0] - 2026-11-10
 
 ### Security

@@ -214,15 +214,16 @@ policy decisions, not proof of execution or independent audit witnessing.
 
 ## Current release
 
-Rampart v1.10.0 stops answering `allow` for Claude Code: when policy allows an
-action, Rampart returns no decision, so Claude Code's own permission mode and
-prompts apply again. Deny and ask rules work as before. New Claude Code
-installations on 2.1.295 or later fail closed when the hook cannot run;
-existing installations keep their current behavior until you opt in.
-`rampart doctor` now warns, rather than fails, when another detected agent has
-no Rampart hooks, and `rampart protect` ends with a harmless test to try. The
-alpha Python SDK and `rampart quickstart` are removed. Existing installations
-need no action. Read the [upgrade guidance](getting-started/upgrade.md) before
+Rampart v1.11.0 completes the approval loop for MCP servers: in enforce mode,
+an ask through `rampart mcp` waits in the `rampart serve` approval queue
+instead of being refused, and reviewers get one notification that names the
+MCP tool and links to a confirmation page with Approve and Deny buttons.
+Approval notifications always report `action: "ask"`. The unattended-run
+profile is now the `headless` overlay, installed next to a base profile such
+as `standard`, and the OpenClaw approval bridge uses a cryptographically
+random WebSocket mask key. v1.10.0 stopped answering `allow` for Claude Code,
+so Claude Code's own permission mode and prompts apply again, and let new
+Claude Code installations fail closed when the hook cannot run. Read the [upgrade guidance](getting-started/upgrade.md) before
 upgrading a custom background service, and see the [release
 notes](https://github.com/peg/rampart/releases/latest) or the repository
 [changelog](https://github.com/peg/rampart/blob/main/CHANGELOG.md) for history.

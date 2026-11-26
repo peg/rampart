@@ -5,12 +5,12 @@
 # - Backslash removal: \rm → rm
 # - Env prefix stripping: FOO=bar cmd → cmd
 # - Compound commands: cmd1 && cmd2 → matches both
-# - Subcommand extraction: $(cmd), `cmd`, eval 'cmd' → matches inner cmd
+# - Subcommand extraction: $(cmd) and `cmd` → inner commands are matched independently
 # - Substring matching: command_contains catches wrapped commands
 #
-# REMAINING GAPS (require OS-level sandboxing):
-# - Variable expansion: $CMD, ${CMD}
-# - Obfuscation: rev, xxd, printf escapes
+# Forms the normalizer does not recognize, such as variable expansion
+# ($CMD, ${CMD}) and encoded or generated commands (rev, xxd, printf
+# escapes), can bypass static patterns.
 #
 # For adversarial threat models, combine Rampart with containers,
 # seccomp, or AppArmor. See docs/THREAT-MODEL.md.
@@ -1109,13 +1109,44 @@ policies:
             - "source /dev/fd/"
             - ". /dev/fd/"
         message: "Obfuscated command execution blocked"
-      # xxd reverse pipe to shell
+      # Content piped into a shell, and xxd reverse dumps. command_contains and
+      # command_matches are ORed. "| sh" is spelled out with each following
+      # delimiter so pipes into sha256sum, shasum, shuf, or shred still pass.
+      # Expansion, quoting, escape, and glob characters stay denied because the
+      # shell can still resolve the word to sh (sh$IFS, sh"", sh\, sh{,}, sh*),
+      # including zsh glob qualifiers and extended globs (sh(N), sh~x, sh^x, sh#).
       - action: deny
         when:
           command_contains:
             - "| bash"
-            - "| sh"
+            - "| sh "
+            - "| sh\t"
+            - "| sh\n"
+            - "| sh\r"
+            - "| sh\v"
+            - "| sh\f"
+            - "| sh.exe"
+            - "| sh;"
+            - "| sh&"
+            - "| sh|"
+            - "| sh)"
+            - "| sh<"
+            - "| sh>"
+            - "| sh`"
+            - "| sh$"
+            - "| sh\\"
+            - "| sh\""
+            - "| sh'"
+            - "| sh{"
+            - "| sh*"
+            - "| sh?"
+            - "| sh["
+            - "| sh("
+            - "| sh~"
+            - "| sh^"
+            - "| sh#"
           command_matches:
+            - "**| sh"
             - "xxd -r *"
         message: "Obfuscated command execution blocked"
 

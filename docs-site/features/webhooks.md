@@ -59,6 +59,38 @@ Rampart sends a JSON POST to your webhook URL:
 }
 ```
 
+`action` is `deny`, `watch` or `ask`; every approval request is reported as
+`ask`. `command` is the redacted command, path or URL. For a call through
+`rampart mcp`, `tool` is the policy tool type such as `mcp` or
+`mcp-destructive`, and `command` starts with the MCP server's tool name, for
+example `delete_repo — org/repo`. That name comes from the agent and MCP
+server.
+
+### Approval links
+
+When `rampart serve` creates a pending approval, the notification also carries
+`approval_id`, `expires_at`, and a signed `resolve_url`. Opening that link shows
+a small confirmation page with the redacted request and **Approve** and
+**Deny** buttons. Opening or previewing the link never decides the request;
+only pressing a button does, once. The link expires with the approval and
+cannot make a permanent allow rule.
+
+The link points at `localhost` unless you set `--resolve-base-url`, so it works
+only on the machine running `serve`. To approve from a phone or another
+computer, expose `serve` over TLS or a trusted HTTPS reverse proxy and set
+`--resolve-base-url` to that address. Anyone who has the link can decide that
+request, so send approval notifications only to channels limited to reviewers.
+
+`rampart mcp` in enforce mode leaves approval notifications to `serve`, so an
+ask produces one notification with its link. `serve` notifies from the
+`notify:` block of its own policy. If `serve` queues the approval without
+notifying (for example, its policy has no `notify:` block), the proxy sends an
+`ask` notification without a link from the `notify:` block of the policy
+`rampart mcp` loaded, and the call still waits in the queue. If the approval
+cannot reach `serve` (for example, `serve` is not running), the call is denied
+and the proxy sends the same plain notification. The proxy sends `ask`
+notifications only when its `on:` list includes `ask`.
+
 ## Platform Examples
 
 === "Discord"
