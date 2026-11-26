@@ -16,6 +16,7 @@ Keep a base profile such as `standard` and add the headless overlay from the
 repository's `policies/examples/` directory next to it:
 
 ```bash
+mkdir -p ~/.rampart/policies
 curl -fsSL -o ~/.rampart/policies/headless.yaml \
   https://raw.githubusercontent.com/peg/rampart/main/policies/examples/headless.yaml
 rampart test ~/.rampart/policies/headless.yaml
@@ -69,8 +70,11 @@ or `rampart deny <id>`. Agent credentials should not have approval authority.
 This option does not inspect the TTY or detect CI. The hook requires a
 reachable service and waits up to five minutes for a result; it does not fall
 back to a native prompt. An earlier host timeout follows that host's documented
-failure behavior. Codex, Cursor, and Gemini already use external approval for
-`ask`; integrations without a resolver refuse the action. See the
+failure behavior. Codex, Cursor, and Gemini hooks and standalone `rampart mcp`
+already use external approval for `ask`; with the service running, an MCP
+`ask` holds that call and every later message from the client for up to five
+minutes instead of failing fast. Integrations without a resolver refuse the
+action. See the
 [approval support table](../getting-started/support-matrix.md#approval-paths-and-limits).
 
 ## Customize without weakening the baseline accidentally

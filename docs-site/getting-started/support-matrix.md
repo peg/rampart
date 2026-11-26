@@ -156,8 +156,8 @@ static checks do not establish host interception.
       <td data-label="Surface"><strong>Claude Desktop / Cursor MCP server</strong></td>
       <td data-label="Best path">MCP proxy<br><code>rampart mcp --</code></td>
       <td data-label="Bare protect">No</td>
-      <td data-label="rampart serve">No</td>
-      <td data-label="Approval UX">Standalone CLI blocks <code>ask</code>; no connected resolver</td>
+      <td data-label="rampart serve">Not required for local allow/deny;<br>required for <code>ask</code></td>
+      <td data-label="Approval UX" data-approval="external">External Rampart queue; refuses when <code>rampart serve</code> is unreachable</td>
       <td data-label="Support tier">Supported</td>
     </tr>
     <tr class="tier-supported">
