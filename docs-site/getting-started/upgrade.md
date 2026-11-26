@@ -208,7 +208,10 @@ Notable past changes:
   `command` field of approval notifications and `GET /v1/approvals` is now a
   display summary that names the MCP tool. If you copied `policies/ci.yaml`
   into your policy directory, upgrades leave it unchanged; replace it with
-  `standard.yaml` plus the `headless` overlay.
+  `standard.yaml` plus the `headless` overlay. The managed `guard.yaml` is
+  refreshed if you have not modified it: routine project commands no longer
+  ask, and direct external `curl` and `wget` now ask instead of being denied.
+  Keep a modified copy, or add your own deny rule, if you relied on that deny.
 - **v1.10.0**: No action is needed after upgrading. Claude Code no longer
   receives an `allow` from Rampart for a policy allow, so Claude Code's own
   permission prompts and rules apply again. If you relied on Rampart to

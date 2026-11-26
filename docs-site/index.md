@@ -218,7 +218,10 @@ Rampart v1.11.0 completes the approval loop for MCP servers: in enforce mode,
 an ask through `rampart mcp` waits in the `rampart serve` approval queue
 instead of being refused, and reviewers get one notification that names the
 MCP tool and links to a confirmation page with Approve and Deny buttons.
-Approval notifications always report `action: "ask"`. The unattended-run
+Approval notifications always report `action: "ask"`. The guard installed by
+`rampart protect` asks less often for routine builds, tests, script runs, and
+feature-branch pushes, while still asking before inline code, new package
+installs, risky pushes, external network commands, and deploys. The unattended-run
 profile is now the `headless` overlay, installed next to a base profile such
 as `standard`, and the OpenClaw approval bridge uses a cryptographically
 random WebSocket mask key. v1.10.0 stopped answering `allow` for Claude Code,
