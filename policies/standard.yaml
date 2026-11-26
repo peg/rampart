@@ -1112,7 +1112,8 @@ policies:
       # command_matches are ORed. "| sh" is spelled out with each following
       # delimiter so pipes into sha256sum, shasum, shuf, or shred still pass.
       # Expansion, quoting, escape, and glob characters stay denied because the
-      # shell can still resolve the word to sh (sh$IFS, sh"", sh\, sh{,}, sh*).
+      # shell can still resolve the word to sh (sh$IFS, sh"", sh\, sh{,}, sh*),
+      # including zsh glob qualifiers and extended globs (sh(N), sh~x, sh^x, sh#).
       - action: deny
         when:
           command_contains:
@@ -1139,6 +1140,10 @@ policies:
             - "| sh*"
             - "| sh?"
             - "| sh["
+            - "| sh("
+            - "| sh~"
+            - "| sh^"
+            - "| sh#"
           command_matches:
             - "**| sh"
             - "xxd -r *"
