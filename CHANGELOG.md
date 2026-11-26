@@ -27,31 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the base profile keeps its own rules and updates. A copy of `ci.yaml`
   you placed in your policy directory is not changed by upgrades; replace it
   with `standard.yaml` plus the overlay. See the CI/Headless Agents guide.
-- **Guard asks less often for routine project commands** — the managed
-  `guard.yaml` that `rampart protect` installs no longer asks before running a
-  script file (`python3 app.py`, `node index.js`), package scripts and lockfile
-  installs (`npm run`, `npm test`, `npm ci`, bare `npm install`, `pnpm`,
-  `yarn`), `make`, `pip install -r <file>.txt` or `pip install -e .`, read-only
-  `docker compose` commands (`ps`, `logs`, `config`, `build`, and similar), or
-  `git push [-u] origin <branch>`. It still asks before inline code (`python3
-  -c`, `node -e`, `bash -c`, any interpreter flag or stdin), remote package
-  runners (`npx`, `npm exec`, `pnpm dlx`, `yarn dlx`, `npm create`), installing
-  a package by name, `docker compose` commands that run, create, or remove
-  containers, and pushes that force, delete, tag, mirror, or target `main`,
-  `master`, `release/*`, `release-*`, or `HEAD`, as well as bare and
-  remote-only pushes. Direct external `curl` and `wget` now ask instead of
-  being denied; downloads piped into a shell, credential uploads, and
-  exfiltration domains stay denied by the base profile, and the OpenClaw
-  profile still denies external `curl` and `wget` in favor of `web_fetch`.
-  Upgrades refresh an unmodified managed `guard.yaml`; a modified copy is
-  preserved. The `rampart verify` network canary now sends a credential-file
-  upload, which stays denied, instead of a plain external request.
 
 ### Fixed
 
 - Pipes into commands whose names start with `sh`, such as `sha256sum`,
   `shasum`, `shuf`, and `shred`, are no longer denied as obfuscated execution
-  by the standard profile. Pipes into `sh` and `bash` are still denied.
+  by the standard profile. Every `| sh` and `| bash` form the profile denied
+  before is still denied.
 
 - `rampart mcp` now sends `ask` and `require_approval` decisions in enforce
   mode to the running `rampart serve` approval queue, using the same client as
