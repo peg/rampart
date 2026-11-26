@@ -13,10 +13,66 @@ policies:
     match:
       tool: ["exec"]
     rules:
+      # Pushes that rewrite history, delete refs, publish tags, or target a
+      # protected branch always ask, whatever the remote.
+      - action: ask
+        when:
+          command_matches:
+            - "git push** -f"
+            - "git push** -f **"
+            - "git push** -uf**"
+            - "git push** -fu**"
+            - "git push** --force**"
+            - "git push** +**"
+            - "git push** :**"
+            - "git push** -d"
+            - "git push** -d **"
+            - "git push** --delete**"
+            - "git push** --prune**"
+            - "git push** --mirror**"
+            - "git push** --all**"
+            - "git push** --tags**"
+            - "git push** --follow-tags**"
+            - "git push** --receive-pack**"
+            - "git push** --exec**"
+            - "git push** tag **"
+            - "git push** refs/tags/**"
+            - "git push** v[0-9]**"
+            - "git push** HEAD"
+            - "git push** HEAD **"
+            - "git push** main"
+            - "git push** main **"
+            - "git push**:main"
+            - "git push**:main **"
+            - "git push**/main"
+            - "git push**/main **"
+            - "git push** master"
+            - "git push** master **"
+            - "git push**:master"
+            - "git push**:master **"
+            - "git push**/master"
+            - "git push**/master **"
+            - "git push** release/**"
+            - "git push**:release/**"
+            - "git push**/release/**"
+            - "git push** release-**"
+            - "git push**:release-**"
+        message: "This push rewrites history, deletes or tags refs, or targets a protected branch — approve it before the agent continues"
+      # Any other push asks unless it names origin and a branch explicitly
+      # (git push [-u] origin <branch>). Bare or remote-only pushes depend on
+      # the current branch and upstream, so they still ask.
       - action: ask
         when:
           command_matches:
             - "git push*"
+          command_not_matches:
+            - "git push origin *"
+            - "git push -u origin *"
+            - "git push --set-upstream origin *"
+        message: "This action changes an external system — approve it before the agent continues"
+      - action: ask
+        when:
+          command_matches:
             - "gh pr create*"
             - "gh pr merge*"
             - "gh issue create*"
@@ -96,12 +152,12 @@ policies:
         message: "Credential and Rampart authority files cannot be read through shell execution"
 
   - name: guard-external-network-exec
-    description: "Block direct external curl and wget so network access stays on policy-aware tools"
+    description: "Require approval for direct external curl and wget; downloads piped into a shell stay denied by the base profile"
     priority: 10
     match:
       tool: ["exec"]
     rules:
-      - action: deny
+      - action: ask
         when:
           command_matches:
             - "curl **"
@@ -114,10 +170,14 @@ policies:
             - "wget http://localhost**"
             - "wget https://localhost**"
             - "wget http://127.0.0.1**"
-        message: "Direct external network commands are blocked — use policy-aware fetch tools"
+        message: "This command contacts an external host — approve it before the agent continues"
 
+  # Routine project commands pass: running a script file (python3 app.py,
+  # node index.js), package scripts (npm run/test/ci, pnpm, yarn), make, and
+  # installs from the lockfile or a requirements file. Inline code, remote
+  # package runners, and installing a package by name still ask.
   - name: guard-opaque-execution
-    description: "Require approval for interpreters, package runners, build scripts, and broad orchestration commands"
+    description: "Require approval for inline code, remote package runners, new package installs, and container or cluster commands"
     priority: 20
     match:
       tool: ["exec"]
@@ -125,27 +185,104 @@ policies:
       - action: ask
         when:
           command_matches:
-            - "node **"
-            - "python **"
-            - "python3 **"
-            - "npm **"
-            - "npx **"
-            - "pnpm **"
-            - "yarn **"
-            - "pip **"
-            - "pip3 **"
-            - "make"
-            - "make **"
+            # Interpreter flags (-c, -e, -m, -r, --import, ...) and stdin
+            # input. A script file as the first argument passes.
+            - "python -*"
+            - "python <*"
+            - "python3 -*"
+            - "python3 <*"
+            - "node -*"
+            - "node <*"
             - "bash -c **"
             - "bash -lc **"
             - "sh -c **"
             - "sh -lc **"
             - "zsh -c **"
             - "zsh -lc **"
-            - "docker compose**"
-            - "docker-compose**"
+            # Remote package runners and project generators.
+            - "npx"
+            - "npx *"
+            - "npm exec*"
+            - "npm x"
+            - "npm x *"
+            - "npm create*"
+            - "npm init *"
+            - "pnpm dlx*"
+            - "pnpm create*"
+            - "yarn dlx*"
+            - "yarn create*"
+            # Installing a package by name (npm accepts these install aliases).
+            - "npm install *"
+            - "npm i *"
+            - "npm in *"
+            - "npm ins *"
+            - "npm inst *"
+            - "npm insta *"
+            - "npm instal *"
+            - "npm isnt *"
+            - "npm isnta *"
+            - "npm isntal *"
+            - "npm isntall *"
+            - "npm add *"
+            - "npm install-test *"
+            - "npm it *"
+            - "pnpm add*"
+            - "pnpm install *"
+            - "pnpm i *"
+            - "yarn add*"
+            - "yarn global*"
+            # Options before the subcommand hide which subcommand runs.
+            - "npm -*"
+            - "pnpm -*"
+            - "yarn -*"
             - "kubectl apply**"
             - "kubectl config**"
+        message: "This command can conceal arbitrary code or external side effects — approval required"
+      # pip installs ask unless they install from a requirements file or the
+      # current project.
+      - action: ask
+        when:
+          command_matches:
+            - "pip install*"
+            - "pip3 install*"
+            - "pip -*"
+            - "pip3 -*"
+          command_not_matches:
+            - "pip install -r *.txt"
+            - "pip install -r */*.txt"
+            - "pip install -e ."
+            - "pip install ."
+            - "pip3 install -r *.txt"
+            - "pip3 install -r */*.txt"
+            - "pip3 install -e ."
+            - "pip3 install ."
+        message: "This command installs a package by name — approval required"
+      # Compose commands that only read state pass; anything that runs,
+      # creates, or removes containers asks.
+      - action: ask
+        when:
+          command_matches:
+            - "docker compose**"
+            - "docker-compose**"
+          command_not_matches:
+            - "docker compose ps*"
+            - "docker compose logs*"
+            - "docker compose config*"
+            - "docker compose images*"
+            - "docker compose ls*"
+            - "docker compose top*"
+            - "docker compose version*"
+            - "docker compose port*"
+            - "docker compose build*"
+            - "docker-compose ps*"
+            - "docker-compose logs*"
+            - "docker-compose config*"
+            - "docker-compose images*"
+            - "docker-compose ls*"
+            - "docker-compose top*"
+            - "docker-compose version*"
+            - "docker-compose port*"
+            - "docker-compose build*"
         message: "This command can conceal arbitrary code or external side effects — approval required"
 
   - name: guard-message-consequences
