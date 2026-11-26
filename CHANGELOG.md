@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.1] - 2026-11-26
+
+### Security
+
+- **Pipes into a shell stay denied** — the standard profile's pipe-to-shell
+  rule now denies a pipe into any word that starts with `sh` unless the next
+  character can only continue a plain command name: a letter, digit, `_`, or
+  `-`. 1.11.0 listed the denied characters instead and missed some forms the
+  shell can still resolve to `sh`. Every form 1.10.0 denied is denied again,
+  apart from pipes into commands such as `sha256sum`, `shasum`, `shuf`, and
+  `shred`.
+
 ## [1.11.0] - 2026-11-25
 
 ### Security
@@ -30,12 +42,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   you placed in your policy directory is not changed by upgrades; replace it
   with `standard.yaml` plus the overlay. See the CI/Headless Agents guide.
 
+### Removed
+
+- `policies/demo.yaml`, which was never embedded in the binary and could not
+  be installed by name.
+
 ### Fixed
 
 - Pipes into commands whose names start with `sh`, such as `sha256sum`,
   `shasum`, `shuf`, and `shred`, are no longer denied as obfuscated execution
-  by the standard profile. Every `| sh` and `| bash` form the profile denied
-  before is still denied.
+  by the standard profile. 1.11.0 still allowed some other pipes into `sh`
+  that 1.10.0 denied; 1.11.1 denies them again.
 
 - `rampart mcp` now sends `ask` and `require_approval` decisions in enforce
   mode to the running `rampart serve` approval queue, using the same client as
