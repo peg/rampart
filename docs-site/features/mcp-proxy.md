@@ -34,8 +34,13 @@ rampart mcp --mode monitor -- npx @modelcontextprotocol/server-filesystem .
 
     The MCP client owns its own request timeout and may abandon the call
     before a reviewer responds. While one call waits, the proxy does not
-    forward later client messages. Prefer explicit operator-reviewed `allow`
-    or `deny` rules for frequent operations.
+    forward later client messages, including a cancellation of that call. If
+    a reviewer approves after the client gave up, the proxy still forwards the
+    original call, and the cancellation reaches the server only afterward, so
+    deny requests the client no longer needs. If the five-minute wait ends
+    first, the call is refused and its request can remain in the queue;
+    approving it afterward runs nothing. Prefer explicit operator-reviewed
+    `allow` or `deny` rules for frequent operations.
 
 ## MCP Client Configuration
 
@@ -67,7 +72,7 @@ server: "MCP Server" {shape: oval}
 error: "Error Response" {
   style.fill: "#2d1b1b"; style.stroke: "#da3633"; style.font-color: "#f85149"; style.border-radius: 6
 }
-approval: "Approval Required\n(fail closed)" {
+approval: "rampart serve\\napproval queue" {
   style.fill: "#2d2508"; style.stroke: "#d29922"; style.font-color: "#d29922"; style.border-radius: 6
 }
 
@@ -76,7 +81,8 @@ rampart -> engine: "evaluate"
 engine -> server: "allow"
 engine -> error: "deny"
 engine -> approval: "ask"
-approval -> error: "no standalone resolver"
+approval -> server: "approved"
+approval -> error: "denied, expired,\\nor unreachable"
 server -> rampart: "response"
 rampart -> client: "response"
 ```

@@ -41,7 +41,7 @@ When a policy action is `ask`, behavior varies by integration:
 | **GitHub Copilot CLI / VS Code** | Native Copilot approval prompt |
 | **Cursor** | External Rampart approval queue; Cursor's generic pre-tool `ask` is not enforced |
 | **Cline** | Hook returns `{"cancel":true}` with approval message (no native ask) |
-| **Standalone MCP proxy** | Proxy blocks, returns JSON-RPC error on deny |
+| **Standalone MCP proxy** | Rampart's external approval queue holds the call; deny or unavailable queue returns a JSON-RPC error |
 | **OpenClaw** | OpenClaw owns the visible approval UI; Rampart plugin supplies policy decisions |
 | **Hermes Agent** | Compatible Hermes installations own the native approval prompt and resume the same call; older or incomplete installs block with upgrade guidance |
 | **Shell Wrapper** | Shim blocks, command appears "hung" until resolved |
