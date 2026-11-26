@@ -96,7 +96,7 @@ installer; binary self-upgrade is intentionally disabled there.
 | | What you get |
 | --- | --- |
 | **Policy before execution** | Match shell, file, network, MCP, messaging, and other host-exposed actions before they run. |
-| **Selective approval** | Prohibited actions are denied and consequential ones go to approval; everything else continues under the agent's own permissions. `rampart protect` also installs Guard rules that ask before inline code, remote package runners, new package installs, risky pushes, external network commands, and deploys, while routine builds, tests, and script runs continue. |
+| **Selective approval** | Prohibited actions are denied and consequential ones go to approval; everything else continues under the agent's own permissions. `rampart protect` also installs Guard rules that ask before package runners, interpreters, `make`, pushes, and deploys. |
 | **Fail-closed ownership** | When Rampart owns a decision and cannot safely classify or persist it, the action does not silently proceed. Where the host decides what happens when a hook fails, the integration docs say so. |
 | **Auditable evidence** | Inspect live decisions, verify installed boundaries, and validate a hash-chained local audit trail. |
 | **Local and model-free by default** | The policy engine is a Go binary. Core enforcement and verification do not require an LLM or provider traffic. |
