@@ -41,6 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restart managed services. The `[version]` argument and the `--yes` and
   `--no-policy-update` flags are gone. `rampart upgrade --no-binary` still
   refreshes unmodified built-in policy profiles; run it after upgrading.
+- **Syslog and CEF audit export** — the `rampart serve --syslog` and `--cef`
+  flags are gone. The JSONL audit log can be forwarded with any log shipper.
+- **`rampart policy sync`** — the git-based policy sync command and its
+  `status` and `stop` subcommands are gone. To share a team policy, distribute
+  the YAML file yourself (for example, a `git pull` into `~/.rampart/policies/`).
+  An existing `~/.rampart/policies/org-sync.yaml` keeps loading as a normal
+  policy file and no longer updates.
+- **Compliance reports** — `rampart report compliance` is gone. `rampart report`
+  (HTML) and `rampart report export` are unchanged.
 - **Experimental external audit witness** — `rampart audit witness` and the
   `--witness-config` and `--require-witness` flags of `rampart audit verify`
   are gone. The local hash-chained audit log and `rampart audit verify` remain.
