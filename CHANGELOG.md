@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ollama launch <agent> [--model <name>] [-- args]`, or `codex --oss` when
   Ollama is not installed.
 
+### Security
+
+- **Privilege wrappers no longer soften deny rules** — deny and ask rules now
+  judge the command that `sudo`, `doas` or `pkexec` runs, so a command denied
+  on its own stays denied behind a privilege wrapper instead of becoming an
+  approval prompt. Allow rules still do not look through a wrapper.
+- **Rampart's approval keys are protected like its tokens** — the standard,
+  guard and OpenClaw profiles deny direct reads of the files that back
+  approvals. The threat model now states that approvals are advisory when the
+  agent runs as the same OS user as Rampart.
+
 ## [1.11.1] - 2026-11-26
 
 ### Security

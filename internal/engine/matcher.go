@@ -1588,6 +1588,9 @@ func unwrapExecutors(tokens []string, restrictive bool) []string {
 		if restrictive && strSlicesEqual(next, tokens) && len(tokens) > 1 && shellWrapperBasename(tokens[0]) == "env" {
 			next = stripPOSIXEnvUtilityMode(tokens, true)
 		}
+		if restrictive && strSlicesEqual(next, tokens) {
+			next = stripPrivilegeWrapper(tokens)
+		}
 		if len(next) > 1 && (shellWrapperBasename(next[0]) == "busybox" || shellWrapperBasename(next[0]) == "toybox") {
 			next = next[1:]
 		}
