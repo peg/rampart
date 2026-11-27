@@ -12,11 +12,11 @@ hide:
 
 <span id="rampart"></span>
 
-# Put your policy into practice
+# Guard your agent, on any model
 
 </div>
 
-<p class="hero-subtitle">Install Rampart, connect a supported agent, and check the boundary before you rely on it.</p>
+<p class="hero-subtitle">Install Rampart, start an agent on a local or hosted model, and check the boundary before you rely on it.</p>
 
 ## Start here
 
@@ -27,6 +27,12 @@ hide:
     Install the CLI, choose a supported integration, and run the first checks.
 
     [Installation](getting-started/installation.md) · [Quick start](getting-started/quickstart.md)
+
+-   :material-laptop:{ .lg .middle } **Run a local model**
+
+    Start Claude Code, Codex or OpenCode on an Ollama model with protection verified first.
+
+    [Local models](integrations/local-models.md) · [OpenCode](integrations/opencode.md)
 
 -   :material-arrow-up-circle:{ .lg .middle } **Upgrade an installation**
 
