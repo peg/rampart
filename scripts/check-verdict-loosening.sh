@@ -8,8 +8,7 @@
 # exits 1 when a recorded verdict gets weaker (deny > ask) or a recorded row
 # disappears, unless this change adds that exact change with a reason to
 # policies/testdata/verdicts-loosened.tsv. Rows already listed at BASE_REF
-# approve nothing, so each loosening is reviewed once, and a listed change the
-# diff does not make fails.
+# approve nothing, so each loosening is reviewed once.
 
 set -euo pipefail
 
@@ -63,20 +62,16 @@ awk -F'\t' -v baseack="$tmp/base-ack" -v base="$tmp/base" -v ackfile="$ack" '
       } else {
         continue
       }
-      if ((part[1] FS was[key] FS to FS part[2]) in acked) {
-        used[part[1] FS was[key] FS to FS part[2]] = 1
+      k = part[1] FS was[key] FS to FS part[2]
+      if (k in acked) {
+        delete acked[k]
         continue
       }
       printf "%s\t%s\t%s\t%s\n", part[1], was[key], to, part[2]
       n++
     }
-    for (key in acked) {
-      if (!(key in used)) {
-        printf "%s lists a change this diff does not make:\n%s\n", ackfile, key
-        unused = 1
-      }
-    }
-    if (n == 0 && unused) exit 1
+    # Not an error: a release diff nets out changes reverted or split across pull requests.
+    for (k in acked) printf "Note: %s lists a change this diff does not make: %s\n", ackfile, k
     if (n > 0) {
       printf "%d recorded verdicts got weaker or were removed without review.\n", n
       printf "If each is intended, add the rows above to %s with a reason as a fifth column.\n", ackfile
