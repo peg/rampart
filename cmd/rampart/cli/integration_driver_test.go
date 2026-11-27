@@ -155,8 +155,8 @@ func TestFindIntegrationDriverResolvesCanonicalIDsAndAliases(t *testing.T) {
 		t.Fatal("experimental Hermes must use explicit setup and static verification without entering verify --all")
 	}
 	opencode, ok := findIntegrationDriver("opencode")
-	if !ok || opencode.AutoProtect || opencode.ServiceRequired || opencode.VerifyTarget != "" || opencode.VerifyChecks != nil || integrationDriverVerificationCommand(opencode) != "rampart doctor" || opencode.SetupCommand == nil {
-		t.Fatal("experimental OpenCode must use explicit setup and static verification without entering verify --all")
+	if !ok || opencode.AutoProtect || opencode.ServiceRequired || opencode.VerifyTarget != "opencode" || opencode.VerifyChecks == nil || opencode.SetupCommand == nil {
+		t.Fatal("experimental OpenCode must use explicit setup with active adapter verification")
 	}
 }
 

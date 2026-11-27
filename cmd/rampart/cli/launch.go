@@ -45,6 +45,7 @@ var launchTargets = map[string]launchTarget{
 		}
 		return "codex", []string{"--oss", "-m", model}
 	}},
+	"opencode": {ollama: "opencode"},
 }
 
 func launchTargetNames() string {

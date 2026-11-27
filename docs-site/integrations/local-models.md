@@ -1,6 +1,6 @@
 ---
 title: Local Models
-description: Start Claude Code or Codex on a local Ollama model with Rampart protection verified first.
+description: Start Claude Code, Codex or OpenCode on a local Ollama model with Rampart protection verified first.
 ---
 
 # Local Models
@@ -13,10 +13,12 @@ agent:
 ```bash
 rampart launch claude --model qwen3-coder
 rampart launch codex --model gpt-oss:20b
+rampart launch opencode --model qwen3-coder
 rampart launch claude --model qwen3-coder -- -p "explain this repo"   # args after -- go to the agent
 ```
 
-Supported agents: `claude` (Claude Code) and `codex`.
+Supported agents: `claude` (Claude Code), `codex`, and `opencode` (Linux and
+macOS; see [OpenCode](opencode.md) for its limits).
 
 ## What it does
 
@@ -30,7 +32,7 @@ Supported agents: `claude` (Claude Code) and `codex`.
 3. **Starts the agent.** With [Ollama](https://ollama.com) on `PATH`, launch
    runs `ollama launch <agent> [--model <name>] [-- args]`, which points the
    agent at your local Ollama server. Without Ollama, Codex falls back to
-   `codex --oss [-m <name>]`; Claude Code requires Ollama.
+   `codex --oss [-m <name>]`; Claude Code and OpenCode require Ollama.
 
 The agent's exit status becomes `rampart launch`'s exit status.
 
