@@ -151,7 +151,6 @@ nav:
     - Prompt Injection: guides/prompt-injection.md
     - Production Guard: guides/production-guard.md
     - CI/Headless Agents: guides/ci-headless.md
-    - Community Policies: community-policies.md
   - Operate:
     - Configuration: getting-started/configuration.md
     - Approval Dashboard: features/dashboard.md
@@ -162,9 +161,7 @@ nav:
     - Troubleshooting: getting-started/troubleshooting.md
     - Uninstall: getting-started/uninstall.md
   - Advanced:
-    - Policy Registry: guides/policy-registry.md
     - Agent Teams: features/agent-teams.md
-    - External Witnessing (Experimental): features/external-witness.md
     - Webhooks: features/webhooks.md
   - Reference:
     - CLI Commands: reference/cli-commands.md

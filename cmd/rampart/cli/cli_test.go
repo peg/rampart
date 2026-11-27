@@ -107,7 +107,6 @@ func TestInitExistingFilesHelpfulGuidance(t *testing.T) {
 	assert.Contains(t, stdout, "Config and policies already exist.")
 	assert.Contains(t, stdout, "--force overwrites")
 	assert.Contains(t, stdout, "custom.yaml")
-	assert.Contains(t, stdout, "rampart policy fetch standard --force")
 	assert.Contains(t, stdout, "rampart init --force")
 }
 

@@ -36,7 +36,6 @@ Rampart does **not** claim to stop a skilled human who has already compromised y
 │  • Rampart binary                            │
 │  • rampart serve process                     │
 │  • Audit log directory (when user-separated) │
-│  • Policy registry sources (when verified)   │
 │  • Approval keys and tokens (when user-sep.) │
 ├─────────────────────────────────────────────┤
 │ Untrusted                                    │
@@ -44,7 +43,6 @@ Rampart does **not** claim to stop a skilled human who has already compromised y
 │  • Agent-generated commands                  │
 │  • MCP tool call parameters                  │
 │  • Project-local .rampart/policy.yaml files  │
-│  • Community policies (verified by SHA-256)  │
 └─────────────────────────────────────────────┘
 ```
 
@@ -235,15 +233,6 @@ Project-local `.rampart/policy.yaml` files are loaded automatically when present
 - Set `RAMPART_NO_PROJECT_POLICY=1` to skip project policy loading in untrusted repos
 - Project policy denials are prefixed with `[Project Policy]` for visibility
 
-### 11. Community Policy Supply Chain
-
-`rampart policy fetch` downloads policies from the registry with SHA-256 verification. However, the registry itself is hosted in the main repo — a compromise of the repository could introduce malicious policies.
-
-**Mitigations:**
-- SHA-256 verification prevents modification after registry publication
-- `--dry-run` flag allows inspection before installation
-- Policy linting (`rampart policy lint`) validates syntax and flags suspicious patterns
-
 ## Integration-Specific Notes
 
 | Integration | Exec Coverage | File Coverage | Response Scanning | Cascade |
@@ -303,7 +292,7 @@ use user separation wherever an approval must be a hard boundary.
 
 **Best practice:** Restrict sudo to the specific commands your agent needs (e.g., `apt`, `systemctl`, `k3s`) rather than granting blanket access. This limits the blast radius regardless of Rampart.
 
-### 12. API Self-Approval
+### 11. API Self-Approval
 
 Rampart now supports **per-agent tokens** with explicit scopes. Eval-only tokens can submit tool calls but cannot approve requests, reload policy, or mutate rules. That closes one big part of the old self-approval story.
 
@@ -321,7 +310,7 @@ The remaining risk is narrower but still real: in same-user deployments, any int
 
 **Current status:** Better than before, not magically solved. Scoped per-agent tokens reduce the blast radius, but same-user deployments with readable admin tokens are still not a hard security boundary.
 
-### 13. Temporal Allow Expiry
+### 12. Temporal Allow Expiry
 
 v0.7.4 introduced temporal allows (`--for`, `--once`). Expired rules are
 **skipped during evaluation**, so an expired entry cannot authorize a call.

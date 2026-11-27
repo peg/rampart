@@ -1,11 +1,10 @@
 # Community Policies
 
-Ready-to-use policy files for common toolchains. Install them with the CLI:
+Ready-to-use policy files for common toolchains. To use one, copy it into
+your policy directory:
 
 ```bash
-rampart policy search kubernetes       # find policies
-rampart policy show kubernetes         # preview before installing
-rampart policy fetch kubernetes        # install to ~/.rampart/policies/
+cp policies/community/kubernetes.yaml ~/.rampart/policies/
 ```
 
 Rampart auto-loads all `*.yaml` files in `~/.rampart/policies/` — no merge step needed.
@@ -22,7 +21,7 @@ Rampart auto-loads all `*.yaml` files in `~/.rampart/policies/` — no merge ste
 
 ## Contributing
 
-PRs welcome. See [docs/community-policies.md](../../docs/community-policies.md) for full contributor workflow.
+PRs welcome.
 
 Every community policy must include metadata headers:
 

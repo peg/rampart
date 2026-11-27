@@ -32,7 +32,6 @@ import (
 	"time"
 
 	"github.com/peg/rampart/internal/build"
-	"github.com/peg/rampart/internal/detect"
 	"github.com/peg/rampart/internal/engine"
 	ochardening "github.com/peg/rampart/internal/openclaw/hardening"
 	hermesplugin "github.com/peg/rampart/internal/plugin/hermes"
@@ -356,18 +355,6 @@ func runDoctor(w io.Writer, jsonOut bool) error {
 	// OpenClaw so optional Hermes gaps do not obscure OpenClaw readiness.
 	if n := doctorHermesIntegration(emit, serveURL, token); n > 0 {
 		warnings += n
-	}
-
-	// 18. Proactive policy suggestions (informational only)
-	if detectResult, detectErr := detect.Environment(); detectErr == nil {
-		client := newPolicyRegistryClient()
-		if manifest, fetchErr := client.loadManifest(context.Background(), false); fetchErr == nil {
-			suggestions := suggestPolicies(detectResult, manifest)
-			if len(suggestions) > 0 {
-				desc := describeSuggestions(suggestions)
-				emit("Policy suggestions", "info", desc)
-			}
-		}
 	}
 
 	if collect {
