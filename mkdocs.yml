@@ -170,7 +170,6 @@ nav:
     - Webhooks: features/webhooks.md
     - SIEM Integration: features/siem-integration.md
     - Wazuh Integration: guides/wazuh-integration.md
-    - Security Posture: guides/compliance.md
   - Reference:
     - CLI Commands: reference/cli-commands.md
     - API Reference: reference/api-reference.md
