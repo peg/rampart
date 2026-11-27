@@ -279,9 +279,9 @@ integrations:
       timeout: deny
     approval: none
     verification:
-      level: static
-      command: rampart doctor
-      safe_canaries: false
+      level: active
+      command: rampart verify opencode
+      safe_canaries: true
       host_boundary: false
     evidence:
       - path: cmd/rampart/cli/hook_opencode_test.go

@@ -1391,3 +1391,26 @@ func readJSONLLines(t *testing.T, path string) []string {
 	require.NoError(t, s.Err())
 	return lines
 }
+
+// WithRotateSize shrinks the JSONL rotation threshold so tests can exercise
+// rotation without writing production-sized files.
+func WithRotateSize(size int64) SinkOption {
+	return func(cfg *sinkConfig) {
+		if size > 0 {
+			cfg.rotateSize = size
+		}
+	}
+}
+
+// WithAnchorInterval changes how often chain anchors are written.
+func WithAnchorInterval(events int) SinkOption {
+	return func(cfg *sinkConfig) {
+		if events > 0 {
+			cfg.anchorInterval = events
+		}
+	}
+}
+
+func (s *JSONLSink) filePath() string {
+	return filepath.Join(s.dir, s.currentFile)
+}

@@ -40,7 +40,7 @@ func classifyNativeMCPTool(hostToolName string, params map[string]any) string {
 		if candidate == "" {
 			continue
 		}
-		mapped := mcppolicy.MapToolName(candidate, nil)
+		mapped := mcppolicy.MapToolName(candidate)
 		if rank := nativeMCPClassificationRank(mapped); rank > selectedRank {
 			selected = mapped
 			selectedRank = rank

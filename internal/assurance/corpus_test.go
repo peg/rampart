@@ -78,7 +78,7 @@ func TestAdversarialCorpus(t *testing.T) {
 				t.Fatalf("policy set %q: write profile %q: %v", name, profile, err)
 			}
 		}
-		eng, err := engine.New(engine.NewDirStore(dir, nil), nil)
+		eng, err := engine.New(engine.NewMultiStore("", dir, nil), nil)
 		if err != nil {
 			t.Fatalf("policy set %q: create engine: %v", name, err)
 		}

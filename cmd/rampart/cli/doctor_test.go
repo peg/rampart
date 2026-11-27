@@ -1278,31 +1278,6 @@ func doctorResultText(results []checkResult) string {
 	return b.String()
 }
 
-func TestNormalizedReleaseVersionAcceptance(t *testing.T) {
-	tests := []struct {
-		version string
-		want    bool
-	}{
-		{"v0.9.22", true},
-		{"0.9.22", true},
-		{"v0.9.22-rc.1", true},
-		{"v0.9.22-0.20260503052103-a72c3452fe38", false},
-		{"v1.0.0-rc.1.0.20260503052103-a72c3452fe38", false},
-		{"v0.9.22-staging-47fa0cf", false},
-		{"v0.9.22-33-g47fa0cf", false},
-		{"dev", false},
-		{"unknown", false},
-		{"v0.0.0-20260406041825-7384556ab7f6+dirty", false},
-		{"v0.0.0-20260406041825-7384556ab7f6", false},
-	}
-	for _, tt := range tests {
-		_, got := normalizedReleaseVersion(tt.version)
-		if got != tt.want {
-			t.Fatalf("normalizedReleaseVersion(%q) accepted = %v, want %v", tt.version, got, tt.want)
-		}
-	}
-}
-
 func TestIsNewerReleaseVersion(t *testing.T) {
 	tests := []struct {
 		current string

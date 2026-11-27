@@ -52,17 +52,6 @@ type ToolsCallParams struct {
 	Arguments map[string]any `json:"arguments"`
 }
 
-// NormalizedID returns a stable key for request/response ID tracking. It
-// distinguishes JSON strings from JSON numbers and normalizes equivalent JSON
-// spellings to the same value. Invalid IDs return the empty string.
-func NormalizedID(id json.RawMessage) string {
-	key, err := normalizedID(id)
-	if err != nil {
-		return ""
-	}
-	return key
-}
-
 // HasID reports whether the JSON-RPC message has a non-empty id field.
 func HasID(id json.RawMessage) bool {
 	return len(bytes.TrimSpace(id)) > 0

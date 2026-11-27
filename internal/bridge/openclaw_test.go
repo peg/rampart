@@ -452,7 +452,7 @@ func TestDiscoverGatewayConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(configPath, data, 0o644))
 
-	url, token, err := ReadGatewayConfig(configPath)
+	url, token, _, err := ReadGatewayConfigForBridge(configPath)
 	require.NoError(t, err)
 	assert.Equal(t, "ws://127.0.0.1:18789/ws", url)
 	assert.Equal(t, "test-gateway-token-123", token)
@@ -474,7 +474,7 @@ func TestDiscoverGatewayConfigDefaultURL(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(configPath, data, 0o644))
 
-	url, token, err := ReadGatewayConfig(configPath)
+	url, token, _, err := ReadGatewayConfigForBridge(configPath)
 	require.NoError(t, err)
 	assert.Equal(t, "ws://127.0.0.1:18789/ws", url)
 	assert.Equal(t, "tok", token)
@@ -555,13 +555,13 @@ func TestDiscoverGatewayConfigMissingToken(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(configPath, data, 0o644))
 
-	_, _, err = ReadGatewayConfig(configPath)
+	_, _, _, err = ReadGatewayConfigForBridge(configPath)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no gateway.auth.token")
 }
 
 func TestDiscoverGatewayConfigMissingFile(t *testing.T) {
-	_, _, err := ReadGatewayConfig("/nonexistent/openclaw.json")
+	_, _, _, err := ReadGatewayConfigForBridge("/nonexistent/openclaw.json")
 	assert.Error(t, err)
 }
 

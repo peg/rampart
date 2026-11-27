@@ -285,7 +285,7 @@ v0.6.6 added Windows policy parity. Key differences from Linux/macOS:
 
 - **No LD_PRELOAD or wrap mode** — `rampart preload` and `rampart wrap` are not available. Use native hooks, the HTTP API, or the MCP proxy instead.
 - **No POSIX file permissions** — `chmod 0600` is not enforced by the OS. Rampart protects its persisted token with an owner-only Windows DACL derived from the current process SID; other sensitive files need explicit Windows ACL hardening.
-- **Binary upgrade** — in-process self-upgrade is intentionally disabled on Windows. Rerun the checksum-verifying PowerShell installer to replace `rampart.exe`; the Windows binary and installer are not currently code-signed. `rampart upgrade --no-binary` remains available for policy-only refreshes.
+- **Binary upgrade** — Rampart has no in-process self-upgrade. Rerun the checksum-verifying PowerShell installer to replace `rampart.exe`; the Windows binary and installer are not currently code-signed. `rampart upgrade --no-binary` refreshes unmodified built-in policies.
 - **Path separators** — Rampart normalizes backslashes to forward slashes internally for consistent policy matching.
 - **Service management** — automatic service installation is currently supported on Linux and macOS only. On Windows, run `rampart serve` directly or configure Task Scheduler/NSSM.
 

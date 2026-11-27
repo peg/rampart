@@ -596,12 +596,6 @@ func (s *Store) createLocked(call engine.ToolCall, decision engine.Decision, own
 	return req, nil
 }
 
-// Resolve approves or denies a pending request.
-// Returns an error if the request doesn't exist or is already resolved.
-func (s *Store) Resolve(id string, approved bool, resolvedBy string) error {
-	return s.ResolveBeforePublish(id, approved, resolvedBy, nil)
-}
-
 // ResolveBeforePublish resolves a pending request, invoking beforePublish
 // after the durable resolution journal entry is written but before any
 // authorization is published or any waiter is woken. A non-nil callback is
@@ -799,19 +793,6 @@ func (s *Store) MarkPersisted(id string) error {
 	}
 	req.Persisted = true
 	return nil
-}
-
-// ConsumeApproved atomically consumes an allow-once approval for the exact
-// host-identified tool call. The grant is bound to agent identity and depth,
-// session, run ID, tool-call ID, tool name, working directory, params, and
-// input by replayKey. A successful grant can never authorize a second retry.
-//
-// When persistence is enabled, an exclusive consumed marker makes the
-// operation one-shot even across concurrently running Store instances. The
-// marker is intentionally retained after consumption: failure to clean up
-// must fail closed, never recreate authorization.
-func (s *Store) ConsumeApproved(call engine.ToolCall) (*ConsumedApproval, bool, error) {
-	return s.ConsumeApprovedFor(call, "")
 }
 
 // ConsumeApprovedFor binds exact replay to an opaque caller-owned scope.
@@ -1098,34 +1079,6 @@ func autoApproveScopeFor(call engine.ToolCall, ownerScope string) (autoApproveSc
 	return scope, scope.Agent != "" && scope.Session != "" && scope.RunID != ""
 }
 
-// AutoApproveRun marks one authenticated agent/session/run scope for
-// auto-approval until the TTL elapses, but only when that scope has no pending
-// approvals. It returns false when the identity is incomplete, the TTL is
-// invalid, or a pending request must be resolved first.
-func (s *Store) AutoApproveRun(call engine.ToolCall, ttl time.Duration) bool {
-	_, installed := s.AutoApproveRunIfNoPending(call, ttl)
-	return installed
-}
-
-// AutoApproveRunIfNoPending installs one run-scoped auto-approval entry only
-// when no pending approval currently exists for that exact scope. When one or
-// more requests raced the bulk operation, it returns sorted snapshots for the
-// caller to durably resolve and audit before retrying publication.
-//
-// Used together with CreateOrAutoApproved, this closes both sides of the
-// check/create race: either creation wins and must be resolved first, or cache
-// publication wins and the creator observes auto-approved state.
-func (s *Store) AutoApproveRunIfNoPending(call engine.ToolCall, ttl time.Duration) ([]*Request, bool) {
-	return s.autoApproveRunIfNoPending(call, "", ttl)
-}
-
-// AutoApproveRunIfNoPendingForRequest installs only the owner scope carried by
-// a request the operator explicitly selected for bulk resolution.
-func (s *Store) AutoApproveRunIfNoPendingForRequest(call engine.ToolCall, source *Request, ttl time.Duration) ([]*Request, bool) {
-	pending, _, installed, _ := s.AutoApproveRunBeforePublishForRequest(call, source, ttl, nil)
-	return pending, installed
-}
-
 // AutoApproveRunBeforePublishForRunScopeSnapshot publishes future authority
 // only when every mutation since BeginRunScopeSnapshot is accounted for. New
 // pending requests are returned for caller review/audit; any denial, expiry,
@@ -1220,87 +1173,14 @@ func (s *Store) AutoApproveRunBeforePublishForRunScopeSnapshot(
 	return nil, expiresAt, true, nil
 }
 
-// AutoApproveRunBeforePublishForRequest installs only the owner scope carried
-// by a request the operator explicitly selected. The callback runs under the
-// Store lock before the cache entry is installed, so callers can require a
-// durable audit record without opening a create/publication race.
-func (s *Store) AutoApproveRunBeforePublishForRequest(
-	call engine.ToolCall,
-	source *Request,
-	ttl time.Duration,
-	beforePublish func(time.Time) error,
-) ([]*Request, time.Time, bool, error) {
-	if source == nil || !source.hasRunScope {
-		return nil, time.Time{}, false, nil
-	}
-	return s.autoApproveRunBeforePublish(call, source.ownerScope, ttl, beforePublish)
-}
-
-func (s *Store) autoApproveRunIfNoPending(call engine.ToolCall, ownerScope string, ttl time.Duration) ([]*Request, bool) {
-	pending, _, installed, _ := s.autoApproveRunBeforePublish(call, ownerScope, ttl, nil)
-	return pending, installed
-}
-
-func (s *Store) autoApproveRunBeforePublish(
-	call engine.ToolCall,
-	ownerScope string,
-	ttl time.Duration,
-	beforePublish func(time.Time) error,
-) ([]*Request, time.Time, bool, error) {
-	scope, ok := autoApproveScopeFor(call, ownerScope)
-	if !ok || ttl <= 0 {
-		return nil, time.Time{}, false, nil
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.activeRunScopes[scope] != nil {
-		return nil, time.Time{}, false, fmt.Errorf("approval: run-scope authorization is already in progress")
-	}
-
-	pending := make([]*Request, 0)
-	for _, req := range s.pending {
-		if req.Status != StatusPending || !req.hasRunScope || req.runScope != scope {
-			continue
-		}
-		cp := *req
-		cp.Call = req.reviewCopy()
-		pending = append(pending, &cp)
-	}
-	if len(pending) > 0 {
-		sort.Slice(pending, func(i, j int) bool {
-			if pending[i].CreatedAt.Equal(pending[j].CreatedAt) {
-				return pending[i].ID < pending[j].ID
-			}
-			return pending[i].CreatedAt.Before(pending[j].CreatedAt)
-		})
-		return pending, time.Time{}, false, nil
-	}
-
-	expiresAt := time.Now().Add(ttl)
-	if beforePublish != nil {
-		if err := beforePublish(expiresAt); err != nil {
-			return nil, time.Time{}, false, fmt.Errorf("approval: required run-grant pre-publication step: %w", err)
-		}
-	}
-	if !time.Now().Before(expiresAt) {
-		return nil, time.Time{}, false, fmt.Errorf("approval: run grant expired before publication")
-	}
-	s.autoApproveRuns[scope] = expiresAt
-	return nil, expiresAt, true, nil
-}
-
 // IsAutoApproved reports whether this exact agent/session/run scope has been
-// bulk-approved and the approval has not yet expired.
+// bulk-approved and the approval has not yet expired. Production checks the
+// cache atomically through CreateOrAutoApproved; this read-only view exists
+// for tests that must observe grant state without enqueueing a request.
 func (s *Store) IsAutoApproved(call engine.ToolCall) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.isAutoApprovedLocked(call, "")
-}
-
-// isAutoApprovedLocked checks one call. The caller must hold s.mu.
-func (s *Store) isAutoApprovedLocked(call engine.ToolCall, ownerScope string) bool {
-	_, ok := s.autoApprovalExpiryLocked(call, ownerScope)
+	_, ok := s.autoApprovalExpiryLocked(call, "")
 	return ok
 }
 
