@@ -92,17 +92,16 @@ disconnected events, and overlapping epochs fail verification.
 Audit records are capped at 2 MiB. If JSON escaping or decision guidance would exceed that limit, Rampart replaces large fields with their original encoded size and SHA-256 digest, then computes the event hash over the compacted record. This preserves a bounded, correlatable decision record instead of silently dropping the audit event.
 
 Rampart redacts common credential patterns, sensitive-key values, and encoded
-command copies before audit events reach local JSONL, syslog, or CEF sinks.
+command copies before audit events reach the local JSONL sink.
 Redaction is defense in depth rather than a data-classification guarantee:
 unusual secret formats or sensitive source text can still appear in request
 content, so operators must continue to protect audit storage and exports.
 
 **Mitigations:**
 - Run `rampart serve` as a [separate user](https://docs.rampart.sh/deployment/user-separation/) so the agent can't access audit files
-- Configure SIEM export (`--syslog` or `--cef`) and a separately controlled
-  collector to retain received events outside the agent's write authority.
-  Export is best effort; the transport and collector determine delivery and
-  retention guarantees.
+- Forward the JSONL audit log with a log shipper to a separately controlled
+  collector to retain events outside the agent's write authority. The shipper
+  and collector determine delivery and retention guarantees.
 - Webhook notifications can retain selected alerts in a separate system;
   they are not a complete audit trail.
 - `audit-anchor.json` is a local checkpoint beside the audit files, updated
@@ -112,8 +111,7 @@ content, so operators must continue to protect audit storage and exports.
 
 For independently retained evidence, configure collection, access control,
 and retention outside the agent's authority. Rampart's local verifier does
-not retrieve or validate remote SIEM evidence. See the
-[SIEM integration guide](https://docs.rampart.sh/features/siem-integration/).
+not retrieve or validate remote evidence.
 
 ### 3. Token Exposure in Wrap Mode
 

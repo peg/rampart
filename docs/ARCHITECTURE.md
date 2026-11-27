@@ -27,8 +27,7 @@ hot path is benchmarked in this repository; results vary by policy set and host.
 
 **Local-first by default.** Rampart has no telemetry or mandatory cloud
 dependency. Data leaves the machine only when the operator explicitly
-configures a notification, decision webhook, semantic verifier, or remote SIEM
-destination.
+configures a notification, decision webhook, or semantic verifier.
 
 **Deny-wins evaluation.** If any policy says deny, the call is denied. No ambiguity, no override. Within a priority level, first match wins.
 
