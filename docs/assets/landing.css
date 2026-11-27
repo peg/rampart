@@ -1035,3 +1035,9 @@ h1 .final-line { white-space: nowrap; }
   .workflow-steps li { display: block; }
   .workflow-steps .command-block { min-height: 100px; }
 }
+.watch-sample { margin: 35px 0 0; padding: 22px 24px; background: #151214; overflow-x: auto; font: .875rem/1.9 var(--mono); color: #c6bbb5; }
+.watch-sample b { font-weight: 500; }
+.watch-sample .ok { color: #8fc9a3; }
+.watch-sample .no { color: var(--pink-soft); }
+.watch-sample .ask { color: #e0c48a; }
+.workflow-note code { font: .8125rem var(--mono); color: var(--pink-soft); }
