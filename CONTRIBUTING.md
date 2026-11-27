@@ -96,7 +96,9 @@ credentials.
 
 ## Docs
 
-User docs live in `docs-site/` and build with MkDocs:
+User docs live in `docs-site/` and build with MkDocs. The build also needs
+[D2](https://d2lang.com) on your `PATH` for the architecture diagram; use the
+version pinned in [`.github/workflows/docs.yml`](.github/workflows/docs.yml).
 
 ```bash
 python -m pip install -r docs-requirements.txt

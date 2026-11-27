@@ -251,6 +251,9 @@ func TestLoadOrCreateKeyWriteError(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping write-permission test on Windows (chmod 0500 not enforced)")
 	}
+	if os.Geteuid() == 0 {
+		t.Skip("skipping write-permission test as root (root ignores directory permissions)")
+	}
 	t.Parallel()
 
 	tempDir := t.TempDir()

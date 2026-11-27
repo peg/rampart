@@ -49,7 +49,7 @@ drift without replacing unrelated settings.
 | `webfetch` | `fetch` | Requested URL; no arbitrary network or subprocess inspection. |
 | `question`, `plan_exit` | `interact` | Host interaction. |
 | `todowrite` | `process` | Host todo state. |
-| `glob`, `grep`, `list` | `read` | The directory searched (the project directory when no `path` is given). Files found inside it are not checked one by one. |
+| `glob`, `grep`, `list` | `read` | The directory searched (the project directory when no `path` is given). Files found inside it are not checked one by one. `grep` returns file contents, so it is refused outside the project directory and at or above the home directory. |
 
 Unmapped tool names, including additional custom and MCP tools, plus `task`, `skill`, code-mode `execute`, `lsp`, and `websearch` refuse
 execution. Delegated agents and MCP execution are also unavailable

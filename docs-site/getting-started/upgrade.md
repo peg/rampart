@@ -199,6 +199,20 @@ Check the [CHANGELOG](https://github.com/peg/rampart/blob/main/CHANGELOG.md) bef
 
 Notable past changes:
 
+- **v1.12.0**: Run `rampart doctor` right after upgrading. A policy file that
+  still uses `action: webhook` or a rule-level `webhook:` block no longer
+  loads, and while any policy file fails to load Rampart refuses every tool
+  call. Replace those rules with `ask` or `deny` (`rampart policy lint` points
+  to them). `notify:` webhooks are unchanged. `rampart upgrade` now only prints
+  the upgrade command for your install; it no longer downloads anything, and
+  its `[version]` argument, `--yes` and `--no-policy-update` are gone. These
+  commands and flags were removed: `rampart policy sync`, `search`, `fetch`
+  and `install`; `rampart report compliance`; `rampart audit witness`;
+  `rampart audit verify --witness-config` and `--require-witness`; and
+  `rampart serve --syslog` and `--cef`. Scripts that call them now fail. An
+  existing `~/.rampart/policies/org-sync.yaml` keeps loading but no longer
+  updates. Deny rules now also apply behind `sudo`, `doas` and `pkexec`, so
+  some commands that used to prompt are now refused.
 - **v1.11.0**: In enforce mode, an ask through `rampart mcp` now waits up to
   five minutes for a decision in the `rampart serve` approval queue instead of
   being refused; an MCP client with a shorter request timeout may give up

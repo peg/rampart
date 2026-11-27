@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-11-27
+
 ### Added
 
 - **Experimental OpenCode integration is back** — `rampart setup opencode`
@@ -17,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only. A missing or failing `rampart`, a malformed reply, or a ten-second
   timeout refuses the call, as do `ask`, `require_approval`, and unmapped
   tools such as MCP and `task`. `glob`, `grep`, and `list` are checked as
-  reads of the directory they search. `rampart doctor` checks the
+  reads of the directory they search, and `grep` must stay inside the project. `rampart doctor` checks the
   installed file and warns when `OPENCODE_PURE` would skip plugins; it does not
   prove OpenCode loaded the plugin. `rampart verify opencode` checks the
   plugin and sends a deny canary through the OpenCode adapter;
@@ -71,9 +73,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - **Privilege wrappers no longer soften deny rules** — deny and ask rules now
-  judge the command that `sudo`, `doas` or `pkexec` runs, so a command denied
-  on its own stays denied behind a privilege wrapper instead of becoming an
-  approval prompt. Allow rules still do not look through a wrapper.
+  judge the command that `sudo`, `doas` or `pkexec` runs, including after
+  combined options such as `sudo -nu root` and `sudo -R <dir>`, so a command
+  that a deny rule matches on its own stays denied behind a privilege wrapper
+  instead of becoming an approval prompt. Allow rules still do not look
+  through a wrapper.
+- **OpenCode `grep` stays inside the project** — OpenCode's grep returns file
+  contents and searches hidden files, so a grep rooted outside the project
+  directory, or at or above the home directory, is refused.
 - **Rampart's approval keys are protected like its tokens** — the standard,
   guard and OpenClaw profiles deny direct reads of the files that back
   approvals. The threat model now states that approvals are advisory when the

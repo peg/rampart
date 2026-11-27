@@ -1,6 +1,6 @@
 # Threat Model
 
-> Last reviewed: 2026-11-26 | Applies to: v1.11.1+
+> Last reviewed: 2026-11-27 | Applies to: v1.12.0+
 
 Rampart is a policy engine for AI agents — not a sandbox, not a hypervisor, not a full isolation boundary. This document describes what Rampart protects against, what it doesn't, and why.
 
@@ -192,7 +192,7 @@ Rampart imposes limits on regex patterns used for response matching to prevent R
 - **Execution timeout**: 100ms per regex match
 - **Response cap**: 1MB maximum for response-side evaluation; an oversized response fails closed when an applicable response rule exists
 
-These limits protect against both accidental performance degradation and malicious patterns. They prevent policy authors from creating DoS conditions, and prevent attackers from injecting malicious regex patterns via webhook-driven policy updates. Patterns exceeding these limits are rejected at policy load time with clear error messages.
+These limits protect against both accidental performance degradation and malicious patterns. They prevent policy authors, or a malicious project policy, from creating DoS conditions. Patterns exceeding these limits are rejected at policy load time with clear error messages.
 
 Glob matching is bounded separately: values used by glob conditions are limited to 8 KiB, ordinary patterns to 8 KiB, double-star patterns to 256 bytes, and each pattern to two `**` occurrences. Oversized match inputs are denied as whole values; Rampart never checks a truncated prefix. Codex and Cline `apply_patch` text is file content rather than a command: each target path is held to the 8 KiB bound and evaluated separately, a patch may name at most 100 targets, the hook input is capped at 4 MiB, and the patch text is held to the 8 KiB bound only when a policy matches it through the `patch` tool parameter. The policy loader and linter reject patterns outside these limits.
 
@@ -278,7 +278,7 @@ v0.6.6 added Windows policy parity. Key differences from Linux/macOS:
 |-------|-------------------|----------------------|--------------------------------|----------|
 | Same user (default) | ✅ Yes | ✅ Yes | ⚠️ Only policy stands in the way | Development, testing |
 | Separate user | ❌ No | ❌ No | ❌ No | Production, unsupervised agents |
-| Separate user + SIEM | ❌ No | ❌ No | ❌ No | Enterprise, compliance |
+| Separate user + forwarded audit log | ❌ No | ❌ No | ❌ No | Shared or long-running machines |
 
 In the same-user setup, Rampart's signing key, tokens and approval state live in
 files the agent's OS user can read and write. The standard policies deny the
