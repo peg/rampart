@@ -194,7 +194,7 @@ func TestPendingDetailsShowsCompleteSafelyRenderedAction(t *testing.T) {
 		t.Fatalf("unsafe terminal control in detail: %q", text)
 	}
 	output.Reset()
-	if err := listPending(cmd, "http://127.0.0.1:9090", "synthetic-token"); err != nil {
+	if err := listPendingDetails(cmd, "http://127.0.0.1:9090", "synthetic-token", false); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(output.String(), "review\nforged-row") || !strings.Contains(output.String(), "pending --details") {

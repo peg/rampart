@@ -468,9 +468,9 @@ policies: []
 	// Pre-populate the session state with a pending ask using the session package.
 	stateDir := filepath.Join(dir, ".rampart", "session-state")
 	mgr := session.NewManager(stateDir, sessionID, testLogger())
-	if err := mgr.RecordAsk(toolUseID, "exec", "sudo apt install git", "sudo apt install git",
-		"test-ask-policy", "approve this command?"); err != nil {
-		t.Fatalf("RecordAsk: %v", err)
+	if err := mgr.RecordAskWithAudit(toolUseID, "exec", "sudo apt install git", "sudo apt install git",
+		"test-ask-policy", "approve this command?", false, ""); err != nil {
+		t.Fatalf("RecordAskWithAudit: %v", err)
 	}
 
 	// Build a PostToolUse hook input JSON with tool_response (tool ran → user approved).

@@ -520,10 +520,6 @@ func (s *JSONLSink) Close() error {
 	return closeErr
 }
 
-func (s *JSONLSink) filePath() string {
-	return filepath.Join(s.dir, s.currentFile)
-}
-
 func (s *JSONLSink) withDirectoryLock(fn func() error) error {
 	return s.lockDirectory(filetxn.WithLock, fn)
 }

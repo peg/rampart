@@ -114,7 +114,7 @@ func TestCreateAndResolveApproval(t *testing.T) {
 	assert.False(t, req.ExpiresAt.IsZero())
 
 	// Approve it.
-	err := store.Resolve(req.ID, true, "cli")
+	err := store.ResolveBeforePublish(req.ID, true, "cli", nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, StatusApproved, req.Status)
@@ -153,14 +153,14 @@ func TestExternalApprovalRestartKeepsInvocationsSeparate(t *testing.T) {
 	require.Equal(t, call.ToolCallID, restored.Call.ToolCallID)
 	require.Equal(t, call.WorkDir, restored.Call.WorkDir)
 	require.Equal(t, "review me", restored.Call.Params["content"])
-	require.NoError(t, store.Resolve(first.ID, true, "reviewer"))
+	require.NoError(t, store.ResolveBeforePublish(first.ID, true, "reviewer", nil))
 	other, found := store.Get(second.ID)
 	require.True(t, found)
 	require.Equal(t, StatusPending, other.Status)
 	_, consumed, err := store.ConsumeApprovedFor(call, "owner")
 	require.NoError(t, err)
 	require.False(t, consumed, "polling approval must not also grant an HTTP execution replay")
-	require.NoError(t, store.Resolve(second.ID, false, "reviewer"))
+	require.NoError(t, store.ResolveBeforePublish(second.ID, false, "reviewer", nil))
 }
 
 func TestResolveBeforePublishOrdersJournalAndAuditBeforeAuthorization(t *testing.T) {
@@ -199,7 +199,7 @@ func TestResolveBeforePublishOrdersJournalAndAuditBeforeAuthorization(t *testing
 	default:
 		t.Fatal("waiter was not woken after journal and audit work succeeded")
 	}
-	grant, consumed, err := store.ConsumeApproved(call)
+	grant, consumed, err := store.ConsumeApprovedFor(call, "")
 	require.NoError(t, err)
 	require.True(t, consumed)
 	assert.Equal(t, req.ID, grant.ID)
@@ -225,7 +225,7 @@ func TestResolveBeforePublishFailureLeavesRequestPendingAndRetryable(t *testing.
 		t.Fatal("failed resolution woke its waiter")
 	default:
 	}
-	grant, consumed, consumeErr := store.ConsumeApproved(call)
+	grant, consumed, consumeErr := store.ConsumeApprovedFor(call, "")
 	require.NoError(t, consumeErr)
 	assert.False(t, consumed, "failed resolution published one-shot authorization")
 	assert.Nil(t, grant)
@@ -312,7 +312,7 @@ func TestMarkPersistedRequiresApprovedRequest(t *testing.T) {
 	pending, err := store.Create(testCall(), testDecision())
 	require.NoError(t, err)
 	require.Error(t, store.MarkPersisted(pending.ID))
-	require.NoError(t, store.Resolve(pending.ID, true, "operator"))
+	require.NoError(t, store.ResolveBeforePublish(pending.ID, true, "operator", nil))
 	require.NoError(t, store.MarkPersisted(pending.ID))
 	resolved, ok := store.Get(pending.ID)
 	require.True(t, ok)
@@ -323,7 +323,7 @@ func TestDenyApproval(t *testing.T) {
 	store := NewStore()
 	req, _ := store.Create(testCall(), testDecision())
 
-	err := store.Resolve(req.ID, false, "api")
+	err := store.ResolveBeforePublish(req.ID, false, "api", nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, StatusDenied, req.Status)
@@ -331,7 +331,7 @@ func TestDenyApproval(t *testing.T) {
 
 func TestResolveUnknownID(t *testing.T) {
 	store := NewStore()
-	err := store.Resolve("nonexistent", true, "cli")
+	err := store.ResolveBeforePublish("nonexistent", true, "cli", nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown id")
 }
@@ -340,8 +340,8 @@ func TestDoubleResolve(t *testing.T) {
 	store := NewStore()
 	req, _ := store.Create(testCall(), testDecision())
 
-	require.NoError(t, store.Resolve(req.ID, true, "cli"))
-	err := store.Resolve(req.ID, false, "cli")
+	require.NoError(t, store.ResolveBeforePublish(req.ID, true, "cli", nil))
+	err := store.ResolveBeforePublish(req.ID, false, "cli", nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "already")
 }
@@ -383,7 +383,7 @@ func TestListPending(t *testing.T) {
 func TestCleanup(t *testing.T) {
 	store := NewStore()
 	req, _ := store.Create(testCall(), testDecision())
-	require.NoError(t, store.Resolve(req.ID, true, "cli"))
+	require.NoError(t, store.ResolveBeforePublish(req.ID, true, "cli", nil))
 
 	// Should not clean up yet (too recent).
 	removed := store.Cleanup(1 * time.Hour)
@@ -395,12 +395,37 @@ func TestCleanup(t *testing.T) {
 	assert.Equal(t, 1, removed)
 }
 
+// grantRun publishes a run-scoped auto-approval for call through the
+// production bulk-approval path: enqueue, snapshot, resolve, publish.
+func grantRun(t *testing.T, store *Store, call engine.ToolCall, ownerScope string) {
+	t.Helper()
+	snapshot := beginRunGrant(t, store, call, ownerScope, time.Minute)
+	_, _, installed, err := store.AutoApproveRunBeforePublishForRunScopeSnapshot(snapshot, nil)
+	require.NoError(t, err)
+	require.True(t, installed)
+}
+
+// beginRunGrant enqueues and approves call inside a run-scope snapshot,
+// leaving publication to the caller.
+func beginRunGrant(t *testing.T, store *Store, call engine.ToolCall, ownerScope string, ttl time.Duration) *RunScopeSnapshot {
+	t.Helper()
+	request, autoApproved, err := store.CreateOrAutoApproved(call, testDecision(), ownerScope)
+	require.NoError(t, err)
+	require.False(t, autoApproved)
+	snapshot, err := store.BeginRunScopeSnapshot(call, []string{request.ID}, ttl)
+	require.NoError(t, err)
+	t.Cleanup(func() { store.AbortRunScopeSnapshot(snapshot) })
+	_, err = store.ResolveBeforePublishForRunScopeSnapshot(snapshot, request.ID, "operator", nil)
+	require.NoError(t, err)
+	return snapshot
+}
+
 func TestAutoApproveRunIsScopedToAgentSessionAndRun(t *testing.T) {
 	store := NewStore()
 	defer store.Close()
 
 	original := testCall()
-	require.True(t, store.AutoApproveRun(original, time.Minute))
+	grantRun(t, store, original, "")
 	assert.True(t, store.IsAutoApproved(original))
 
 	for _, tt := range []struct {
@@ -433,7 +458,10 @@ func TestAutoApproveRunRejectsIncompleteIdentity(t *testing.T) {
 			case "run":
 				call.RunID = ""
 			}
-			assert.False(t, store.AutoApproveRun(call, time.Minute))
+			request, err := store.Create(call, testDecision())
+			require.NoError(t, err)
+			_, err = store.BeginRunScopeSnapshot(call, []string{request.ID}, time.Minute)
+			assert.ErrorContains(t, err, "incomplete run identity")
 			assert.False(t, store.IsAutoApproved(call))
 		})
 	}
@@ -443,85 +471,13 @@ func TestCreateOrAutoApprovedDoesNotEnqueueAuthorizedCall(t *testing.T) {
 	store := NewStore()
 	t.Cleanup(store.Close)
 	call := testCall()
-	require.True(t, store.AutoApproveRun(call, time.Minute))
+	grantRun(t, store, call, "")
 
 	req, autoApproved, err := store.CreateOrAutoApproved(call, testDecision(), "")
 	require.NoError(t, err)
 	assert.True(t, autoApproved)
 	assert.Nil(t, req)
 	assert.Empty(t, store.List())
-}
-
-func TestAutoApprovePublicationAndCreateAreAtomic(t *testing.T) {
-	type createResult struct {
-		req          *Request
-		autoApproved bool
-		err          error
-	}
-	type installResult struct {
-		pending   []*Request
-		installed bool
-	}
-
-	// Exercise both possible lock winners repeatedly. The valid outcomes are:
-	// creation wins and publication returns that pending request, or publication
-	// wins and creation observes auto-approved. Installed+pending is forbidden.
-	for range 256 {
-		store := NewStore()
-		call := testCall()
-		start := make(chan struct{})
-		created := make(chan createResult, 1)
-		installed := make(chan installResult, 1)
-
-		go func() {
-			<-start
-			req, autoApproved, err := store.CreateOrAutoApproved(call, testDecision(), "")
-			created <- createResult{req: req, autoApproved: autoApproved, err: err}
-		}()
-		go func() {
-			<-start
-			pending, ok := store.AutoApproveRunIfNoPending(call, time.Minute)
-			installed <- installResult{pending: pending, installed: ok}
-		}()
-		close(start)
-
-		create := <-created
-		install := <-installed
-		require.NoError(t, create.err)
-		if install.installed {
-			assert.True(t, create.autoApproved)
-			assert.Nil(t, create.req)
-			assert.Empty(t, install.pending)
-			assert.Empty(t, store.List())
-		} else {
-			assert.False(t, create.autoApproved)
-			require.NotNil(t, create.req)
-			require.Len(t, install.pending, 1)
-			assert.Equal(t, create.req.ID, install.pending[0].ID)
-			assert.Len(t, store.List(), 1)
-		}
-		store.Close()
-	}
-}
-
-func TestAutoApproveRunIfNoPendingOnlyReturnsExactScope(t *testing.T) {
-	store := NewStore()
-	t.Cleanup(store.Close)
-	target := testCall()
-	other := target
-	other.Agent = "other"
-	other.ToolCallID = "other-call"
-
-	targetReq, err := store.Create(target, testDecision())
-	require.NoError(t, err)
-	_, err = store.Create(other, testDecision())
-	require.NoError(t, err)
-
-	pending, installed := store.AutoApproveRunIfNoPending(target, time.Minute)
-	assert.False(t, installed)
-	require.Len(t, pending, 1)
-	assert.Equal(t, targetReq.ID, pending[0].ID)
-	assert.False(t, store.IsAutoApproved(target))
 }
 
 func TestDeduplicateStablePendingCall(t *testing.T) {
@@ -649,16 +605,16 @@ func TestApprovedReplayConsumesExactCallOnce(t *testing.T) {
 	call := testCall()
 	req, err := store.Create(call, testDecision())
 	require.NoError(t, err)
-	require.NoError(t, store.Resolve(req.ID, true, "operator"))
+	require.NoError(t, store.ResolveBeforePublish(req.ID, true, "operator", nil))
 
-	grant, consumed, err := store.ConsumeApproved(call)
+	grant, consumed, err := store.ConsumeApprovedFor(call, "")
 	require.NoError(t, err)
 	require.True(t, consumed)
 	require.NotNil(t, grant)
 	assert.Equal(t, req.ID, grant.ID)
 	assert.Equal(t, "operator", grant.ResolvedBy)
 
-	grant, consumed, err = store.ConsumeApproved(call)
+	grant, consumed, err = store.ConsumeApprovedFor(call, "")
 	require.NoError(t, err)
 	assert.False(t, consumed, "an allow-once approval must not authorize a second replay")
 	assert.Nil(t, grant)
@@ -691,17 +647,17 @@ func TestApprovedReplayRequiresExactStableIdentityAndPayload(t *testing.T) {
 			original.Input = map[string]any{"path": "/tmp/original"}
 			req, err := store.Create(original, testDecision())
 			require.NoError(t, err)
-			require.NoError(t, store.Resolve(req.ID, true, "operator"))
+			require.NoError(t, store.ResolveBeforePublish(req.ID, true, "operator", nil))
 
 			changed := original
 			tt.mutate(&changed)
-			grant, consumed, err := store.ConsumeApproved(changed)
+			grant, consumed, err := store.ConsumeApprovedFor(changed, "")
 			require.NoError(t, err)
 			assert.False(t, consumed)
 			assert.Nil(t, grant)
 
 			// A mismatched attempt must not consume the original exact grant.
-			grant, consumed, err = store.ConsumeApproved(original)
+			grant, consumed, err = store.ConsumeApprovedFor(original, "")
 			require.NoError(t, err)
 			assert.True(t, consumed)
 			assert.Equal(t, req.ID, grant.ID)
@@ -716,9 +672,9 @@ func TestDeniedApprovalNeverCreatesReplayGrant(t *testing.T) {
 	call := testCall()
 	req, err := store.Create(call, testDecision())
 	require.NoError(t, err)
-	require.NoError(t, store.Resolve(req.ID, false, "operator"))
+	require.NoError(t, store.ResolveBeforePublish(req.ID, false, "operator", nil))
 
-	grant, consumed, err := store.ConsumeApproved(call)
+	grant, consumed, err := store.ConsumeApprovedFor(call, "")
 	require.NoError(t, err)
 	assert.False(t, consumed)
 	assert.Nil(t, grant)
@@ -738,9 +694,9 @@ func TestApprovedReplayIsNotCreatedWithoutBothStableIDs(t *testing.T) {
 			}
 			req, err := store.Create(call, testDecision())
 			require.NoError(t, err)
-			require.NoError(t, store.Resolve(req.ID, true, "operator"))
+			require.NoError(t, store.ResolveBeforePublish(req.ID, true, "operator", nil))
 
-			grant, consumed, err := store.ConsumeApproved(call)
+			grant, consumed, err := store.ConsumeApprovedFor(call, "")
 			require.NoError(t, err)
 			assert.False(t, consumed)
 			assert.Nil(t, grant)
@@ -755,14 +711,14 @@ func TestExpiredApprovedReplayCannotBeConsumed(t *testing.T) {
 	call := testCall()
 	req, err := store.Create(call, testDecision())
 	require.NoError(t, err)
-	require.NoError(t, store.Resolve(req.ID, true, "operator"))
+	require.NoError(t, store.ResolveBeforePublish(req.ID, true, "operator", nil))
 
 	key := store.keyedIdentity(replayKey(call))
 	grant := store.approvedOnce[key]
 	grant.ExpiresAt = time.Now().Add(-time.Second)
 	store.approvedOnce[key] = grant
 
-	consumedGrant, consumed, err := store.ConsumeApproved(call)
+	consumedGrant, consumed, err := store.ConsumeApprovedFor(call, "")
 	require.NoError(t, err)
 	assert.False(t, consumed)
 	assert.Nil(t, consumedGrant)
@@ -778,7 +734,7 @@ func TestOwnerScopedPersistentReplayIsCrossStoreAndOneShot(t *testing.T) {
 	req, autoApproved, err := store1.CreateOrAutoApproved(call, testDecision(), ownerA)
 	require.NoError(t, err)
 	require.False(t, autoApproved)
-	require.NoError(t, store1.Resolve(req.ID, true, "operator"))
+	require.NoError(t, store1.ResolveBeforePublish(req.ID, true, "operator", nil))
 	legacyKey := replayKey(call)
 	scopedKey := store1.keyedIdentity(ownerBoundKey(legacyKey, ownerScopeDigest(ownerA)))
 	_, legacyReady, _ := store1.replayGrantPaths(legacyKey)
@@ -797,7 +753,7 @@ func TestOwnerScopedPersistentReplayIsCrossStoreAndOneShot(t *testing.T) {
 	store2 := NewStore(WithPersistenceFile(persistFile))
 	defer store2.Close()
 	assert.Empty(t, store2.List(), "a durably approved request must not be resurrected as pending")
-	grant, consumed, err := store2.ConsumeApproved(call)
+	grant, consumed, err := store2.ConsumeApprovedFor(call, "")
 	require.NoError(t, err)
 	assert.False(t, consumed, "legacy unscoped consumption must fail closed")
 	assert.Nil(t, grant)
@@ -848,13 +804,13 @@ func TestLegacyReplayRemainsAdminOnly(t *testing.T) {
 	call := testCall()
 	req, err := store.Create(call, testDecision())
 	require.NoError(t, err)
-	require.NoError(t, store.Resolve(req.ID, true, "operator"))
+	require.NoError(t, store.ResolveBeforePublish(req.ID, true, "operator", nil))
 
 	grant, consumed, err := store.ConsumeApprovedFor(call, strings.Repeat("a", 64))
 	require.NoError(t, err)
 	assert.False(t, consumed, "ambiguous legacy state must not authorize an eval token")
 	assert.Nil(t, grant)
-	grant, consumed, err = store.ConsumeApproved(call)
+	grant, consumed, err = store.ConsumeApprovedFor(call, "")
 	require.NoError(t, err)
 	require.True(t, consumed, "deliberate unscoped admin/local behavior must remain available")
 	assert.Equal(t, req.ID, grant.ID)
@@ -865,12 +821,7 @@ func TestRunAutoApprovalIsBoundToResolvedOwner(t *testing.T) {
 	defer store.Close()
 	ownerA, ownerB := strings.Repeat("a", 64), strings.Repeat("b", 64)
 	call := testCall()
-	request, autoApproved, err := store.CreateOrAutoApproved(call, testDecision(), ownerA)
-	require.NoError(t, err)
-	require.False(t, autoApproved)
-	require.NoError(t, store.Resolve(request.ID, true, "operator"))
-	_, installed := store.AutoApproveRunIfNoPendingForRequest(call, request, time.Minute)
-	require.True(t, installed)
+	grantRun(t, store, call, ownerA)
 
 	next := call
 	next.ToolCallID = "next-call"
@@ -889,15 +840,11 @@ func TestRunAutoApprovalRequiresPrePublicationStep(t *testing.T) {
 	store := NewStore()
 	defer store.Close()
 	call := testCall()
-	request, err := store.Create(call, testDecision())
-	require.NoError(t, err)
-	require.NoError(t, store.Resolve(request.ID, true, "operator"))
+	snapshot := beginRunGrant(t, store, call, "", time.Minute)
 
 	called := false
-	pending, expiresAt, installed, err := store.AutoApproveRunBeforePublishForRequest(
-		call,
-		request,
-		time.Minute,
+	pending, expiresAt, installed, err := store.AutoApproveRunBeforePublishForRunScopeSnapshot(
+		snapshot,
 		func(expiry time.Time) error {
 			called = true
 			assert.WithinDuration(t, time.Now().Add(time.Minute), expiry, time.Second)
@@ -911,10 +858,8 @@ func TestRunAutoApprovalRequiresPrePublicationStep(t *testing.T) {
 	assert.False(t, installed)
 	assert.False(t, store.IsAutoApproved(call))
 
-	pending, expiresAt, installed, err = store.AutoApproveRunBeforePublishForRequest(
-		call,
-		request,
-		time.Minute,
+	pending, expiresAt, installed, err = store.AutoApproveRunBeforePublishForRunScopeSnapshot(
+		snapshot,
 		func(time.Time) error { return nil },
 	)
 	require.NoError(t, err)
@@ -928,16 +873,12 @@ func TestRunAutoApprovalRejectsGrantExpiredDuringPublication(t *testing.T) {
 	store := NewStore()
 	defer store.Close()
 	call := testCall()
-	request, err := store.Create(call, testDecision())
-	require.NoError(t, err)
-	require.NoError(t, store.Resolve(request.ID, true, "operator"))
+	snapshot := beginRunGrant(t, store, call, "", 50*time.Millisecond)
 
-	pending, expiresAt, installed, err := store.AutoApproveRunBeforePublishForRequest(
-		call,
-		request,
-		time.Nanosecond,
+	pending, expiresAt, installed, err := store.AutoApproveRunBeforePublishForRunScopeSnapshot(
+		snapshot,
 		func(time.Time) error {
-			time.Sleep(time.Millisecond)
+			time.Sleep(60 * time.Millisecond)
 			return nil
 		},
 	)
@@ -969,7 +910,7 @@ func TestRunScopeSnapshotRejectsPostSnapshotDenial(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, autoApproved)
 	require.NotNil(t, raced)
-	require.NoError(t, store.Resolve(raced.ID, false, "other-operator"))
+	require.NoError(t, store.ResolveBeforePublish(raced.ID, false, "other-operator", nil))
 
 	pending, expiresAt, installed, err := store.AutoApproveRunBeforePublishForRunScopeSnapshot(snapshot, nil)
 	require.ErrorContains(t, err, "was denied after the run-scope snapshot")
@@ -996,7 +937,7 @@ func TestRunScopeSnapshotRejectsPostSnapshotExternalApprovalAndExpiry(t *testing
 			name:    "external approval",
 			timeout: time.Minute,
 			settle: func(t *testing.T, store *Store, request *Request) {
-				require.NoError(t, store.Resolve(request.ID, true, "other-operator"))
+				require.NoError(t, store.ResolveBeforePublish(request.ID, true, "other-operator", nil))
 			},
 			want: "approved outside the active run-scope transaction",
 		},
@@ -1128,7 +1069,7 @@ func TestRunScopeSnapshotIgnoresUnrelatedScopeAndRejectsForeignStore(t *testing.
 	otherCall.ToolCallID = "unrelated-call"
 	other, err := store.Create(otherCall, testDecision())
 	require.NoError(t, err)
-	require.NoError(t, store.Resolve(other.ID, false, "other-operator"))
+	require.NoError(t, store.ResolveBeforePublish(other.ID, false, "other-operator", nil))
 	_, err = store.ResolveBeforePublishForRunScopeSnapshot(snapshot, initial.ID, "operator", nil)
 	require.NoError(t, err)
 	_, _, installed, err = store.AutoApproveRunBeforePublishForRunScopeSnapshot(snapshot, nil)
@@ -1205,7 +1146,7 @@ func TestRunScopeSnapshotDeadlineCannotPassDuringResolutionAudit(t *testing.T) {
 		t.Fatal("raced approval waiter was published after the snapshot deadline")
 	default:
 	}
-	grant, consumed, consumeErr := store.ConsumeApproved(racedCall)
+	grant, consumed, consumeErr := store.ConsumeApprovedFor(racedCall, "")
 	require.NoError(t, consumeErr)
 	assert.False(t, consumed)
 	assert.Nil(t, grant)
@@ -1239,15 +1180,13 @@ func TestRunGrantAuditPanicPreservesPreviousState(t *testing.T) {
 	store := NewStore()
 	t.Cleanup(store.Close)
 	call := testCall()
-	request, err := store.Create(call, testDecision())
-	require.NoError(t, err)
-	require.NoError(t, store.Resolve(request.ID, true, "operator"))
+	snapshot := beginRunGrant(t, store, call, "", time.Minute)
 
 	func() {
 		defer func() {
 			assert.Equal(t, "audit panic", recover())
 		}()
-		_, _, _, _ = store.AutoApproveRunBeforePublishForRequest(call, request, time.Minute, func(time.Time) error {
+		_, _, _, _ = store.AutoApproveRunBeforePublishForRunScopeSnapshot(snapshot, func(time.Time) error {
 			panic("audit panic")
 		})
 	}()
@@ -1261,7 +1200,7 @@ func TestResolveRejectsWallClockExpiredPendingRequest(t *testing.T) {
 	require.NoError(t, err)
 	time.Sleep(10 * time.Millisecond)
 
-	err = store.Resolve(request.ID, true, "operator")
+	err = store.ResolveBeforePublish(request.ID, true, "operator", nil)
 	require.Error(t, err)
 	current, ok := store.Get(request.ID)
 	require.True(t, ok)
@@ -1314,7 +1253,7 @@ func TestPersistentApprovalAuthorizationFilesAreOwnerOnly(t *testing.T) {
 	call := testCall()
 	req, err := store.Create(call, testDecision())
 	require.NoError(t, err)
-	require.NoError(t, store.Resolve(req.ID, true, "operator"))
+	require.NoError(t, store.ResolveBeforePublish(req.ID, true, "operator", nil))
 
 	dataPath, readyPath, _ := store.replayGrantPaths(store.keyedIdentity(replayKey(call)))
 	for _, path := range []string{persistFile, dataPath, readyPath} {
@@ -1349,7 +1288,7 @@ func TestWaitForResolution(t *testing.T) {
 	// Resolve in background after a delay.
 	go func() {
 		time.Sleep(50 * time.Millisecond)
-		store.Resolve(req.ID, true, "cli")
+		store.ResolveBeforePublish(req.ID, true, "cli", nil)
 	}()
 
 	select {
@@ -1438,7 +1377,7 @@ func TestApprovalStorePersistenceResolvedNotRestored(t *testing.T) {
 	require.NoError(t, err)
 
 	// Resolve the approval.
-	err = store1.Resolve(req.ID, true, "cli")
+	err = store1.ResolveBeforePublish(req.ID, true, "cli", nil)
 	require.NoError(t, err)
 	store1.Close()
 
@@ -1468,7 +1407,7 @@ func TestApprovalJournalCompactionPreservesOtherStorePendingRecords(t *testing.T
 	request2, err := store2.Create(call2, testDecision())
 	require.NoError(t, err)
 
-	require.NoError(t, store1.Resolve(request1.ID, false, "operator"))
+	require.NoError(t, store1.ResolveBeforePublish(request1.ID, false, "operator", nil))
 
 	restarted := NewStore(WithPersistenceFile(persistFile))
 	defer restarted.Close()
@@ -1592,7 +1531,7 @@ func TestConsumePersistedReplayGrantRejectsOversizedDataPermanently(t *testing.T
 	require.NoError(t, os.WriteFile(dataPath, bytes.Repeat([]byte("x"), maxReplayGrantBytes+1), 0o600))
 	require.NoError(t, os.WriteFile(readyPath, nil, 0o600))
 
-	grant, consumed, err := store.ConsumeApproved(call)
+	grant, consumed, err := store.ConsumeApprovedFor(call, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exceeds")
 	assert.False(t, consumed)

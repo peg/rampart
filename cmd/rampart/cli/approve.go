@@ -162,10 +162,6 @@ func resolveApproval(cmd *cobra.Command, addr, token, id string, approved bool) 
 	return nil
 }
 
-func listPending(cmd *cobra.Command, addr, token string) error {
-	return listPendingDetails(cmd, addr, token, false)
-}
-
 func listPendingDetails(cmd *cobra.Command, addr, token string, details bool) error {
 	resolvedAddr, err := resolveAddr(addr)
 	if err != nil {

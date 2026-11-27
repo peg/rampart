@@ -299,7 +299,7 @@ policies:
           `+when+`
 `), 0o644))
 
-			eng, err := New(NewDirStore(dir, nil), nil)
+			eng, err := New(NewMultiStore("", dir, nil), nil)
 			require.NoError(t, err)
 
 			got := eng.Evaluate(execCall("main", "sudo ls"))
@@ -358,7 +358,7 @@ policies:
         message: "User allow (always) via openclaw-approval"
 `), 0o644))
 
-	eng, err := New(NewDirStore(dir, nil), nil)
+	eng, err := New(NewMultiStore("", dir, nil), nil)
 	require.NoError(t, err)
 
 	got := eng.Evaluate(execCall("main", "shred --help"))
@@ -1339,7 +1339,7 @@ policies:
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store := NewDirStore(dir, logger)
+	store := NewMultiStore("", dir, logger)
 	eng, err := New(store, logger)
 	if err != nil {
 		t.Fatal(err)

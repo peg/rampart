@@ -22,21 +22,21 @@ func TestCallCountBasic(t *testing.T) {
 	if err := counter.Increment("fetch", now.Add(-10*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if matchCondition(cond, call, counter) {
+	if matchConditionForAction(cond, call, counter, ActionDeny) {
 		t.Fatal("expected no match at count=1")
 	}
 
 	if err := counter.Increment("fetch", now.Add(-5*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if matchCondition(cond, call, counter) {
+	if matchConditionForAction(cond, call, counter, ActionDeny) {
 		t.Fatal("expected no match at count=2")
 	}
 
 	if err := counter.Increment("fetch", now.Add(-1*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if !matchCondition(cond, call, counter) {
+	if !matchConditionForAction(cond, call, counter, ActionDeny) {
 		t.Fatal("expected match at count=3")
 	}
 }
@@ -58,14 +58,14 @@ func TestCallCountSliding(t *testing.T) {
 	if err := counter.Increment("fetch", now.Add(-45*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if matchCondition(cond, call, counter) {
+	if matchConditionForAction(cond, call, counter, ActionDeny) {
 		t.Fatal("expected no match with only one call inside 1h window")
 	}
 
 	if err := counter.Increment("fetch", now.Add(-5*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if !matchCondition(cond, call, counter) {
+	if !matchConditionForAction(cond, call, counter, ActionDeny) {
 		t.Fatal("expected match with two calls inside 1h window")
 	}
 }
@@ -88,21 +88,21 @@ func TestCallCountToolFilter(t *testing.T) {
 	if err := counter.Increment("fetch", now.Add(-30*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if matchCondition(cond, call, counter) {
+	if matchConditionForAction(cond, call, counter, ActionDeny) {
 		t.Fatal("expected no match when threshold is not met for specified tool")
 	}
 
 	if err := counter.Increment("web_search", now.Add(-30*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if matchCondition(cond, call, counter) {
+	if matchConditionForAction(cond, call, counter, ActionDeny) {
 		t.Fatal("expected no match at web_search count=1")
 	}
 
 	if err := counter.Increment("web_search", now.Add(-10*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if !matchCondition(cond, call, counter) {
+	if !matchConditionForAction(cond, call, counter, ActionDeny) {
 		t.Fatal("expected match at web_search count=2")
 	}
 }

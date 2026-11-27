@@ -14,6 +14,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -35,6 +36,7 @@ import (
 	"github.com/peg/rampart/internal/engine"
 	ochardening "github.com/peg/rampart/internal/openclaw/hardening"
 	hermesplugin "github.com/peg/rampart/internal/plugin/hermes"
+	opencodeplugin "github.com/peg/rampart/internal/plugin/opencode"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -977,6 +979,7 @@ func doctorHooks(emit emitFn) (issues, warnings int) {
 		}
 	}
 
+	issues += doctorOpenCodeHooks(emit, home)
 	return issues, warnings
 }
 
@@ -1010,6 +1013,46 @@ func clineManagedHooksPresent(home string) bool {
 		}
 	}
 	return false
+}
+
+// doctorOpenCodeHooks checks only the installed file and its executable
+// binding. It does not start OpenCode or infer that a running host loaded it.
+func doctorOpenCodeHooks(emit emitFn, home string) int {
+	path := openCodePluginPath(home)
+	_, fileErr := os.Lstat(path)
+	_, binaryErr := execLookPath("opencode")
+	if os.IsNotExist(fileErr) && binaryErr != nil {
+		return 0
+	}
+	data, exists, err := readOpenCodePlugin(path)
+	if err != nil {
+		emit("OpenCode plugin", "fail", "Experimental plugin file is unsafe or unreadable: "+err.Error()+hintSep+
+			"Inspect the plugin path; setup refuses linked files and directories")
+		return 1
+	}
+	if !exists {
+		emit("OpenCode plugin", "fail", "Experimental plugin is not installed"+hintSep+"rampart setup opencode")
+		return 1
+	}
+	if !opencodeplugin.Managed(data) {
+		emit("OpenCode plugin", "fail", "The rampart.js file is not owned by Rampart; it will not be replaced"+hintSep+
+			"Choose a different location for the unrelated plugin before running rampart setup opencode")
+		return 1
+	}
+	want, err := opencodeplugin.Render(resolveRampartHookBinary())
+	if err != nil || !bytes.Equal(data, want) {
+		emit("OpenCode plugin", "fail", "Experimental plugin source or Rampart executable binding is stale"+hintSep+
+			"rampart setup opencode && restart OpenCode")
+		return 1
+	}
+	// OpenCode skips every external plugin in pure mode, so the gate never loads.
+	if os.Getenv("OPENCODE_PURE") != "" {
+		emit("OpenCode plugin", "warn", "OPENCODE_PURE is set; OpenCode skips external plugins, so Rampart does not run"+hintSep+
+			"unset OPENCODE_PURE before starting OpenCode")
+		return 1
+	}
+	emit("OpenCode plugin", "ok", "Experimental plugin file and executable binding are current (static check only; host loading unverified; ask decisions refuse execution)")
+	return 0
 }
 
 // doctorCoverage cross-checks whether a user with OpenClaw protection but no
@@ -1716,29 +1759,6 @@ func doctorOpenClawProviderDiscovery(emit emitFn) (warnings int) {
 		"plugins.allow is restrictive, but bundled provider discovery is still in compatibility mode"+hintSep+
 			"After confirming plugins.allow includes every bundled provider you intend to keep, run: openclaw config set plugins.bundledDiscovery allowlist")
 	return 1
-}
-
-func normalizedReleaseVersion(version string) (string, bool) {
-	version = strings.TrimSpace(version)
-	if version == "" || version == "dev" || version == "unknown" || strings.Contains(version, "dirty") || strings.Contains(version, "staging") || strings.HasPrefix(version, "v0.0.0-") {
-		return "", false
-	}
-	version = strings.TrimPrefix(version, "v")
-	if isGoPseudoVersion(version) {
-		return "", false
-	}
-	if strings.Contains(version, "-g") {
-		return "", false
-	}
-	parsed, ok := parseReleaseVersion(version)
-	if !ok {
-		return "", false
-	}
-	normalized := fmt.Sprintf("%d.%d.%d", parsed.major, parsed.minor, parsed.patch)
-	if len(parsed.prerelease) > 0 {
-		normalized += "-" + strings.Join(parsed.prerelease, ".")
-	}
-	return normalized, true
 }
 
 // isGitDescribeVersion reports a `git describe` build such as

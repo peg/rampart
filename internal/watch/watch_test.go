@@ -44,7 +44,7 @@ func TestFormatEventLineTruncates(t *testing.T) {
 			MatchedPolicies: []string{"protect-sys"},
 		},
 	}
-	line := formatEventLine(evt, 40)
+	line := formatEventLineWithRelTime(evt, 40, evt.Timestamp)
 	assert.LessOrEqual(t, len([]rune(line)), 40)
 	assert.True(t, strings.Contains(line, "🔴"))
 }

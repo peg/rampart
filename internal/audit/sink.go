@@ -65,24 +65,6 @@ func WithFsync(enabled bool) SinkOption {
 	}
 }
 
-// WithRotateSize configures the maximum JSONL file size in bytes.
-func WithRotateSize(size int64) SinkOption {
-	return func(cfg *sinkConfig) {
-		if size > 0 {
-			cfg.rotateSize = size
-		}
-	}
-}
-
-// WithAnchorInterval configures how often chain anchors are written.
-func WithAnchorInterval(events int) SinkOption {
-	return func(cfg *sinkConfig) {
-		if events > 0 {
-			cfg.anchorInterval = events
-		}
-	}
-}
-
 // WithLogger configures the logger for audit operations.
 // Defaults to slog.Default() if not set.
 func WithLogger(logger *slog.Logger) SinkOption {
