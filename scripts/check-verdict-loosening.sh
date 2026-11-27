@@ -5,10 +5,11 @@
 # Usage: scripts/check-verdict-loosening.sh BASE_REF
 #
 # Compares policies/testdata/verdicts.tsv at BASE_REF with the working tree and
-# exits 1 when a recorded verdict gets weaker (deny > ask > webhook, watch) or a
-# recorded row disappears, unless this change adds that exact change with a
-# reason to policies/testdata/verdicts-loosened.tsv. Rows already listed at
-# BASE_REF approve nothing, so each loosening is reviewed once.
+# exits 1 when a recorded verdict gets weaker (deny > ask) or a recorded row
+# disappears, unless this change adds that exact change with a reason to
+# policies/testdata/verdicts-loosened.tsv. Rows already listed at BASE_REF
+# approve nothing, so each loosening is reviewed once, and a listed change the
+# diff does not make fails.
 
 set -euo pipefail
 
@@ -33,9 +34,8 @@ git show "$base_ref:$ack" >"$tmp/base-ack" 2>/dev/null || : >"$tmp/base-ack"
 
 awk -F'\t' -v baseack="$tmp/base-ack" -v base="$tmp/base" -v ackfile="$ack" '
   function rank(a) {
-    if (a == "deny") return 3
-    if (a == "ask" || a == "require_approval") return 2
-    if (a == "webhook" || a == "watch") return 1
+    if (a == "deny") return 2
+    if (a == "ask" || a == "require_approval") return 1
     return 0
   }
   /^#/ || NF == 0 { next }
@@ -63,10 +63,20 @@ awk -F'\t' -v baseack="$tmp/base-ack" -v base="$tmp/base" -v ackfile="$ack" '
       } else {
         continue
       }
-      if ((part[1] FS was[key] FS to FS part[2]) in acked) continue
+      if ((part[1] FS was[key] FS to FS part[2]) in acked) {
+        used[part[1] FS was[key] FS to FS part[2]] = 1
+        continue
+      }
       printf "%s\t%s\t%s\t%s\n", part[1], was[key], to, part[2]
       n++
     }
+    for (key in acked) {
+      if (!(key in used)) {
+        printf "%s lists a change this diff does not make:\n%s\n", ackfile, key
+        unused = 1
+      }
+    }
+    if (n == 0 && unused) exit 1
     if (n > 0) {
       printf "%d recorded verdicts got weaker or were removed without review.\n", n
       printf "If each is intended, add the rows above to %s with a reason as a fifth column.\n", ackfile

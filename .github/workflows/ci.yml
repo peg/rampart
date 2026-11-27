@@ -286,7 +286,7 @@ jobs:
       - name: Recorded verdicts do not get weaker without review
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        # Run the base revision's script so a pull request cannot relax the check that judges it.
+        # Run the base revision's script so a change to it cannot relax its own check.
         run: |
           script=scripts/check-verdict-loosening.sh
           if git cat-file -e "$BASE_SHA:$script" 2>/dev/null; then

@@ -49,6 +49,7 @@ var verdictSets = []struct {
 }{
 	{name: "standard"},
 	{name: "standard+guard", overlays: []string{"guard"}},
+	{name: "openclaw", overlays: []string{"openclaw"}, openclaw: true},
 	{name: "openclaw+guard", overlays: []string{"openclaw", "guard"}, openclaw: true},
 	{name: "standard+headless", overlays: []string{"examples/headless.yaml"}},
 }
@@ -82,10 +83,11 @@ func TestShippedProfileVerdicts(t *testing.T) {
 			actions[i] = evaluate(i, command)
 			protected = protected && blocks(actions[i])
 		}
+		if !protected {
+			continue
+		}
 		for i, set := range verdictSets {
-			if protected {
-				fmt.Fprintf(&b, "%s\t%s\t%s\n", set.name, actions[i], strconv.Quote(command))
-			}
+			fmt.Fprintf(&b, "%s\t%s\t%s\n", set.name, actions[i], strconv.Quote(command))
 		}
 	}
 	want := b.String()
