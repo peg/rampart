@@ -128,6 +128,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	quickstartCmd := newQuickstartCmd()
 	protectCmd := newProtectCmd(opts)
 	verifyCmd := newVerifyCmd()
+	launchCmd := newLaunchCmd(opts)
 	upgradeCmd := newUpgradeCmd(opts)
 	uninstallCmd := newUninstallCmd(opts)
 	allowCmd := newAllowCmd(opts)
@@ -138,6 +139,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	setupCmd.GroupID = groupSetup
 	protectCmd.GroupID = groupSetup
 	verifyCmd.GroupID = groupSetup
+	launchCmd.GroupID = groupSetup
 	upgradeCmd.GroupID = groupSetup
 	uninstallCmd.GroupID = groupSetup
 	doctorCmd.GroupID = groupSetup
@@ -198,6 +200,7 @@ func NewRootCmd(ctx context.Context, outWriter, errWriter io.Writer) *cobra.Comm
 	cmd.AddCommand(quickstartCmd)
 	cmd.AddCommand(protectCmd)
 	cmd.AddCommand(verifyCmd)
+	cmd.AddCommand(launchCmd)
 	cmd.AddCommand(upgradeCmd)
 	cmd.AddCommand(uninstallCmd)
 	cmd.AddCommand(allowCmd)

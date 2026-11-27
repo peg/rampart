@@ -136,6 +136,7 @@ nav:
     - Claude Desktop: integrations/claude-desktop.md
     - MCP Proxy: features/mcp-proxy.md
     - Any CLI Agent: integrations/any-cli-agent.md
+    - Local Models: integrations/local-models.md
     - Windows Setup: guides/windows.md
   - Policies:
     - Policy Engine: features/policy-engine.md
