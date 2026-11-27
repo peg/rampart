@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refreshes unmodified built-in policy profiles; run it after upgrading.
 - **Syslog and CEF audit export** — the `rampart serve --syslog` and `--cef`
   flags are gone. The JSONL audit log can be forwarded with any log shipper.
+- **`rampart policy sync`** — the git-based policy sync command and its
+  `status` and `stop` subcommands are gone. To share a team policy, distribute
+  the YAML file yourself (for example, a `git pull` into `~/.rampart/policies/`).
+  An existing `~/.rampart/policies/org-sync.yaml` keeps loading as a normal
+  policy file and no longer updates.
 
 ### Security
 
