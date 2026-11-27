@@ -39,7 +39,6 @@ func newAuditCmd(_ *rootOptions) *cobra.Command {
 	cmd.AddCommand(newAuditStatsCmd())
 	cmd.AddCommand(newAuditSearchCmd())
 	cmd.AddCommand(newAuditReplayCmd())
-	cmd.AddCommand(newAuditWitnessCmd())
 
 	return cmd
 }
@@ -136,8 +135,6 @@ func followAuditFile(cmd *cobra.Command, auditDir, startFile string, noColor boo
 func newAuditVerifyCmd() *cobra.Command {
 	var auditDir string
 	var since string
-	var witnessConfig string
-	var requireWitness bool
 
 	cmd := &cobra.Command{
 		Use:   "verify",
@@ -154,12 +151,6 @@ a known break in the chain from a previous dev session).
 Example:
   rampart audit verify --since 2026-03-20`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if requireWitness && witnessConfig == "" {
-				return fmt.Errorf("audit witness: not_configured; --require-witness needs --witness-config")
-			}
-			if witnessConfig != "" && since != "" {
-				return fmt.Errorf("audit witness: --since cannot establish a witnessed full-chain prefix")
-			}
 			var sinceDate *time.Time
 			files, err := listAuditFiles(auditDir)
 			if err != nil {
@@ -213,12 +204,6 @@ Example:
 				return err
 			}
 
-			if witnessConfig != "" {
-				if err := verifyConfiguredWitness(cmd, auditDir, witnessConfig); err != nil {
-					return err
-				}
-			}
-
 			var message string
 			switch {
 			case len(standaloneFiles) == 0:
@@ -237,8 +222,6 @@ Example:
 
 	cmd.Flags().StringVar(&auditDir, "audit-dir", "~/.rampart/audit", "Directory containing audit JSONL files")
 	cmd.Flags().StringVar(&since, "since", "", "Only verify files from this date forward (YYYY-MM-DD), skipping older files")
-	cmd.Flags().StringVar(&witnessConfig, "witness-config", "", "Operator configuration for required independent checkpoint retrieval")
-	cmd.Flags().BoolVar(&requireWitness, "require-witness", false, "Fail when no witness is configured or required evidence cannot be verified")
 	return cmd
 }
 

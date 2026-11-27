@@ -58,9 +58,7 @@ other controls remain unproven.
 - **RC-1:** Check installation with `rampart doctor`, then validate harmless
   allowed and denied actions through the actual host. Consult the
   [support matrix](../getting-started/support-matrix.md) for each verifier's limits.
-- **RC-2:** Run `rampart audit verify` to inspect local chain integrity. For
-  evidence held outside the local machine, see
-  [external witnessing](../features/external-witness.md).
+- **RC-2:** Run `rampart audit verify` to inspect local chain integrity.
 - **RC-3:** Validate complete redacted review, denial, expiry and allow-once
   behavior through the host's approval flow. Keep deny rules for actions that
   must remain forbidden; do not replace them with asks to improve report counts.
