@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restart managed services. The `[version]` argument and the `--yes` and
   `--no-policy-update` flags are gone. `rampart upgrade --no-binary` still
   refreshes unmodified built-in policy profiles; run it after upgrading.
+- **Syslog and CEF audit export** — the `rampart serve --syslog` and `--cef`
+  flags are gone. The JSONL audit log can be forwarded with any log shipper.
 
 ### Security
 

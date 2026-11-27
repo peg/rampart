@@ -17,7 +17,7 @@ Before running AI agents unsupervised in production, verify each item.
 
 ## Monitoring
 
-- [ ] **SIEM export enabled** — `--syslog` or `--cef` sending to your SIEM ([guide](../features/siem-integration.md))
+- [ ] **Audit forwarding** — JSONL audit log shipped to your SIEM with a log forwarder
 - [ ] **Webhook notifications** — Alerts configured for `deny` events ([guide](../features/webhooks.md))
 - [ ] **Service monitoring** — Rampart process monitored (systemd, Nagios, etc.)
 - [ ] **Audit verification** — Periodic `rampart audit verify` in cron
