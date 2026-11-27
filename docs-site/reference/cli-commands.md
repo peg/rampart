@@ -226,24 +226,17 @@ rampart setup --force        # Deprecated unattended compatibility path
 
 ### `rampart upgrade`
 
-Upgrade Rampart to the latest or a specified release. Downloads from GitHub releases, verifies SHA256, atomically replaces the binary, and restarts a running background, systemd, or launchd Rampart service so it uses the new executable. Homebrew-managed installations must use `brew upgrade rampart`; Windows installations must rerun `install.ps1`.
+Print the command that upgrades Rampart for how it was installed: `brew upgrade peg/tap/rampart` for Homebrew, the `install.ps1` one-liner on Windows, and the `install.sh` one-liner otherwise. It makes no network requests and changes no files. The installers verify checksums, replace the binary, and restart managed Rampart services.
 
 ```bash
-rampart upgrade              # Upgrade to latest release
-rampart upgrade v0.8.0       # Upgrade to a specific version
-rampart upgrade --yes        # Skip confirmation prompt
-rampart upgrade --dry-run    # Preview without making changes
-rampart upgrade --no-policy-update  # Skip refreshing built-in policy profiles
-rampart upgrade --no-binary # Refresh managed policies without replacing the binary
+rampart upgrade                       # Show the upgrade command for this install
+rampart upgrade --no-binary           # Refresh unmodified built-in policy profiles
+rampart upgrade --no-binary --dry-run # Show which policy profiles would change
 ```
 
-Custom `serve --background` launches do not retain their original options or
-working directory through automatic restart, and a new binary cannot repair a
-restart already performed by the old executable that ran the upgrade. Stop the service, install the new binary, and restart
-with the original options and CWD using the [manual migration](../getting-started/upgrade.md#custom-background-services-manual-migration).
-Automatic background preservation and recovery are not supported.
+After upgrading, run `rampart upgrade --no-binary` to refresh unmodified built-in policy profiles in `~/.rampart/policies/`; edited and custom policy files are never modified. Run `rampart protect` once afterward to refresh Rampart-managed hooks and plugins and verify every detected agent boundary; unrelated host configuration is preserved.
 
-After upgrade, standard policy profiles (`standard.yaml`, `paranoid.yaml`, `yolo.yaml`) in `~/.rampart/policies/` are refreshed automatically. Custom policy files are never modified. Run `rampart protect` once afterward to refresh Rampart-managed hooks and plugins and verify every detected agent boundary; unrelated host configuration is preserved.
+A custom `serve --background` launch is not a managed service; restart it with its original options and working directory using the [manual migration](../getting-started/upgrade.md#custom-background-services-manual-migration).
 
 ### `rampart uninstall`
 
