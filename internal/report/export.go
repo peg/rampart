@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -291,4 +292,42 @@ func aggToSorted(m map[string]*ruleAgg) []ExportRule {
 		return rules[i].Count > rules[j].Count
 	})
 	return rules
+}
+
+func listAuditJSONLFiles(auditDir string) ([]string, error) {
+	entries, err := os.ReadDir(auditDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	files := make([]string, 0)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+		files = append(files, filepath.Join(auditDir, entry.Name()))
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
+func expandHomePath(path string) (string, error) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return "", nil
+	}
+	if trimmed == "~" || strings.HasPrefix(trimmed, "~/") || strings.HasPrefix(trimmed, `~\`) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		if trimmed == "~" {
+			return home, nil
+		}
+		return filepath.Join(home, trimmed[2:]), nil
+	}
+	return trimmed, nil
 }
