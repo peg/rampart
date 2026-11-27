@@ -72,33 +72,10 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
-// WithToolMapping sets custom MCP tool-to-type mappings.
-func WithToolMapping(mapping map[string]string) Option {
-	return func(p *Proxy) {
-		if mapping == nil {
-			p.toolMapping = nil
-			return
-		}
-		p.toolMapping = make(map[string]string, len(mapping))
-		for k, v := range mapping {
-			p.toolMapping[strings.ToLower(strings.TrimSpace(k))] = strings.TrimSpace(v)
-		}
-	}
-}
-
 // WithFilterTools enables tools/list response filtering.
 func WithFilterTools(enabled bool) Option {
 	return func(p *Proxy) {
 		p.filterTools = enabled
-	}
-}
-
-// WithApprovalStore sets an approval store used for require_approval decisions.
-// The embedding caller must expose a real resolver for this exact store; an
-// inaccessible private store would only make tool calls wait until expiry.
-func WithApprovalStore(store *approval.Store) Option {
-	return func(p *Proxy) {
-		p.approvals = store
 	}
 }
 
@@ -110,8 +87,8 @@ func WithApprovalStore(store *approval.Store) Option {
 type ApprovalResolver func(ctx context.Context, call engine.ToolCall, decision engine.Decision) error
 
 // WithApprovalResolver sets an external resolver for ask and require_approval
-// decisions, such as the running rampart serve approval queue. An approval
-// store set with WithApprovalStore takes precedence.
+// decisions, such as the running rampart serve approval queue. Without a
+// resolver, approval-gated calls are denied.
 func WithApprovalResolver(resolver ApprovalResolver) Option {
 	return func(p *Proxy) {
 		p.resolver = resolver
@@ -146,8 +123,6 @@ type Proxy struct {
 	mode        string
 	logger      *slog.Logger
 	filterTools bool
-	toolMapping map[string]string
-	approvals   *approval.Store
 	resolver    ApprovalResolver
 	agentID     string
 	sessionID   string
@@ -364,10 +339,6 @@ func readLine(reader *bufio.Reader) ([]byte, error) {
 	}
 }
 
-func (p *Proxy) handleClientLine(line []byte) error {
-	return p.handleClientLineWithContext(context.Background(), line)
-}
-
 func (p *Proxy) handleClientLineWithContext(ctx context.Context, line []byte) error {
 	trimmed := bytes.TrimSpace(line)
 	if p.mode == "enforce" {
@@ -492,7 +463,7 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 	}
 
 	requestData := buildRequestData(req.Method, params.Name, params.Arguments)
-	mappedTool := MapToolName(params.Name, p.toolMapping)
+	mappedTool := MapToolName(params.Name)
 
 	call := engine.ToolCall{
 		ID:        audit.NewEventID(),
@@ -532,51 +503,15 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 	}
 
 	needsApproval := p.mode == "enforce" && (decision.Action == engine.ActionRequireApproval || decision.Action == engine.ActionAsk)
-	if needsApproval && p.approvals == nil && p.resolver != nil {
-		if approved, err := p.resolveExternalApproval(ctx, req.ID, call, decision); !approved {
-			return err
-		}
-	} else if needsApproval {
-		message := strings.TrimSpace(decision.Message)
-		if message == "" {
-			message = "request requires approval"
-		}
-		if p.approvals == nil {
+	if needsApproval {
+		if p.resolver == nil {
 			if HasID(req.ID) {
 				return p.writeErrorToClient(req.ID, jsonRPCDenyCode, "Rampart: approval required, but this MCP proxy has no approval resolver; refusing request")
 			}
 			return nil
 		}
-
-		pending, err := p.approvals.Create(call, decision)
-		if err != nil {
-			p.logger.Error("mcp: approval store full", "error", err)
-			return p.writeErrorToClient(req.ID, jsonRPCDenyCode, "Rampart: "+err.Error())
-		}
-		p.logger.Info("mcp: approval required",
-			"id", pending.ID,
-			"tool", mappedTool,
-			"action", approval.SummarizeCall(call).String(),
-			"message", decision.Message,
-			"expires", pending.ExpiresAt.Format(time.RFC3339),
-		)
-
-		select {
-		case <-pending.Done():
-			if pending.Status != approval.StatusApproved {
-				denyMessage := message
-				if pending.Status == approval.StatusExpired {
-					denyMessage = "request approval expired"
-				}
-				if HasID(req.ID) {
-					return p.writeErrorToClient(req.ID, jsonRPCDenyCode, "Rampart: "+denyMessage)
-				}
-				return nil
-			}
-		case <-ctx.Done():
-			return nil
-		case <-p.stopCh:
-			return nil
+		if approved, err := p.resolveExternalApproval(ctx, req.ID, call, decision); !approved {
+			return err
 		}
 	}
 
@@ -1021,7 +956,7 @@ func (p *Proxy) filterToolsListResponse(resp Response) ([]byte, error) {
 			continue
 		}
 		name, _ := toolObj["name"].(string)
-		toolType := MapToolName(name, p.toolMapping)
+		toolType := MapToolName(name)
 		requestData := map[string]any{
 			"mcp_method": "tools/list",
 			"mcp_tool":   name,

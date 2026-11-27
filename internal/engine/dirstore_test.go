@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDirStore_LoadMultipleFiles(t *testing.T) {
+func TestMultiStoreDir_LoadMultipleFiles(t *testing.T) {
 	dir := t.TempDir()
 
 	// Write two policy files.
@@ -46,7 +46,7 @@ policies:
           default: true
 `)
 
-	store := NewDirStore(dir, nil)
+	store := NewMultiStore("", dir, nil)
 	cfg, err := store.Load()
 	require.NoError(t, err)
 	assert.Equal(t, "deny", cfg.DefaultAction)
@@ -136,7 +136,7 @@ tests:
 	assert.Equal(t, "blocks removal", cfg.Tests[0].Name)
 }
 
-func TestDirStore_SortedOrder(t *testing.T) {
+func TestMultiStoreDir_SortedOrder(t *testing.T) {
 	dir := t.TempDir()
 
 	// Write files in reverse order — should still load alphabetically.
@@ -162,7 +162,7 @@ policies:
     rules: [{action: allow, when: {default: true}}]
 `)
 
-	store := NewDirStore(dir, nil)
+	store := NewMultiStore("", dir, nil)
 	cfg, err := store.Load()
 	require.NoError(t, err)
 	require.Len(t, cfg.Policies, 3)
@@ -171,7 +171,7 @@ policies:
 	assert.Equal(t, "z-policy", cfg.Policies[2].Name)
 }
 
-func TestDirStore_InvalidYAMLFailsClosed(t *testing.T) {
+func TestMultiStoreDir_InvalidYAMLFailsClosed(t *testing.T) {
 	dir := t.TempDir()
 
 	writeTestFile(t, filepath.Join(dir, "01-good.yaml"), `
@@ -193,28 +193,13 @@ policies:
     rules: [{action: allow, when: {default: true}}]
 `)
 
-	store := NewDirStore(dir, nil)
+	store := NewMultiStore("", dir, nil)
 	_, err := store.Load()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "02-bad.yaml")
 }
 
-func TestDirStore_EmptyDir(t *testing.T) {
-	dir := t.TempDir()
-	store := NewDirStore(dir, nil)
-	cfg, err := store.Load()
-	require.NoError(t, err)
-	assert.Empty(t, cfg.Policies)
-}
-
-func TestDirStore_NonexistentDir(t *testing.T) {
-	store := NewDirStore("/tmp/rampart-nonexistent-dir-test-"+time.Now().Format("20060102150405"), nil)
-	cfg, err := store.Load()
-	require.NoError(t, err)
-	assert.Empty(t, cfg.Policies)
-}
-
-func TestDirStore_DuplicatePolicyNamesFailClosed(t *testing.T) {
+func TestMultiStoreDir_DuplicatePolicyNamesFailClosed(t *testing.T) {
 	dir := t.TempDir()
 
 	writeTestFile(t, filepath.Join(dir, "01-first.yaml"), `
@@ -232,13 +217,13 @@ policies:
     rules: [{action: allow, when: {default: true}}]
 `)
 
-	store := NewDirStore(dir, nil)
+	store := NewMultiStore("", dir, nil)
 	_, err := store.Load()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "duplicate policy name")
 }
 
-func TestDirStore_AllowsOnlyLegacyManagedOpenClawCollision(t *testing.T) {
+func TestMultiStoreDir_AllowsOnlyLegacyManagedOpenClawCollision(t *testing.T) {
 	dir := t.TempDir()
 
 	writeTestFile(t, filepath.Join(dir, "openclaw.yaml"), `
@@ -256,13 +241,13 @@ policies:
     rules: [{action: deny, when: {default: true}}]
 `)
 
-	cfg, err := NewDirStore(dir, nil).Load()
+	cfg, err := NewMultiStore("", dir, nil).Load()
 	require.NoError(t, err)
 	require.Len(t, cfg.Policies, 1)
 	assert.Equal(t, filepath.Join(dir, "openclaw.yaml"), cfg.Policies[0].FilePath)
 }
 
-func TestDirStore_LegacyProfileNamesDoNotExcuseOtherDuplicates(t *testing.T) {
+func TestMultiStoreDir_LegacyProfileNamesDoNotExcuseOtherDuplicates(t *testing.T) {
 	dir := t.TempDir()
 
 	for _, name := range []string{"openclaw.yaml", "standard.yaml"} {
@@ -275,7 +260,7 @@ policies:
 `)
 	}
 
-	_, err := NewDirStore(dir, nil).Load()
+	_, err := NewMultiStore("", dir, nil).Load()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "duplicate policy name")
 }
@@ -683,7 +668,7 @@ func TestLayeredStore_InvalidProjectPolicyFailsClosed(t *testing.T) {
 	assert.Contains(t, err.Error(), "parse project policy")
 }
 
-func TestDirStore_RejectsPolicyWithExcessiveDoubleStar(t *testing.T) {
+func TestMultiStoreDir_RejectsPolicyWithExcessiveDoubleStar(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "policy.yaml"), `
 version: "1"
@@ -697,7 +682,7 @@ policies:
         when:
           command_matches: ["curl **-d @**/.ssh/**"]
 `)
-	store := NewDirStore(dir, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	store := NewMultiStore("", dir, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	_, err := store.Load()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid policy")
@@ -981,7 +966,7 @@ e: {a: *d, b: *d, c: *d, d: *d}
 	// The real test is that we got here without panicking.
 }
 
-func TestDirStore_OversizedFileFailsClosed(t *testing.T) {
+func TestMultiStoreDir_OversizedFileFailsClosed(t *testing.T) {
 	dir := t.TempDir()
 
 	// Write one valid file and one oversized file.
@@ -1000,13 +985,13 @@ policies:
 	require.NoError(t, f.Truncate(maxPolicyFileSize+1))
 	f.Close()
 
-	store := NewDirStore(dir, nil)
+	store := NewMultiStore("", dir, nil)
 	_, err = store.Load()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "too large")
 }
 
-func TestDirStore_RejectsInvalidTopLevelConfiguration(t *testing.T) {
+func TestMultiStoreDir_RejectsInvalidTopLevelConfiguration(t *testing.T) {
 	tests := []struct {
 		name    string
 		content string
@@ -1029,14 +1014,14 @@ func TestDirStore_RejectsInvalidTopLevelConfiguration(t *testing.T) {
 			dir := t.TempDir()
 			writeTestFile(t, filepath.Join(dir, "policy.yaml"), test.content)
 
-			_, err := NewDirStore(dir, nil).Load()
+			_, err := NewMultiStore("", dir, nil).Load()
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), test.wantErr)
 		})
 	}
 }
 
-func TestDirStore_LoadsPolicyWrittenByCustomPolicyWriter(t *testing.T) {
+func TestMultiStoreDir_LoadsPolicyWrittenByCustomPolicyWriter(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "custom.yaml")
 
@@ -1044,7 +1029,7 @@ func TestDirStore_LoadsPolicyWrittenByCustomPolicyWriter(t *testing.T) {
 	require.NoError(t, custom.AddRule("deny", "rm *", "blocked by user rule", "exec"))
 	require.NoError(t, policy.SaveCustomPolicy(path, custom))
 
-	cfg, err := NewDirStore(dir, nil).Load()
+	cfg, err := NewMultiStore("", dir, nil).Load()
 	require.NoError(t, err)
 	require.Len(t, cfg.Policies, 1)
 	require.Len(t, cfg.Policies[0].Rules, 1)

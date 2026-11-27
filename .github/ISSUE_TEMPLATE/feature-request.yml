@@ -1,0 +1,39 @@
+name: Feature or integration request
+description: Suggest a feature, or support for an agent, harness or local model server.
+title: "[Request]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This request is public.** Do not include credentials, private configuration or security bypass details. Report vulnerabilities through [SECURITY.md](https://github.com/peg/rampart/blob/main/SECURITY.md).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the task or risk, not only the solution.
+      placeholder: "I run OpenCode against a local model in LM Studio and want Rampart to ..."
+    validations:
+      required: true
+  - type: input
+    id: target
+    attributes:
+      label: Agent, harness or model server (if any)
+      description: Name and version, with a link to its docs or hook API if you know it.
+      placeholder: "OpenCode 1.x with Ollama, or none"
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like Rampart to do?
+      placeholder: "When the agent ..., Rampart should ..."
+    validations:
+      required: true
+  - type: dropdown
+    id: help
+    attributes:
+      label: Would you like to work on this?
+      options:
+        - "No"
+        - "Yes, with some guidance"
+        - "Yes, I have a design in mind"
+    validations:
+      required: true

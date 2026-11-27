@@ -1,208 +1,134 @@
 # Contributing to Rampart
 
-Thanks for helping make AI tools safer. Contributions do not need to be large:
-clear bug reports, documentation fixes, platform compatibility improvements,
-and focused regression tests are all valuable.
+Thanks for helping make AI agents safer. Small contributions are welcome:
+a clear bug report, a docs fix, a platform fix, or one focused regression test.
 
-Rampart is a security boundary, so changes are reviewed carefully. The goal is
-not ceremony or maximum test count; it is code and documentation that are easy
-to understand, verify, and maintain.
+Rampart is a security boundary, so we review carefully. What we look for is
+code that is short, easy to read and easy to verify. A change that deletes
+code and keeps behavior is often the best kind.
 
-## Before you start
+## Quick start
 
-- Report suspected vulnerabilities privately using [SECURITY.md](SECURITY.md).
-  Do not open a public issue for an unpatched bypass or credential exposure.
-- Small, self-contained fixes can go directly to a pull request.
-- For a new integration, major behavior change, or architectural rewrite, open
-  an issue first so we can agree on the boundary and avoid wasted work.
-- Search existing issues and pull requests before starting.
-
-Useful contribution areas include:
-
-- reproducing and fixing cross-platform bugs;
-- keeping supported integrations compatible with current upstream releases;
-- simplifying integration lifecycle and CLI code;
-- improving user documentation and error messages;
-- adding a focused regression for a demonstrated security boundary; and
-- measuring and improving real tool-call latency or allocations.
-
-## Development setup
-
-Rampart requires the Go version declared in [`go.mod`](go.mod). Clone the
-repository, then run:
+You need the Go version in [`go.mod`](go.mod).
 
 ```bash
+git clone https://github.com/peg/rampart && cd rampart
+git checkout staging
+go build -o rampart ./cmd/rampart
 go test ./...
-go vet ./...
-make security-assurance
 ```
 
-Documentation work additionally uses the Python packages in
-[`docs-requirements.txt`](docs-requirements.txt). Some integration checks need
-Node.js or Python; install those only when working on the affected integration.
-The documentation build also requires the D2 version and checksum pinned in
-[`.github/workflows/docs.yml`](.github/workflows/docs.yml) when regenerating its
-architecture diagram.
-
-## Repository workflow
-
-1. Create a focused branch from current `staging`.
-2. Make the smallest coherent change that solves the problem.
-3. Add or update only the tests and documentation needed for that behavior.
-4. Run checks proportional to the change, followed by the full source checks
-   before requesting review.
-5. Open the pull request against `staging` as a draft while iterating. Drafts
-   receive a fast Linux source check; marking the pull request ready starts the
-   complete cross-platform, packaging, and container matrix.
-6. Explain the user-visible result, security impact, limitations, and
-   validation performed before requesting review.
-
-The `main` branch represents published releases. Release merges and tags are
-maintainer-managed.
-
-## Design principles
-
-- Prefer the standard library and existing shared helpers.
-- Keep CLI commands focused on parsing and orchestration; reusable behavior
-  belongs in an appropriate `internal/` package.
-- Preserve command, path, tool, and request identity across enforcement,
-  approval, and audit paths.
-- Evaluate every target in compound actions and let the most restrictive
-  decision win.
-- Fail closed when Rampart owns a decision and cannot safely classify, parse,
-  validate, or persist it.
-- Preserve unrelated user configuration and refuse ambiguous ownership when
-  installing, repairing, or removing integrations.
-- Avoid broad refactors in security fixes. Prefer readable, bounded patches.
-- Every production file, test, fixture, script, and document should protect a
-  distinct behavior or serve a durable public purpose.
-
-Comments should explain why a constraint exists rather than restating the code.
-Return and wrap errors instead of swallowing them or matching their text. Do not
-panic in library code.
-
-## Testing and performance
-
-Behavior changes should have focused regression coverage. Security-sensitive
-changes should include adversarial and failure-path cases. Do not add tests for
-trivial wiring or duplicate the same assertion across several layers.
-
-At minimum, substantive changes should pass:
+Before you open a pull request, also run:
 
 ```bash
-go test ./...
 go vet ./...
 make security-assurance
 git diff --check
 ```
 
-Also run the affected script, documentation build, package build, race test, or
-integration adapter when relevant. CI supplies Linux, macOS, Windows, packaging,
-container, documentation, and policy checks.
+CI covers Linux, macOS, Windows, packaging, the container and the docs.
 
-Rampart runs in the tool-call path. For matcher, parser, proxy, hook, or audit
-hot-path changes, measure a representative before/after benchmark with
-allocations. A synthetic microbenchmark is useful only when it represents the
-shipped policy and actual path being changed.
+## Good places to start
 
-## Security review questions
+- **Try Rampart with a local model** (Ollama, LM Studio, llama.cpp) and report
+  what the model tried and what Rampart decided. Start with
+  [Local models](docs-site/integrations/local-models.md).
+- **Keep an integration working** with the latest release of its agent
+  (Claude Code, Codex, OpenCode, Cline and others).
+- **Fix a cross-platform bug**, especially on Windows.
+- **Simplify**: remove duplication or dead paths without changing behavior.
+- **Docs and error messages** that confused you are worth fixing.
 
-For security-relevant work, describe the answers in the pull request:
+## Before you start
 
-- Can alternate casing, quoting, wrappers, symlinks, hard links, or path forms
-  change what Rampart evaluates?
-- Can a compound or multi-target action hide a more dangerous component?
-- Does an error, timeout, malformed message, or persistence failure fail safely?
-- Is the exact approved identity the identity that will execute?
-- Could secrets or terminal controls reach logs, audit storage, APIs, SSE,
-  dashboards, notifications, or errors?
-- Does an upgrade preserve user state and repair only Rampart-owned state?
+- **Security bugs go to [SECURITY.md](SECURITY.md), never a public issue.**
+  That includes bypasses, policy evasion and credential exposure.
+- Small fixes can go straight to a pull request.
+- For a new integration, a big behavior change or a rewrite, open an issue
+  first so we agree on the approach before you spend time on it.
 
-Never include credentials, personal host details, provider output, agent
-memories, sessions, workspaces, or private test-lab evidence in a pull request.
+## Workflow
 
-## Integration contributions
+1. Branch from `staging` and open your pull request against `staging`.
+   `main` holds releases and is maintainer-managed.
+2. Keep one purpose per pull request. Use a conventional prefix such as
+   `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `security:` or `chore:`.
+3. Open it as a draft while iterating. Drafts get a fast Linux check; marking
+   it ready runs the full matrix.
+4. Fill in the pull request template: what changes for users, what you ran,
+   and what it does not cover.
 
-Integration support must be described conservatively. Use current primary
-upstream documentation or source, preserve unrelated host configuration, and
-document host-owned timeout or crash behavior.
+## How we write code
 
-An adapter or generated configuration proves that Rampart's side works; it does
-not prove that an authenticated host loaded the integration. Keep
-[`assurance/integrations.yaml`](assurance/integrations.yaml), the support matrix,
-integration guide, and verifier behavior synchronized.
+- Prefer the standard library and existing helpers. A new dependency needs a
+  reason (necessity, license, maintenance, binary size).
+- Fail closed: when Rampart owns a decision and cannot parse, classify or
+  persist it, the answer is deny.
+- Deny wins. Every target in a compound action is evaluated, and the most
+  restrictive decision applies.
+- Preserve the user's other configuration when installing or removing an
+  integration.
+- Comments explain why, not what. Wrap and return errors; do not panic in
+  library code.
+- Add a focused regression test for behavior changes. Security changes need
+  adversarial and failure cases. Skip tests for trivial wiring.
+- For hot-path changes (matcher, parser, hook, proxy, audit), include a
+  before-and-after benchmark with allocations.
 
-Do not add credential-aware host runners or private environment details to this
-repository. Public compatibility checks must be credential-free and
-reproducible.
+### Security changes
 
-## Documentation sites
+Answer these in the pull request:
 
-This repository owns two public sites:
+- Can casing, quoting, wrappers, symlinks or other path forms change what
+  Rampart evaluates?
+- Can a compound action hide a more dangerous part?
+- Does an error, timeout or malformed message fail safely?
+- Is the approved action exactly the one that runs?
+- Could secrets reach logs, audit records, the API or notifications?
 
-- `rampart.sh` is served from `docs/` on `main`. Its landing page has one
-  canonical source: [`docs/index.html`](docs/index.html).
-- `docs.rampart.sh` is built by MkDocs from `docs-site/` and deployed by
-  [`.github/workflows/docs.yml`](.github/workflows/docs.yml).
+### Integrations
 
-The MkDocs homepage is [`docs-site/index.md`](docs-site/index.md); it is not a
-copy of the standalone landing page. User guides live in `docs-site/`. Small
-files under `docs/guides/` and `docs/migration/` preserve old public URLs and
-should remain redirects rather than duplicate guides.
+Describe support conservatively and base it on the agent's current docs or
+source. A working adapter proves Rampart's side, not that the agent loaded it.
+Keep [`assurance/integrations.yaml`](assurance/integrations.yaml), the docs
+page and `rampart verify` in sync. Compatibility checks must not need
+credentials.
 
-The API reference, architecture, and threat model are canonical under `docs/`;
-their MkDocs pages include those sources rather than copying them.
+## Docs
 
-To build the documentation locally:
+User docs live in `docs-site/` and build with MkDocs:
 
 ```bash
 python -m pip install -r docs-requirements.txt
 mkdocs build --strict
 ```
 
-## Dependencies
-
-Prefer the standard library. A new direct dependency needs maintainer agreement
-and a pull-request explanation covering necessity, maintenance health, license,
-binary impact, and security surface. Do not add a framework when a focused
-existing package or standard-library solution is sufficient.
-
-## Commit and pull-request guidance
-
-Use a conventional prefix such as `feat:`, `fix:`, `docs:`, `test:`,
-`refactor:`, `security:`, `ci:`, or `chore:`. Keep each commit and pull request
-to one reviewable purpose.
-
-A useful pull-request description answers:
-
-- What changes for users?
-- Why is this the smallest durable solution?
-- What security or compatibility boundary is affected?
-- What remains intentionally unsupported?
-- Which exact checks were run?
-- Did latency, allocations, binary size, or repository footprint change?
+The landing page at rampart.sh is `docs/index.html`. The API reference,
+architecture and threat model live in `docs/` and are included by the docs site.
 
 ## Project layout
 
 ```text
-cmd/rampart/cli/   CLI commands and integration orchestration
+cmd/rampart/cli/   CLI commands and integration setup
 internal/engine/   Policy evaluation and matching
-internal/proxy/    HTTP service, approvals, and API boundaries
-internal/audit/    Hash-chained audit storage and exporters
-internal/approval/ Approval state and replay handling
-internal/mcp/      MCP JSON-RPC proxy
-internal/bridge/   Host compatibility bridges
-internal/plugin/   Embedded native integration plugins
+internal/proxy/    HTTP service and approvals API
+internal/audit/    Hash-chained audit log
+internal/approval/ Approval state
+internal/mcp/      MCP proxy
+internal/plugin/   Embedded agent plugins
 pkg/sdk/           Public Go SDK
-policies/          Shipped policy profiles
+policies/          Built-in policy profiles
 docs-site/         User documentation
-assurance/         Public claim and regression manifests
+assurance/         Integration claims and their evidence
 ```
 
-The deny-wins rule is a core invariant: if any applicable policy denies an
-action, the final decision is deny.
+## Privacy
+
+Never include credentials, real hostnames, personal paths, agent sessions,
+prompts or memories in issues, pull requests or test fixtures. Use synthetic
+values.
 
 ## License
 
-By contributing, you agree that your contribution is provided under the
+By contributing, you agree that your contribution is licensed under the
 project's [Apache 2.0 license](LICENSE).

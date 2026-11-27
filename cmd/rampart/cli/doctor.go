@@ -1477,18 +1477,8 @@ func doctorVersionCheck(w io.Writer, silent bool, emit emitFn) int {
 	}
 
 	if !silent {
-		// Detect install method for upgrade hint
 		exe, _ := os.Executable()
-		var hint string
-		switch {
-		case strings.Contains(exe, "homebrew") || strings.Contains(exe, "Cellar") || strings.Contains(exe, "linuxbrew"):
-			hint = "  brew upgrade rampart"
-		case strings.Contains(exe, filepath.Join("go", "bin")):
-			hint = fmt.Sprintf("  go install github.com/peg/rampart/cmd/rampart@%s", release.TagName)
-		default:
-			hint = fmt.Sprintf("  go install github.com/peg/rampart/cmd/rampart@%s\n  — or download from https://github.com/peg/rampart/releases", release.TagName)
-		}
-		fmt.Fprintf(w, "  ⚠ Update available: %s → %s\n%s\n", current, release.TagName, hint)
+		fmt.Fprintf(w, "  ⚠ Update available: %s → %s\n  %s\n", current, release.TagName, upgradeInstruction(runtime.GOOS, exe))
 	}
 	return 0 // informational, not an issue
 }
@@ -1769,29 +1759,6 @@ func doctorOpenClawProviderDiscovery(emit emitFn) (warnings int) {
 		"plugins.allow is restrictive, but bundled provider discovery is still in compatibility mode"+hintSep+
 			"After confirming plugins.allow includes every bundled provider you intend to keep, run: openclaw config set plugins.bundledDiscovery allowlist")
 	return 1
-}
-
-func normalizedReleaseVersion(version string) (string, bool) {
-	version = strings.TrimSpace(version)
-	if version == "" || version == "dev" || version == "unknown" || strings.Contains(version, "dirty") || strings.Contains(version, "staging") || strings.HasPrefix(version, "v0.0.0-") {
-		return "", false
-	}
-	version = strings.TrimPrefix(version, "v")
-	if isGoPseudoVersion(version) {
-		return "", false
-	}
-	if strings.Contains(version, "-g") {
-		return "", false
-	}
-	parsed, ok := parseReleaseVersion(version)
-	if !ok {
-		return "", false
-	}
-	normalized := fmt.Sprintf("%d.%d.%d", parsed.major, parsed.minor, parsed.patch)
-	if len(parsed.prerelease) > 0 {
-		normalized += "-" + strings.Join(parsed.prerelease, ".")
-	}
-	return normalized, true
 }
 
 // isGitDescribeVersion reports a `git describe` build such as

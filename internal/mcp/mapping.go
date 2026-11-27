@@ -50,14 +50,10 @@ var dangerousKeywords = []string{
 }
 
 // MapToolName returns the Rampart tool type for an MCP tool name.
-// Custom mappings take precedence. Destructive inference precedes ordinary
-// defaults so an exact convenience mapping such as delete_file cannot
-// downgrade a destructive operation to a generic write.
-func MapToolName(name string, custom map[string]string) string {
-	if mapped, ok := lookupMapping(name, custom); ok {
-		return mapped
-	}
-
+// Destructive inference precedes ordinary defaults so an exact convenience
+// mapping such as delete_file cannot downgrade a destructive operation to a
+// generic write.
+func MapToolName(name string) string {
 	lower := strings.ToLower(name)
 	for _, kw := range destructiveKeywords {
 		if strings.Contains(lower, kw) {
@@ -76,9 +72,6 @@ func MapToolName(name string, custom map[string]string) string {
 		}
 	}
 
-	if mapped, ok := lookupMapping(defaultMappingKey, custom); ok {
-		return mapped
-	}
 	if mapped, ok := lookupMapping(defaultMappingKey, DefaultToolTypeMapping); ok {
 		return mapped
 	}

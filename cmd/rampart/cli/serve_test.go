@@ -350,8 +350,8 @@ func TestIsRampartServeCommand(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isRampartServeCommand(tt.comm, tt.args); got != tt.want {
-				t.Fatalf("isRampartServeCommand(%q, %q) = %v, want %v", tt.comm, tt.args, got, tt.want)
+			if got := isRampartServeCommandForExecutable(tt.comm, tt.args, ""); got != tt.want {
+				t.Fatalf("isRampartServeCommandForExecutable(%q, %q, \"\") = %v, want %v", tt.comm, tt.args, got, tt.want)
 			}
 		})
 	}
@@ -366,7 +366,7 @@ func TestIsRampartServeCommandAuthenticatesPublishedExecutable(t *testing.T) {
 	if isRampartServeCommandForExecutable("rampart-o", args, filepath.Join(t.TempDir(), "rampart-openclaw-candidate")) {
 		t.Fatal("mismatched executable identity authenticated")
 	}
-	if isRampartServeCommand("rampart-o", args) {
+	if isRampartServeCommandForExecutable("rampart-o", args, "") {
 		t.Fatal("renamed binary authenticated without published executable identity")
 	}
 }

@@ -86,8 +86,9 @@ irm https://rampart.sh/install.ps1 | iex
 go install github.com/peg/rampart/cmd/rampart@latest
 ```
 
-Source builds require Go 1.26.11 or newer. Windows upgrades use the PowerShell
-installer; binary self-upgrade is intentionally disabled there.
+Source builds require Go 1.26.11 or newer. To upgrade, rerun the command you
+installed with (`rampart upgrade` prints it), then `rampart upgrade --no-binary`
+to refresh built-in policies.
 
 </details>
 
