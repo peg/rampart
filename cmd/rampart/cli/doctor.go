@@ -1477,18 +1477,8 @@ func doctorVersionCheck(w io.Writer, silent bool, emit emitFn) int {
 	}
 
 	if !silent {
-		// Detect install method for upgrade hint
 		exe, _ := os.Executable()
-		var hint string
-		switch {
-		case strings.Contains(exe, "homebrew") || strings.Contains(exe, "Cellar") || strings.Contains(exe, "linuxbrew"):
-			hint = "  brew upgrade rampart"
-		case strings.Contains(exe, filepath.Join("go", "bin")):
-			hint = fmt.Sprintf("  go install github.com/peg/rampart/cmd/rampart@%s", release.TagName)
-		default:
-			hint = fmt.Sprintf("  go install github.com/peg/rampart/cmd/rampart@%s\n  — or download from https://github.com/peg/rampart/releases", release.TagName)
-		}
-		fmt.Fprintf(w, "  ⚠ Update available: %s → %s\n%s\n", current, release.TagName, hint)
+		fmt.Fprintf(w, "  ⚠ Update available: %s → %s\n  %s\n", current, release.TagName, upgradeInstruction(runtime.GOOS, exe))
 	}
 	return 0 // informational, not an issue
 }

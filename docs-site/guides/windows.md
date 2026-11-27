@@ -84,7 +84,6 @@ rampart test "rm -rf /"
 | Feature | Status | Notes |
 |---------|--------|-------|
 | `rampart serve install` | ❌ | Use Task Scheduler or NSSM for automatic startup |
-| `rampart upgrade` | ❌ Re-run installer | Binary self-upgrade is intentionally disabled; `--no-binary` can refresh policies |
 | `rampart wrap` | ❌ Unix only | Uses `$SHELL` |
 | `rampart preload` | ❌ Unix only | Source-built native library; macOS SIP and hardened-runtime limits apply |
 
