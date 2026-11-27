@@ -107,6 +107,4 @@ Sync state (URL, last commit, timestamps) is persisted to `~/.rampart/sync-state
 |---|---|
 | `policy sync` | Team-wide policies from a shared git repo |
 | `rampart init --project` | Per-repo policies committed alongside code |
-| Community registry | Getting started with pre-built profiles |
-
-For the community policy registry, see [Community Policy Registry](policy-registry.md).
+| Built-in profiles | Getting started with pre-built profiles |

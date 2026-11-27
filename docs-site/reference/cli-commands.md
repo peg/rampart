@@ -764,7 +764,7 @@ rampart policy test --run "blocks-*" --verbose tests.yaml
 
 ## Policy Management
 
-Commands for linting, discovering, and managing policy profiles from the Rampart registry.
+Commands for linting, discovering, and managing policy profiles.
 
 ### `rampart policy lint <file>`
 
@@ -779,80 +779,34 @@ Exit code `1` if errors are found; `0` if only warnings or info.
 
 ### `rampart policy list`
 
-List all available policy profiles — both built-in profiles and community policies from the Rampart registry. Uses a local cache (TTL: 1 hour) and falls back to embedded data when offline.
+List the built-in policy profiles.
 
 ```bash
-rampart policy list                    # List all profiles
+rampart policy list                    # List built-in profiles
 rampart policy list --extended         # Show SOURCE and INSTALLED columns
-rampart policy list --refresh          # Force refresh registry cache
 rampart policy list --json             # JSON output
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--refresh` | `false` | Force refresh of registry cache |
 | `--extended` | `false` | Show `SOURCE` and `INSTALLED` columns |
-| `--json` | `false` | Output as JSON |
-
-### `rampart policy search <query>`
-
-Search community policies in the registry by name, description, or tag. Results are sorted by bench score (descending).
-
-```bash
-rampart policy search docker                     # Search for docker-related policies
-rampart policy search "prompt injection"         # Multi-word search
-rampart policy search ci --tag ci                # Filter by exact tag
-rampart policy search security --min-score 80   # Minimum bench score
-rampart policy search docker --json              # JSON output
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--tag` | _(none)_ | Filter by exact tag |
-| `--min-score` | `0` | Minimum bench score (0–100) |
 | `--json` | `false` | Output as JSON |
 
 ### `rampart policy show <name>`
 
-Print the full YAML of a built-in profile or community policy without installing it.
+Print the full YAML of a built-in profile without installing it.
 
 ```bash
 rampart policy show standard
 rampart policy show paranoid
-rampart policy show docker-restricted
-```
-
-### `rampart policy fetch <name>`
-
-Download and install a community policy profile to `~/.rampart/policies/<name>.yaml`. Verifies the SHA256 checksum before writing. Falls back to the embedded policy copy when the registry is unreachable.
-
-```bash
-rampart policy fetch docker-restricted          # Install a community policy
-rampart policy fetch docker-restricted --force  # Overwrite if already installed
-rampart policy fetch docker-restricted --dry-run  # Preview install path
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--force` | `false` | Overwrite an existing policy file |
-| `--dry-run` | `false` | Preview download and install path without writing |
-
-### `rampart policy install <name>`
-
-Alias for `rampart policy fetch`. Downloads and installs a community policy profile.
-
-```bash
-rampart policy install docker-restricted
-rampart policy install docker-restricted --force
-rampart policy install docker-restricted --dry-run
 ```
 
 ### `rampart policy remove <name>`
 
-Remove an installed community policy profile from `~/.rampart/policies/`. Built-in profiles (`standard`, `paranoid`, `yolo`, etc.) cannot be removed.
+Remove a policy file from `~/.rampart/policies/`. Built-in profiles (`standard`, `paranoid`, `yolo`, etc.) cannot be removed.
 
 ```bash
-rampart policy remove docker-restricted
+rampart policy remove my-policy
 ```
 
 ### `rampart policy sync <git-url>`
