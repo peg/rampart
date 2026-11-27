@@ -304,9 +304,6 @@ rampart serve --addr 127.0.0.1             # Bind to localhost only
 rampart serve --port 8080                  # Custom port
 rampart serve --config policy.yaml         # Custom policy
 rampart serve --audit-dir /var/log/rampart # Custom audit log directory
-rampart serve --syslog localhost:514       # With syslog output
-rampart serve --cef                        # With CEF file output
-rampart serve --syslog localhost:514 --cef # CEF to syslog
 rampart serve --tls-auto                   # HTTPS with auto-generated self-signed cert
 rampart serve --tls-cert cert.pem --tls-key key.pem  # HTTPS with your own cert
 ```

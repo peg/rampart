@@ -106,7 +106,7 @@ context. [Learn more →](reference/owasp-mapping.md#response-scanning-asi06)
 
     ---
 
-    Webhook notifications to Discord, Slack, or Teams when something gets blocked. Export to security monitoring tools (Splunk, Wazuh, etc.) via syslog.
+    Webhook notifications to Discord, Slack, or Teams when something gets blocked.
 
     [:octicons-arrow-right-24: Learn more](features/webhooks.md)
 
