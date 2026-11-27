@@ -70,7 +70,7 @@ awk -F'\t' -v baseack="$tmp/base-ack" -v base="$tmp/base" -v ackfile="$ack" '
       printf "%s\t%s\t%s\t%s\n", part[1], was[key], to, part[2]
       n++
     }
-    # Not an error: a release diff nets out changes reverted or split across pull requests.
+    # Not an error: a release diff omits changes that were reverted before release.
     for (k in acked) printf "Note: %s lists a change this diff does not make: %s\n", ackfile, k
     if (n > 0) {
       printf "%d recorded verdicts got weaker or were removed without review.\n", n
