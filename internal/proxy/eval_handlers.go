@@ -164,47 +164,12 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request) {
 	}
 	// Monitor mode is observational at an actual tool boundary. Preserve the
 	// policy result explicitly, but return an effective allow so adapters do not
-	// accidentally enforce a deny/ask/webhook decision while the service is
+	// accidentally enforce a deny/ask decision while the service is
 	// configured to block nothing.
 	s.applyMonitorToolDecision(resp, decision)
 
 	if s.mode == "enforce" && decision.Action == engine.ActionDeny {
 		writeEvalResponse(w, http.StatusForbidden, resp)
-		return
-	}
-
-	if s.mode == "enforce" && decision.Action == engine.ActionWebhook {
-		webhookDecision := s.executeWebhookAction(call, decision)
-		resp["allowed"] = webhookDecision.Action == engine.ActionAllow || webhookDecision.Action == engine.ActionWatch
-		resp["decision"] = webhookDecision.Action.String()
-		resp["message"] = webhookDecision.Message
-
-		webhookAuditID, err := s.writeAudit(req, toolName, webhookDecision)
-		if err != nil && s.mode == "enforce" {
-			writeError(w, http.StatusServiceUnavailable, "audit storage is unavailable; refusing tool call")
-			return
-		}
-		if webhookAuditID != "" {
-			auditID = webhookAuditID
-			resp["audit_id"] = webhookAuditID
-		}
-
-		if webhookDecision.Action == engine.ActionDeny {
-			writeEvalResponse(w, http.StatusForbidden, resp)
-			return
-		}
-
-		blocked, responseAuditErr := s.evaluateAndAuditResponse(req, call, toolName, resp, auditID)
-		if responseAuditErr != nil && s.mode == "enforce" {
-			writeError(w, http.StatusServiceUnavailable, "audit storage is unavailable; refusing tool response")
-			return
-		}
-		if blocked {
-			writeEvalResponse(w, http.StatusOK, resp)
-			return
-		}
-
-		writeEvalResponse(w, http.StatusOK, resp)
 		return
 	}
 

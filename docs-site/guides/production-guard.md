@@ -65,7 +65,7 @@ before interpreting verbs and targets. Supported forms include:
 
 These are restrictive policy interpretations. A compact rule such as
 `terraform apply` can require approval for the supported argument forms; the
-same interpretation cannot grant an `allow`, `watch`, or `webhook` rule.
+same interpretation cannot grant an `allow` or `watch` rule.
 Approval and audit identity remain the original command. Compound commands keep
 the most restrictive applicable decision.
 

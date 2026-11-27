@@ -10,15 +10,7 @@ import (
 	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/peg/rampart/internal/notify"
-	"github.com/peg/rampart/internal/webhookaction"
 )
-
-// executeWebhookAction calls the configured webhook URL and returns an
-// allow or deny decision based on the response. On error/timeout, behavior
-// is determined by the fail_open setting (default: fail closed).
-func (s *Server) executeWebhookAction(call engine.ToolCall, decision engine.Decision) engine.Decision {
-	return webhookaction.Execute(s.logger, call, decision)
-}
 
 func (s *Server) sendWebhook(call engine.ToolCall, decision engine.Decision) {
 	command := approval.SummarizeCall(call).String()

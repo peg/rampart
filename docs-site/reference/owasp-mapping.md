@@ -63,10 +63,7 @@ Pattern matching catches common injection vectors before execution:
 - Interpreter one-liners (`python3 -c`, `node -e`, `ruby -e`, `perl -e`)
 
 LD_PRELOAD cascade (preload mode) covers supported exec-family calls made
-through the dynamic loader, but not static binaries or direct syscalls. The
-[rampart-verify](https://github.com/peg/rampart-verify) project provides
-experimental LLM-based intent classification for ambiguous commands — it is a
-separate tool and not integrated into the standard Rampart distribution.
+through the dynamic loader, but not static binaries or direct syscalls.
 
 See [Threat Model — Known Gaps](threat-model.md) for evasion techniques that pattern matching cannot catch (variable expansion, base64 payloads, native file I/O in subprocesses).
 

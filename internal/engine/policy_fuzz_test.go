@@ -43,10 +43,6 @@ policies:
         when:
           url_matches: ["https://webhook.site/*"]
         message: "External webhook requires approval"
-        webhook:
-          url: "https://example.com/hook"
-          timeout: "10s"
-          fail_open: true
       - action: "allow"
         when:
           default: true

@@ -67,7 +67,7 @@ type Config struct {
 	PolicyName string
 	Mode       string
 	Agent      string
-	Decision   string // Filter: only show this decision (allow/deny/log/webhook).
+	Decision   string // Filter: only show this decision (allow/deny/log).
 	Tool       string // Filter: only show this tool name.
 	Out        io.Writer
 

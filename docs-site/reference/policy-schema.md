@@ -64,7 +64,7 @@ match:
 
 ```yaml
 rules:
-  - action: string         # Required. deny | allow | log/watch | ask | webhook
+  - action: string         # Required. deny | allow | log/watch | ask
     when:                   # Optional. Conditions (omit for unconditional).
       command_matches: list
       command_not_matches: list
@@ -84,10 +84,6 @@ rules:
       response_not_matches: list
       default: boolean          # Catch-all — matches when true
     message: string         # Optional. Reason shown on deny.
-    webhook:                # Required when action is "webhook".
-      url: string
-      timeout: duration
-      fail_open: boolean
 ```
 
 ### `action`
@@ -98,7 +94,6 @@ rules:
 | `allow` | Permit the tool call. |
 | `watch` | Permit but flag for review. `log` remains a deprecated alias. |
 | `ask` | Request human approval through the active integration; unsupported approval paths fail closed. |
-| `webhook` | Delegate decision to external HTTP endpoint. |
 
 ### Conditions (`when`)
 
@@ -236,17 +231,6 @@ when:
     tool: fetch    # optional, omit for all tools
     gte: 100       # trigger threshold
     window: 1h     # sliding window (1h, 30m, 10m, 5m, 1m)
-```
-
-### Webhook Configuration
-
-When `action: webhook`:
-
-```yaml
-webhook:
-  url: "http://localhost:8090/verify"  # Required. Endpoint URL.
-  timeout: "5s"                         # Optional. Default: 5s.
-  fail_open: false                      # Optional. Default: false (fail closed).
 ```
 
 ## Notify Object

@@ -1043,9 +1043,6 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				return outputHookResult(cmd, format, hookAsk, false, reasonMsg, cmdStr)
 			case engine.ActionAllow, engine.ActionWatch:
 				return outputHookResult(cmd, format, hookDefer, isPostToolUse, reasonMsg, cmdStr)
-			case engine.ActionWebhook:
-				// Defensive fallback: webhook is normalized to deny before audit.
-				return outputHookResult(cmd, format, hookDeny, isPostToolUse, "Rampart native hook cannot safely enforce webhook; refusing tool call", cmdStr)
 			default:
 				return outputHookResult(cmd, format, hookDeny, isPostToolUse, "Rampart received an unsupported policy action; refusing tool call", cmdStr)
 			}
@@ -1803,10 +1800,6 @@ func mapClaudeCodeTool(toolName string) string {
 func failClosedUnsupportedNativeHookAction(decision engine.Decision) engine.Decision {
 	switch decision.Action {
 	case engine.ActionAllow, engine.ActionWatch, engine.ActionDeny, engine.ActionAsk, engine.ActionRequireApproval:
-		return decision
-	case engine.ActionWebhook:
-		decision.Action = engine.ActionDeny
-		decision.Message = "Rampart native hooks do not execute webhook policy actions; refusing tool call"
 		return decision
 	default:
 		action := decision.Action.String()

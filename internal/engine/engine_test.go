@@ -1443,7 +1443,6 @@ func TestConfigFingerprintChangesOnDefaultAction(t *testing.T) {
 func TestConfigFingerprintCoversAllPolicyBehavior(t *testing.T) {
 	enabled := false
 	expires := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	failOpen := true
 	base := func() *Config {
 		return &Config{
 			Version:       "1",
@@ -1463,10 +1462,6 @@ func TestConfigFingerprintCoversAllPolicyBehavior(t *testing.T) {
 		"enabled":      func(cfg *Config) { cfg.Policies[0].Enabled = &enabled },
 		"expiry":       func(cfg *Config) { cfg.Policies[0].Rules[0].ExpiresAt = &expires },
 		"ask config":   func(cfg *Config) { cfg.Policies[0].Rules[0].Ask.Audit = true },
-		"webhook": func(cfg *Config) {
-			cfg.Policies[0].Rules[0].Action = "webhook"
-			cfg.Policies[0].Rules[0].Webhook = &WebhookActionConfig{URL: "https://example.invalid/hook", FailOpen: &failOpen}
-		},
 		"notifications": func(cfg *Config) {
 			cfg.Notify = &NotifyConfig{URL: "https://example.invalid/notify", Platform: "webhook", On: []string{"deny"}}
 		},

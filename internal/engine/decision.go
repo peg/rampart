@@ -50,11 +50,6 @@ const (
 	// (rampart approve/deny) or the HTTP API.
 	ActionRequireApproval
 
-	// ActionWebhook delegates the allow/deny decision to an external webhook.
-	// The proxy POSTs tool call details to the configured URL and uses the
-	// response to determine whether to allow or deny the call.
-	ActionWebhook
-
 	// ActionAsk emits Claude Code's native permission dialog inline.
 	// The user sees: [Allow once] [Allow for session] [Always allow] [Deny]
 	// This has no dependency on rampart serve and works fully offline.
@@ -74,8 +69,6 @@ func (a Action) String() string {
 		return "watch"
 	case ActionRequireApproval:
 		return "require_approval"
-	case ActionWebhook:
-		return "webhook"
 	case ActionAsk:
 		return "ask"
 	default:
@@ -324,10 +317,6 @@ type Decision struct {
 	// Tracked for performance monitoring.
 	EvalDuration time.Duration
 
-	// WebhookConfig is set when Action is ActionWebhook. Contains the
-	// webhook URL and behavior configuration for the proxy to execute.
-	WebhookConfig *WebhookActionConfig
-
 	// Suggestions contains human-readable CLI commands showing how to allow
 	// this call. Only populated for ActionDeny decisions. Each entry is a
 	// ready-to-run "rampart allow ..." command the user can copy and execute.
@@ -358,7 +347,7 @@ func ParseAction(s string) (Action, error) {
 	case "require_approval":
 		return 0, fmt.Errorf("action \"require_approval\" was removed in v0.9.9; use \"ask\" instead (see migration guide)")
 	case "webhook":
-		return ActionWebhook, nil
+		return 0, errWebhookRemoved
 	case "ask":
 		return ActionAsk, nil
 	default:

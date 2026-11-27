@@ -1079,7 +1079,7 @@ func BenchmarkRestrictiveCommandMiss(b *testing.B) {
 func TestEmptyCommandContainsCannotGrantExecution(t *testing.T) {
 	cond := Condition{CommandContains: []string{""}}
 	call := ToolCall{Tool: "exec", Params: map[string]any{"command": "anything at all"}}
-	for _, action := range []Action{ActionAllow, ActionWatch, ActionWebhook} {
+	for _, action := range []Action{ActionAllow, ActionWatch} {
 		if matchConditionForAction(cond, call, nil, action) {
 			t.Errorf("empty command_contains unexpectedly matched granting action %s", action)
 		}

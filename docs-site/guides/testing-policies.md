@@ -72,7 +72,7 @@ Each test case has these fields:
 | `name` | Yes | Human-readable test name |
 | `tool` | Yes | Tool type: `exec`, `read`, or `write` |
 | `params` | Yes | Tool parameters (e.g., `command`, `path`) |
-| `expect` | Yes | Expected action: `allow`, `deny`, `ask`, `watch`, `webhook` |
+| `expect` | Yes | Expected action: `allow`, `deny`, `ask`, `watch` |
 | `expect_message` | No | Glob pattern to match against the decision message |
 | `agent` | No | Agent identity for the test call (default: `test`) |
 

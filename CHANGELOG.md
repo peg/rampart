@@ -61,6 +61,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a policy, copy its YAML into `~/.rampart/policies/` (for example
   `rampart policy show production-guard > ~/.rampart/policies/production-guard.yaml`,
   or a file from `policies/community/`), or use project policies.
+- **The `webhook` policy action and semantic verification** — rules can no
+  longer hand a decision to an external HTTP service, so the rampart-verify
+  sidecar no longer plugs into Rampart. A policy with `action: webhook` or a
+  rule-level `webhook:` block now fails to load and `rampart policy lint`
+  reports it; replace the rule with `ask` or `deny`. `notify:` webhook
+  notifications are unchanged.
 
 ### Security
 
