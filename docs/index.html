@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#0b0a0a">
     <title>Rampart — Guardrails for AI agents on any model</title>
-    <meta name="description" content="Open-source guardrails for AI agents on local models. Rampart checks every command, file read and network call against rules on your machine before it runs. Works with Claude Code, Codex and OpenCode on Ollama.">
+    <meta name="description" content="Open-source guardrails for AI agents on local models. Rampart checks the commands, file reads and network calls your agent attempts against rules on your machine, before they run. Works with Claude Code, Codex and OpenCode on Ollama.">
     <link rel="canonical" href="https://rampart.sh/">
     <meta property="og:type" content="website">
     <meta property="og:title" content="Rampart — Guardrails for AI agents on any model">
@@ -89,7 +89,7 @@
                     <span class="first-line">Run any model.</span>
                     <span class="final-line">Keep the final say.</span>
                 </h1>
-                <p class="hero-intro">Hosted models come with safety checks that protect their own products. The model on your machine comes with none. Rampart checks every command, file read and network call against rules you can read, before it runs.</p>
+                <p class="hero-intro">Hosted models come with safety checks that protect their own products. The model on your machine comes with none. Rampart checks the commands, file reads and network calls your agent attempts against rules you can read, before they run.</p>
                 <div class="hero-actions">
                     <a class="primary-action" href="#get-started">Install Rampart</a>
                     <a class="secondary-action" href="https://docs.rampart.sh/getting-started/how-it-works/" target="_blank" rel="noopener noreferrer" aria-label="See how it works (opens in a new tab)">See how it works</a>
@@ -137,7 +137,7 @@
                         <path class="route-out" d="M450 446H696M450 500H624M450 554H672"/>
                     </svg>
                 </div>
-                <p class="boundary-note">Every tool call is checked before it runs</p>
+                <p class="boundary-note">Tool calls are checked before they run</p>
                 <p class="scene-legend" aria-hidden="true">Action <span>→</span> Policy <span>→</span> Record</p>
             </div>
         </div>
@@ -164,11 +164,11 @@
                 </div>
                 <div class="outcome" role="listitem">
                     <p class="outcome-name">DENY</p>
-                    <p class="outcome-copy">Prohibited actions never run.</p>
+                    <p class="outcome-copy">Prohibited actions are refused.</p>
                 </div>
                 <div class="outcome" role="listitem">
                     <p class="outcome-name">WATCH</p>
-                    <p class="outcome-copy">Everything is logged, nothing interrupts.</p>
+                    <p class="outcome-copy">Matches are logged, nothing interrupts.</p>
                 </div>
             </div>
         </div>
