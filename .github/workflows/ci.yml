@@ -266,12 +266,49 @@ jobs:
           python -m unittest internal/plugin/hermes/test_hermes_plugin.py
           python -m unittest scripts/test_compat_hermes_env.py
 
+  verdict-loosening:
+    name: verdict loosening
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fetch base revision
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git fetch --no-tags --depth=1 origin "$BASE_SHA"
+
+      - name: Recorded verdicts do not get weaker
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          if scripts/check-verdict-loosening.sh "$BASE_SHA"; then
+            exit 0
+          fi
+          # Labels are read live, so re-running this job picks up a label
+          # added after the push.
+          if gh api "repos/$REPO/issues/$PR_NUMBER/labels" --jq '.[].name' | grep -qx verdict-loosening-reviewed; then
+            echo "Every weaker verdict above was reviewed (verdict-loosening-reviewed label)."
+            exit 0
+          fi
+          echo "::error::Recorded verdicts got weaker. Review each row above, then add the verdict-loosening-reviewed label and re-run this job."
+          exit 1
+
   ci-gate:
     name: CI gate
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [test, docker-smoke, release-dry-run, hermes-min-python]
+    needs: [test, docker-smoke, release-dry-run, hermes-min-python, verdict-loosening]
     steps:
       - name: Require every CI job
         env:
@@ -279,6 +316,7 @@ jobs:
           DOCKER_RESULT: ${{ needs.docker-smoke.result }}
           RELEASE_RESULT: ${{ needs.release-dry-run.result }}
           HERMES_MIN_PYTHON_RESULT: ${{ needs.hermes-min-python.result }}
+          VERDICT_RESULT: ${{ needs.verdict-loosening.result }}
         run: |
           for result in "$TEST_RESULT" "$DOCKER_RESULT" "$RELEASE_RESULT" "$HERMES_MIN_PYTHON_RESULT"; do
             if [ "$result" != success ]; then
@@ -286,3 +324,8 @@ jobs:
               exit 1
             fi
           done
+          # Runs only for pull requests; pushes and release calls skip it.
+          if [ "$VERDICT_RESULT" != success ] && [ "$VERDICT_RESULT" != skipped ]; then
+            echo "Verdict loosening result: $VERDICT_RESULT"
+            exit 1
+          fi
