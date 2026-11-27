@@ -670,6 +670,8 @@ policies:
             - "**/.netrc"
             - "**/.rampart/token"
             - "**/.rampart/tokens.json"
+            - "**/.rampart/signing.key"
+            - "**/.rampart/*.identity-key"
             - "**/token.json"
             - "**/token.txt"
             - "**/.git-credentials"
@@ -724,6 +726,9 @@ policies:
             - '.ssh\id_'
             - ".rampart/token"
             - '.rampart\token'
+            - ".rampart/signing.key"
+            - '.rampart\signing.key'
+            - ".identity-key"
         message: "Sensitive credential file access blocked"
       - action: deny
         when:
