@@ -31,9 +31,11 @@ import (
 // verdictsFile records the shipped profiles' protective verdicts (watch, ask
 // or deny) for a corpus of commands. TestShippedProfileVerdicts fails when any
 // recorded verdict changes, and scripts/check-verdict-loosening.sh fails a pull
-// request whose recorded verdicts get weaker or disappear unless the
-// loosening is reviewed. Allowed commands are not recorded: they cannot get
-// weaker.
+// request whose recorded verdicts get weaker or disappear unless
+// testdata/verdicts-loosened.tsv lists the change. Allowed commands are not
+// recorded: they cannot get weaker. Every row must hold on every platform, so
+// commands whose verdict depends on the host's case folding are tested per OS
+// in internal/engine instead.
 const verdictsFile = "testdata/verdicts.tsv"
 
 var updateVerdicts = flag.Bool("update-verdicts", false, "rewrite "+verdictsFile+" from current policy")

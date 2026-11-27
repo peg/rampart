@@ -273,7 +273,6 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -284,24 +283,10 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: git fetch --no-tags --depth=1 origin "$BASE_SHA"
 
-      - name: Recorded verdicts do not get weaker
+      - name: Recorded verdicts do not get weaker without review
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          if scripts/check-verdict-loosening.sh "$BASE_SHA"; then
-            exit 0
-          fi
-          # Labels are read live, so re-running this job picks up a label
-          # added after the push.
-          if gh api "repos/$REPO/issues/$PR_NUMBER/labels" --jq '.[].name' | grep -qx verdict-loosening-reviewed; then
-            echo "Every weaker verdict above was reviewed (verdict-loosening-reviewed label)."
-            exit 0
-          fi
-          echo "::error::Recorded verdicts got weaker. Review each row above, then add the verdict-loosening-reviewed label and re-run this job."
-          exit 1
+        run: scripts/check-verdict-loosening.sh "$BASE_SHA"
 
   ci-gate:
     name: CI gate
