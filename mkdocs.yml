@@ -165,7 +165,6 @@ nav:
     - Policy Registry: guides/policy-registry.md
     - Semantic Verification: features/semantic-verification.md
     - Agent Teams: features/agent-teams.md
-    - External Witnessing (Experimental): features/external-witness.md
     - Webhooks: features/webhooks.md
   - Reference:
     - CLI Commands: reference/cli-commands.md
