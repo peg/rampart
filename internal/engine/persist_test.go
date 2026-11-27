@@ -569,14 +569,13 @@ func TestPolicyMutationsPreserveRichConfig(t *testing.T) {
 
 func richPersistenceConfig() (*Config, Rule) {
 	enabled := true
-	failOpen := true
 	depthGTE := 1
 	depthLTE := 4
 	future := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 	past := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
 
 	richRule := Rule{
-		Action: "webhook",
+		Action: "ask",
 		Ask: AskActionConfig{
 			Audit:        true,
 			HeadlessOnly: true,
@@ -605,12 +604,7 @@ func richPersistenceConfig() (*Config, Rule) {
 				Window: "5m",
 			},
 		},
-		Message: "rich rule",
-		Webhook: &WebhookActionConfig{
-			URL:      "https://example.com/decision",
-			Timeout:  Duration{Duration: 2 * time.Second},
-			FailOpen: &failOpen,
-		},
+		Message:   "rich rule",
 		ExpiresAt: &future,
 		Once:      true,
 	}
@@ -628,7 +622,7 @@ func richPersistenceConfig() (*Config, Rule) {
 			Tool:   "exec",
 			Agent:  "release-agent",
 			Params: map[string]any{"command": "deploy production"},
-			Expect: "webhook",
+			Expect: "ask",
 		}},
 		Policies: []Policy{{
 			Name:        "rich-policy",

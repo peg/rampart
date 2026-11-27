@@ -32,7 +32,7 @@ func TestFailClosedUnsupportedNativeHookAction(t *testing.T) {
 		}
 	}
 
-	for _, action := range []engine.Action{engine.ActionWebhook, engine.Action(999)} {
+	for _, action := range []engine.Action{engine.Action(999)} {
 		decision := failClosedUnsupportedNativeHookAction(engine.Decision{Action: action})
 		if decision.Action != engine.ActionDeny || !strings.Contains(decision.Message, "refusing tool call") {
 			t.Fatalf("unsupported action %s did not fail closed: %#v", action, decision)
@@ -43,47 +43,6 @@ func TestFailClosedUnsupportedNativeHookAction(t *testing.T) {
 func TestHookDecisionRankKeepsUnknownActionForFailClosedNormalization(t *testing.T) {
 	if got := hookDecisionRank(engine.Action(999)); got <= hookDecisionRank(engine.ActionDeny) {
 		t.Fatalf("unknown action rank = %d, deny rank = %d", got, hookDecisionRank(engine.ActionDeny))
-	}
-}
-
-func TestNativeHookWebhookPolicyReturnsStructuredDeny(t *testing.T) {
-	home := t.TempDir()
-	testSetHome(t, home)
-	policyPath := filepath.Join(home, "webhook-policy.yaml")
-	policy := `version: "1"
-policies:
-  - name: external-decision
-    match:
-      tool: ["exec"]
-    rules:
-      - action: webhook
-        webhook:
-          url: "http://127.0.0.1:1/decision"
-          fail_open: false
-`
-	if err := os.WriteFile(policyPath, []byte(policy), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	payload := `{"hook_event_name":"PreToolUse","session_id":"s","tool_use_id":"tool-1","tool_name":"Bash","tool_input":{"command":"pwd"}}`
-	stdout, stderr, err := runHookWithStdin(
-		t,
-		&rootOptions{configPath: policyPath},
-		payload,
-		"--mode", "enforce",
-		"--audit-dir", filepath.Join(home, "audit"),
-	)
-	if err != nil {
-		t.Fatalf("hook returned an ordinary host error: %v (stderr=%q)", err, stderr)
-	}
-	var output hookOutput
-	if err := json.Unmarshal([]byte(stdout), &output); err != nil {
-		t.Fatalf("output = %q: %v", stdout, err)
-	}
-	if output.HookSpecificOutput == nil || output.HookSpecificOutput.PermissionDecision != "deny" {
-		t.Fatalf("output = %#v, want structured deny", output)
-	}
-	if !strings.Contains(output.HookSpecificOutput.PermissionDecisionReason, "do not execute webhook") {
-		t.Fatalf("deny reason = %q", output.HookSpecificOutput.PermissionDecisionReason)
 	}
 }
 

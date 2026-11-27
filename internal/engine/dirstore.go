@@ -449,14 +449,6 @@ func (s *LayeredStore) Load() (*Config, error) {
 	if err := extraCfg.validate(); err != nil {
 		return nil, fmt.Errorf("engine: validate project policy %q: %w", s.extra, err)
 	}
-	for _, policy := range extraCfg.Policies {
-		for index, rule := range policy.Rules {
-			action, _ := rule.ParseAction()
-			if action == ActionWebhook {
-				return nil, fmt.Errorf("engine: project policy %q contains forbidden webhook action in policy %q rule %d", s.extra, policy.Name, index)
-			}
-		}
-	}
 	return mergeProjectPolicy(cfg, &extraCfg, s.extra, s.logger), nil
 }
 

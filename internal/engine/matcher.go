@@ -561,7 +561,7 @@ func matchCommandFirstForActionOS(patterns []string, command, goos string, actio
 		// conservatively on hosts whose command lookup is case-insensitive.
 		return matchFirstFold(patterns, command)
 	}
-	// Allow/watch/webhook matches can grant execution. Normalize only the
+	// Allow/watch matches can grant execution. Normalize only the
 	// executable or cmdlet and preserve potentially case-sensitive arguments.
 	return matchCommandHeadFoldFirst(patterns, command)
 }
@@ -2074,7 +2074,7 @@ func matchExplicitCompositeGrant(patterns []string, command, normalized, goos st
 }
 
 // matchGrantCommandField evaluates command_matches and command_contains for
-// allow/watch/webhook rules. Composite calls are granted only when the policy
+// allow/watch rules. Composite calls are granted only when the policy
 // explicitly matches the complete composite expression or every executed
 // component is independently covered.
 func matchGrantCommandField(cond Condition, command string, action Action) (bool, string) {

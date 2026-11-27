@@ -164,7 +164,6 @@ nav:
   - Advanced:
     - Policy Registry: guides/policy-registry.md
     - Policy Sync: guides/policy-sync.md
-    - Semantic Verification: features/semantic-verification.md
     - Agent Teams: features/agent-teams.md
     - External Witnessing (Experimental): features/external-witness.md
     - Webhooks: features/webhooks.md

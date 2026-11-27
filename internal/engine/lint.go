@@ -68,12 +68,11 @@ type LintResult struct {
 
 // validActions are the known action values.
 var validActions = map[string]bool{
-	"allow":   true,
-	"deny":    true,
-	"watch":   true,
-	"log":     true, // deprecated alias for watch
-	"webhook": true,
-	"ask":     true,
+	"allow": true,
+	"deny":  true,
+	"watch": true,
+	"log":   true, // deprecated alias for watch
+	"ask":   true,
 }
 
 // validConditionFields are the known fields in a `when:` block.
@@ -259,6 +258,9 @@ func lintRule(filename string, p Policy, ruleIdx int, r Rule, result *LintResult
 			Severity: LintError,
 			Message:  "action \"require_approval\" was removed in v0.9.9; use \"ask\" instead",
 		})
+	}
+	if actionLower == "webhook" || r.Webhook != nil {
+		result.add(LintFinding{File: filename, Severity: LintError, Message: errWebhookRemoved.Error()})
 	}
 
 	// Agent-scoping note for action: ask.

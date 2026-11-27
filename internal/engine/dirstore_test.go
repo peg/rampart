@@ -888,7 +888,7 @@ func TestLayeredStore_ProjectUsesCompleteRuleValidation(t *testing.T) {
 		projectYML string
 	}{
 		{
-			name: "webhook requires URL",
+			name: "removed webhook action",
 			projectYML: `
 version: "1"
 policies:

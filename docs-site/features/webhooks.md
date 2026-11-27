@@ -124,32 +124,3 @@ notifications only when its `on:` list includes `ask`.
       url: "https://your-api.example.com/rampart-events"
       on: ["deny", "watch"]
     ```
-
-## Webhook Actions
-
-For more advanced use cases, delegate allow/deny decisions to an external service:
-
-```yaml
-rules:
-  - action: webhook
-    when:
-      command_matches: ['*production*']
-    webhook:
-      url: 'http://localhost:8090/verify'
-      timeout: 5s
-      fail_open: true
-```
-
-The webhook receives the full tool call context and returns:
-
-```json
-{"decision": "allow"}
-// or
-{"decision": "deny", "reason": "Production deployment not approved"}
-```
-
-Webhook actions **fail closed by default**: an unavailable, invalid, or timed-out
-decision endpoint denies the tool call. Set `fail_open: true` explicitly only
-when availability is more important than enforcing that rule.
-
-See [Semantic Verification](semantic-verification.md) for an LLM-powered webhook implementation.

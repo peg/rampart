@@ -43,7 +43,6 @@ Rampart does **not** claim to stop a skilled human who has already compromised y
 │  • AI agent tool calls (all input)           │
 │  • Agent-generated commands                  │
 │  • MCP tool call parameters                  │
-│  • Webhook response payloads (validated)     │
 │  • Project-local .rampart/policy.yaml files  │
 │  • Community policies (verified by SHA-256)  │
 └─────────────────────────────────────────────┘
@@ -69,7 +68,6 @@ Rampart sees and evaluates `python3 script.py` — but cannot inspect what
 **Mitigations:**
 - **LD_PRELOAD cascade** (v0.1.9+): `rampart preload` intercepts supported child-process calls made by compatible dynamically linked programs. `rampart wrap` is a separate cooperative boundary: it covers `$SHELL` and PATH-resolved shell launches, not absolute shell paths or direct process APIs.
 - **Interpreter one-liner blocking** (v0.6.9+): Patterns like `python3 -c`, `node -e`, `ruby -e`, `perl -e` with dangerous system calls are blocked by default in standard/paranoid policies.
-- The optional [rampart-verify](https://github.com/peg/rampart-verify) sidecar uses LLM classification to assess intent of ambiguous commands via `action: webhook`.
 
 **Remaining surface:** LD_PRELOAD cascade applies only to preload mode, not wrap or native hooks (Claude Code, Codex, Cline, Gemini CLI, GitHub Copilot). Programs that use native file I/O without shelling out, or setuid binaries that drop LD_PRELOAD, are not covered.
 
@@ -136,9 +134,8 @@ An agent could encode commands to bypass pattern matching:
 - Null bytes and control characters are removed
 - Subcommand extraction: `$(cmd)` and backticks — inner commands are matched independently
 - Decoded payloads piped into a shell (`base64 -d | bash`, `xxd -r | bash`) trigger deny rules in standard policy
-- The optional semantic verification sidecar can classify ambiguous commands
 
-**Coverage:** Pattern matching catches the encodings and shell forms it knows. The optional semantic verification layer can classify ambiguous or obfuscated commands, but it is probabilistic and does not cover every encoding. Treat both layers as reducing the obfuscation surface, not closing it.
+**Coverage:** Pattern matching catches the encodings and shell forms it knows and does not cover every encoding. Treat it as reducing the obfuscation surface, not closing it.
 
 ### 5. OpenClaw Integration Boundaries
 
@@ -234,8 +231,7 @@ One-time (`once: true`) allow rules are claimed synchronously before an allow de
 Project-local `.rampart/policy.yaml` files are loaded automatically when present. A malicious repository could include a permissive project policy.
 
 **Mitigations (v0.6.9+):**
-- Project policies cannot weaken global policies or restrictive global defaults;
-  repository webhook actions are rejected
+- Project policies cannot weaken global policies or restrictive global defaults
 - Set `RAMPART_NO_PROJECT_POLICY=1` to skip project policy loading in untrusted repos
 - Project policy denials are prefixed with `[Project Policy]` for visibility
 

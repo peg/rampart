@@ -157,7 +157,7 @@ Yes — a webpage or MCP tool response can contain instructions that try to over
 
 **Does Rampart send my commands to any external server?**  
 Core Rampart policy evaluation, audit logging, and the dashboard are local.
-Optional semantic verification and notification/webhook features send the
+Optional notification/webhook features send the
 configured request data to their configured providers. The agent itself may
 also use remote model and tool services independently of Rampart.
 Optional [external witnessing](features/external-witness.md) publishes compact
@@ -165,8 +165,7 @@ audit checkpoints without commands, prompts or tool-request content.
 
 **Will Rampart slow down my agent?**  
 Core matching is local and benchmarked in microseconds. Hook startup and audit
-I/O add environment-dependent overhead; optional semantic verification adds a
-network model call.
+I/O add environment-dependent overhead.
 
 **What if I need to allow a command that's blocked?**  
 If an `ask` rule keeps prompting, run `rampart allow "your command pattern"` — no YAML editing required, and the rule applies from the next call. A command blocked by a deny rule stays blocked: `allow` does not override deny rules. [Full guide →](guides/customizing-policy.md)
@@ -187,15 +186,12 @@ If an `ask` rule keeps prompting, run `rampart allow "your command pattern"` —
 
 </div>
 
-`action: ask` routes directly from policy to human approval; it does not
-require a semantic verifier. The integration determines whether approval is
-shown by the host or handled through Rampart. See the
+`action: ask` routes directly from policy to human approval. The integration
+determines whether approval is shown by the host or handled through Rampart. See the
 [native ask guide](guides/native-ask.md) and your
 [integration guide](integrations/index.md) for the actual boundary.
 
-Only an explicitly matched `webhook` rule invokes an optional external
-[decision service](features/semantic-verification.md). The diagram describes
-policy decisions, not proof of execution or independent audit witnessing.
+The diagram describes policy decisions, not proof of execution or independent audit witnessing.
 
 [Architecture](reference/architecture.md) · [Threat model](reference/threat-model.md) · [Policy schema](reference/policy-schema.md)
 

@@ -21,8 +21,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -49,22 +47,6 @@ type failingSink struct{}
 func (*failingSink) Write(audit.Event) error { return fmt.Errorf("disk unavailable") }
 func (*failingSink) Flush() error            { return nil }
 func (*failingSink) Close() error            { return nil }
-
-type failOnNthSink struct {
-	writes int
-	failAt int
-}
-
-func (s *failOnNthSink) Write(audit.Event) error {
-	s.writes++
-	if s.writes == s.failAt {
-		return fmt.Errorf("disk unavailable")
-	}
-	return nil
-}
-
-func (*failOnNthSink) Flush() error { return nil }
-func (*failOnNthSink) Close() error { return nil }
 
 func (m *mockSink) Write(event audit.Event) error {
 	m.mu.Lock()
@@ -289,51 +271,6 @@ func TestHandleToolsCall_AuditFailureRemainsObservableInMonitorMode(t *testing.T
 	}
 	if childIn.Len() == 0 {
 		t.Fatal("monitor mode should not block on audit storage failure")
-	}
-}
-
-func TestHandleToolsCall_WebhookResultAuditFailureFailsClosed(t *testing.T) {
-	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"decision":"allow"}`)
-	}))
-	defer webhook.Close()
-
-	eng := buildTestEngine(t, fmt.Sprintf(`
-version: "1"
-default_action: allow
-policies:
-  - name: webhook-check
-    match:
-      tool: exec
-    rules:
-      - action: webhook
-        when:
-          command_matches: ["deploy prod"]
-        webhook:
-          url: %q
-          timeout: 2s
-          fail_open: false
-`, webhook.URL))
-	childIn := &bytes.Buffer{}
-	parentOut := &bytes.Buffer{}
-	sink := &failOnNthSink{failAt: 2}
-	p := NewProxy(eng, sink, nopWriteCloser{childIn}, strings.NewReader(""),
-		WithMode("enforce"), WithLogger(silentLogger()))
-	p.parentOut = parentOut
-
-	err := p.handleClientLineWithContext(context.Background(), []byte(makeToolsCallJSON(1, "execute_command", map[string]any{"command": "deploy prod"})+"\n"))
-	if err != nil {
-		t.Fatalf("handleClientLine: %v", err)
-	}
-	if childIn.Len() != 0 {
-		t.Fatal("request with an unpersisted webhook result reached the child")
-	}
-	if !strings.Contains(parentOut.String(), "audit storage is unavailable") {
-		t.Fatalf("unexpected client response: %s", parentOut.String())
-	}
-	if sink.writes != 2 {
-		t.Fatalf("audit writes = %d, want initial webhook and final result", sink.writes)
 	}
 }
 

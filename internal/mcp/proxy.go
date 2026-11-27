@@ -29,7 +29,6 @@ import (
 	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
-	"github.com/peg/rampart/internal/webhookaction"
 )
 
 const (
@@ -513,30 +512,6 @@ func (p *Proxy) handleToolsCall(ctx context.Context, req Request, rawLine []byte
 		if approved, err := p.resolveExternalApproval(ctx, req.ID, call, decision); !approved {
 			return err
 		}
-	}
-
-	if p.mode == "enforce" && decision.Action == engine.ActionWebhook {
-		webhookDecision := webhookaction.Execute(p.logger, call, decision)
-		webhookRequest := cloneMap(requestData)
-		webhookRequest["mcp_phase"] = "webhook_result"
-		if err := p.writeAudit(call, webhookDecision, webhookRequest, nil); err != nil {
-			p.logger.Error("mcp: webhook-result audit write failed", "error", err)
-			if HasID(req.ID) {
-				return p.writeErrorToClient(req.ID, jsonRPCDenyCode, "Rampart: audit storage is unavailable; refusing tool call")
-			}
-			return nil
-		}
-		if webhookDecision.Action == engine.ActionDeny {
-			denyMsg := strings.TrimSpace(webhookDecision.Message)
-			if denyMsg == "" {
-				denyMsg = "request denied by webhook"
-			}
-			if HasID(req.ID) {
-				return p.writeErrorToClient(req.ID, jsonRPCDenyCode, "Rampart: "+denyMsg)
-			}
-			return nil
-		}
-		// Webhook allowed — fall through to forward the call.
 	}
 
 	if reservation.valid() {

@@ -481,8 +481,6 @@ func winnerReason(action engine.Action) string {
 		return "ask beat allow/watch after no deny matched"
 	case engine.ActionRequireApproval:
 		return "require_approval beat allow/watch after no deny matched"
-	case engine.ActionWebhook:
-		return "webhook beat allow/watch after no deny matched"
 	case engine.ActionWatch:
 		return "watch beat allow after no deny or ask matched"
 	case engine.ActionAllow:

@@ -500,12 +500,6 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 	case engine.ActionRequireApproval, engine.ActionAsk:
 		b.leavePendingForHumanReview(req, decision)
 
-	case engine.ActionWebhook:
-		// Webhook actions delegate to an external system.
-		// Don't resolve — let OpenClaw's approval flow handle it or time out.
-		b.logger.Info("bridge: webhook action — deferring to OpenClaw approval flow",
-			"id", req.ID, "command_bytes", len(req.command()))
-
 	default:
 		// Unknown action — fail closed. An unrecognized action should never
 		// silently allow a command that may require human review.

@@ -43,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refreshes unmodified built-in policy profiles; run it after upgrading.
 - **Syslog and CEF audit export** — the `rampart serve --syslog` and `--cef`
   flags are gone. The JSONL audit log can be forwarded with any log shipper.
+- **The `webhook` policy action and semantic verification** — rules can no
+  longer hand a decision to an external HTTP service, so the rampart-verify
+  sidecar no longer plugs into Rampart. A policy with `action: webhook` or a
+  rule-level `webhook:` block now fails to load and `rampart policy lint`
+  reports it; replace the rule with `ask` or `deny`. `notify:` webhook
+  notifications are unchanged.
 
 ### Security
 
