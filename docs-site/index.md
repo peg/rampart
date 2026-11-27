@@ -214,7 +214,9 @@ policy decisions, not proof of execution or independent audit witnessing.
 
 ## Current release
 
-Rampart v1.11.0 completes the approval loop for MCP servers: in enforce mode,
+Rampart v1.11.1 denies every pipe into a shell that v1.10.0 denied again,
+while still allowing pipes into commands such as `sha256sum`. v1.11.0
+completed the approval loop for MCP servers: in enforce mode,
 an ask through `rampart mcp` waits in the `rampart serve` approval queue
 instead of being refused, and reviewers get one notification that names the
 MCP tool and links to a confirmation page with Approve and Deny buttons.

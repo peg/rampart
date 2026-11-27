@@ -1110,43 +1110,23 @@ policies:
             - ". /dev/fd/"
         message: "Obfuscated command execution blocked"
       # Content piped into a shell, and xxd reverse dumps. command_contains and
-      # command_matches are ORed. "| sh" is spelled out with each following
-      # delimiter so pipes into sha256sum, shasum, shuf, or shred still pass.
-      # Expansion, quoting, escape, and glob characters stay denied because the
-      # shell can still resolve the word to sh (sh$IFS, sh"", sh\, sh{,}, sh*),
-      # including zsh glob qualifiers and extended globs (sh(N), sh~x, sh^x, sh#).
+      # command_matches are ORed. A pipe into a word that starts with "sh" is
+      # denied unless the next character can only continue a plain command
+      # name (a letter, digit, "_" or "-"), so pipes into sha256sum, shasum,
+      # shuf, or shred still pass. Every other character stays denied because
+      # the shell can expand, unquote, unescape, or glob the word back to sh
+      # (sh$IFS, sh"", sh\, sh{,}, sh*, sh(N), sh@(...), sh.exe). Glob classes
+      # never match "/", and backslashes are matched as "/", so "/" and the
+      # backslash escape are listed separately.
       - action: deny
         when:
           command_contains:
             - "| bash"
-            - "| sh "
-            - "| sh\t"
-            - "| sh\n"
-            - "| sh\r"
-            - "| sh\v"
-            - "| sh\f"
-            - "| sh.exe"
-            - "| sh;"
-            - "| sh&"
-            - "| sh|"
-            - "| sh)"
-            - "| sh<"
-            - "| sh>"
-            - "| sh`"
-            - "| sh$"
             - "| sh\\"
-            - "| sh\""
-            - "| sh'"
-            - "| sh{"
-            - "| sh*"
-            - "| sh?"
-            - "| sh["
-            - "| sh("
-            - "| sh~"
-            - "| sh^"
-            - "| sh#"
+            - "| sh/"
           command_matches:
             - "**| sh"
+            - "**| sh[^A-Za-z0-9_-]**"
             - "xxd -r *"
         message: "Obfuscated command execution blocked"
 
