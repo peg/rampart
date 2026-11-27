@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Experimental OpenCode integration is back** — `rampart setup opencode`
+  installs a dependency-free plugin that checks OpenCode's shell, file, patch,
+  and web-fetch tool calls against local Rampart policy before they run, for
+  any model provider, including local models through Ollama, LM Studio, or
+  llama.cpp. It needs no `rampart serve`. Linux and macOS with a POSIX shell
+  only. A missing or failing `rampart`, a malformed reply, or a ten-second
+  timeout refuses the call, as do `ask`, `require_approval`, and unmapped
+  tools such as MCP and `task`. `glob`, `grep`, and `list` are checked as
+  reads of the directory they search. `rampart doctor` checks the
+  installed file and warns when `OPENCODE_PURE` would skip plugins; it does not
+  prove OpenCode loaded the plugin. Bare `rampart protect` does not enroll
+  OpenCode yet, since it has no `rampart verify` check. The integration was
+  parked before 1.10.0; this restores it on the current hook, which now
+  answers `allow` for OpenCode where it defers for Claude Code.
+- **`rampart launch <agent>`** — one command to a protected local-model
+  agent. Launch installs Rampart's hooks for Claude Code or Codex if they are
+  missing, runs the same safe canaries as `rampart verify`, and refuses to
+  start the agent unless every check passes. It then runs
+  `ollama launch <agent> [--model <name>] [-- args]`, or `codex --oss` when
+  Ollama is not installed.
+
 ### Security
 
 - **Privilege wrappers no longer soften deny rules** — deny and ask rules now
