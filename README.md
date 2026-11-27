@@ -4,7 +4,7 @@
 
 **Open-source policy and approval control for AI agents.**
 
-<img src="docs/og-authority-visible.png" alt="Rampart — Let agents move fast. Keep the final say." width="100%">
+<img src="docs/og.png" alt="Rampart — Run any model. Keep the final say." width="100%">
 
 [![Go](https://img.shields.io/badge/Go-1.26.11+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
