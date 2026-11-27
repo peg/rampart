@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -111,6 +112,12 @@ func parseOpenCodeInput(reader io.Reader) (*hookParseResult, error) {
 		if !filepath.IsAbs(root) {
 			root = filepath.Join(input.Directory, root)
 		}
+		// grep returns file contents and searches hidden files, so a search
+		// rooted above a protected directory would read it unchecked. Keep
+		// content searches inside the project and away from the home directory.
+		if input.Tool == "grep" && !openCodeGrepRootAllowed(root, input.Directory) {
+			return nil, fmt.Errorf("hook: OpenCode grep outside the project directory is refused")
+		}
 		params["path"] = root
 	case "webfetch":
 		result.Tool = "fetch"
@@ -129,6 +136,22 @@ func parseOpenCodeInput(reader io.Reader) (*hookParseResult, error) {
 		return nil, fmt.Errorf("hook: unsupported OpenCode tool; execution refused")
 	}
 	return result, nil
+}
+
+// openCodeGrepRootAllowed reports whether root is inside the project
+// directory and does not contain the user's home directory.
+func openCodeGrepRootAllowed(root, project string) bool {
+	if !pathWithin(root, project) {
+		return false
+	}
+	home, err := os.UserHomeDir()
+	return err != nil || !pathWithin(home, root)
+}
+
+// pathWithin reports whether path is base or below it, lexically.
+func pathWithin(path, base string) bool {
+	rel, err := filepath.Rel(filepath.Clean(base), filepath.Clean(path))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func extractOpenCodePatchPaths(patch string) ([]string, error) {

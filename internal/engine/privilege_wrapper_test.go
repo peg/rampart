@@ -28,6 +28,12 @@ func TestStripPrivilegeWrapper(t *testing.T) {
 		"/usr/bin/sudo -g wheel rm x": "rm x",
 		"doas -u root rm x":           "rm x",
 		"pkexec --user root rm x":     "rm x",
+		"sudo -nu root rm x":          "rm x",
+		"sudo -iu root rm x":          "rm x",
+		"sudo -nuroot rm x":           "rm x",
+		"doas -nu root rm x":          "rm x",
+		"sudo -R /srv rm x":           "rm x",
+		"sudo -C3 rm x":               "rm x",
 		"sudo -l":                     "sudo -l",
 		"rm x":                        "rm x",
 	}

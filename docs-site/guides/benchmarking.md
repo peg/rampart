@@ -107,7 +107,6 @@ cases:
 ```
 
 The benchmark output shows which techniques your policy covers. Use this for:
-- **Compliance reporting** — map coverage to frameworks your org uses
 - **Gap analysis** — identify ATT&CK techniques with weak coverage
 - **Red team validation** — verify your policy catches known TTPs
 

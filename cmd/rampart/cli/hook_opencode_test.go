@@ -200,3 +200,27 @@ func TestOpenCodeSearchesAreReadsOfTheirRoot(t *testing.T) {
 		t.Fatal("non-string search path was accepted")
 	}
 }
+
+// grep returns file contents, including hidden files, so it must not search
+// above the project or across the home directory.
+func TestOpenCodeGrepStaysInProject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	project := filepath.Join(home, "proj")
+	for _, args := range []map[string]any{
+		{"pattern": "PRIVATE KEY", "path": ".."},
+		{"pattern": "PRIVATE KEY", "path": home, "include": ".ssh/*"},
+		{"pattern": "PRIVATE KEY", "path": filepath.Join(t.TempDir(), "elsewhere")},
+	} {
+		if _, err := parseOpenCodeInput(bytes.NewReader(openCodeTestInput(t, project, "grep", args))); err == nil {
+			t.Fatalf("grep %v was accepted", args)
+		}
+	}
+	if _, err := parseOpenCodeInput(bytes.NewReader(openCodeTestInput(t, home, "grep", map[string]any{"pattern": "x"}))); err == nil {
+		t.Fatal("grep across the home directory was accepted")
+	}
+	if _, err := parseOpenCodeInput(bytes.NewReader(openCodeTestInput(t, project, "grep", map[string]any{"pattern": "x", "path": "src"}))); err != nil {
+		t.Fatalf("grep inside the project was refused: %v", err)
+	}
+}
