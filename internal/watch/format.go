@@ -145,28 +145,6 @@ func safeTerminalText(text string) string {
 	return quoted[1 : len(quoted)-1]
 }
 
-func formatEventLine(event audit.Event, width int) string {
-	icon, _ := decisionMeta(event.Decision.Action)
-	timePart := event.Timestamp.Local().Format("15:04:05")
-	toolPart := truncateRunes(strings.TrimSpace(event.Tool), 8)
-	if toolPart == "" {
-		toolPart = "-"
-	}
-
-	summary := requestSummary(event)
-	if strings.EqualFold(strings.TrimSpace(event.Tool), "read") || strings.EqualFold(strings.TrimSpace(event.Tool), "write") {
-		summary = compactPath(summary, min(maxCommandWidth, max(20, width/2)))
-	}
-	if summary == "" {
-		summary = "-"
-	}
-	summary = truncateRunes(summary, maxCommandWidth)
-
-	policy := firstPolicy(event)
-	base := fmt.Sprintf("%s %s %-6s %q [%s]", icon, timePart, toolPart, summary, policy)
-	return truncateRunes(base, width)
-}
-
 // formatEventLineWithRelTime renders an event line with relative timestamps.
 func formatEventLineWithRelTime(event audit.Event, width int, now time.Time) string {
 	icon, _ := decisionMeta(event.Decision.Action)

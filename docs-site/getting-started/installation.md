@@ -146,7 +146,7 @@ rampart --version
 
 Rampart works on Windows with some limitations:
 
-> **Upgrading from Rampart 1.2.x:** rerun `irm https://rampart.sh/install.ps1 | iex`. The installer repairs the affected legacy `~\.rampart` ACL before replacing the binary. Do not rely on `rampart upgrade` when the existing binary is inaccessible.
+> **Upgrading from Rampart 1.2.x:** rerun `irm https://rampart.sh/install.ps1 | iex`. The installer repairs the affected legacy `~\.rampart` ACL before replacing the binary.
 
 | Feature | Windows | macOS/Linux |
 |---------|---------|-------------|
@@ -155,7 +155,6 @@ Rampart works on Windows with some limitations:
 | `rampart hook` | ✅ | ✅ |
 | `rampart watch` | ✅ | ✅ |
 | `rampart mcp` | ✅ | ✅ |
-| `rampart upgrade` | ❌ Re-run installer | ✅ |
 | `rampart wrap` | ❌ | ✅ |
 | `rampart preload` | ❌ | ⚠️ Linux/macOS; native library must be built from source |
 

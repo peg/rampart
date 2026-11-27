@@ -58,13 +58,6 @@ func regexMatchString(re *regexp.Regexp, value string) bool {
 	return re.MatchString(value)
 }
 
-// cleanPaths retains both lexical and filesystem-resolved policy candidates.
-// Resolving symlinks must precede collapsing parent components: a symlink's
-// parent is determined by its target, not by its spelling in the input path.
-func cleanPaths(p string) (cleaned string, resolved string) {
-	return cleanPathsAt(p, "")
-}
-
 // cleanPathsAt canonicalizes p relative to the directory used by the host
 // tool. Rampart often runs in a long-lived service or one-shot hook whose own
 // process CWD is unrelated to the agent workspace.
@@ -512,23 +505,6 @@ func matchAny(patterns []string, name string) bool {
 		}
 	}
 	return false
-}
-
-func matchAnyFold(patterns []string, name string) bool {
-	lower := strings.ToLower(name)
-	for _, p := range patterns {
-		if MatchGlob(strings.ToLower(p), lower) {
-			return true
-		}
-	}
-	return false
-}
-
-func matchAnyForOS(patterns []string, name, goos string) bool {
-	if matchAny(patterns, name) {
-		return true
-	}
-	return platformUsesCaseInsensitiveNames(goos) && matchAnyFold(patterns, name)
 }
 
 func matchCommandHeadFoldFirst(patterns []string, command string) string {
@@ -2269,23 +2245,6 @@ func matchDomainFirst(patterns []string, domain string) string {
 	return ""
 }
 
-// matchCondition evaluates whether a tool call satisfies a rule's condition.
-//
-// Matching logic:
-//   - If Default is true, the condition always matches.
-//   - If no conditions are specified (empty), the condition never matches.
-//   - CommandMatches/PathMatches/etc. are OR within a field.
-//   - CommandNotMatches/PathNotMatches exclude matches.
-//   - Multiple field types are AND (e.g., CommandMatches AND PathMatches).
-//
-// ExplainCondition checks a condition using restrictive-action semantics and
-// returns a human-readable detail string. Callers that know the rule action
-// should use ExplainConditionForAction so explanations cannot claim that an
-// execution-granting rule matched more broadly than enforcement.
-func ExplainCondition(cond Condition, call ToolCall) (bool, string) {
-	return ExplainConditionForAction(cond, call, ActionDeny)
-}
-
 // ExplainConditionForAction mirrors the enforcement match for action before
 // rendering the first useful match detail. The upfront check is important for
 // conditions with multiple fields, which are ANDed by enforcement.
@@ -2295,7 +2254,7 @@ func ExplainConditionForAction(cond Condition, call ToolCall, action Action) (bo
 	}
 	if cond.IsEmpty() {
 		// Empty when: block is unconditional — matches all tool calls.
-		// This mirrors matchCondition which also returns true for empty conditions.
+		// This mirrors matchConditionForAction which also returns true for empty conditions.
 		return true, "unconditional (empty when:)"
 	}
 	if !matchConditionForAction(cond, call, nil, action) {
@@ -2665,10 +2624,15 @@ func appendEnvAssignmentName(name string, seen map[string]bool, names *[]string)
 	*names = append(*names, name)
 }
 
-func matchCondition(cond Condition, call ToolCall, counter CallCounter) bool {
-	return matchConditionForAction(cond, call, counter, ActionDeny)
-}
-
+// matchConditionForAction evaluates whether a tool call satisfies a rule's
+// condition.
+//
+// Matching logic:
+//   - If Default is true, the condition always matches.
+//   - If no conditions are specified (empty), the condition always matches.
+//   - CommandMatches/PathMatches/etc. are OR within a field.
+//   - CommandNotMatches/PathNotMatches exclude matches.
+//   - Multiple field types are AND (e.g., CommandMatches AND PathMatches).
 func matchConditionForAction(cond Condition, call ToolCall, counter CallCounter, action Action) bool {
 	if cond.Default {
 		return true

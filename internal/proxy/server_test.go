@@ -587,7 +587,7 @@ policies:
 `, "enforce")
 	failing := &failOnWriteSink{failAt: 2}
 	srv.sink = failing
-	srv.approvals.AutoApproveRun(engine.ToolCall{Agent: "main", Session: "s1", RunID: "approved-run"}, time.Minute)
+	grantRun(t, srv, engine.ToolCall{Tool: "exec", Agent: "main", Session: "s1", RunID: "approved-run"})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/tool/exec",
 		strings.NewReader(`{"agent":"main","session":"s1","run_id":"approved-run","params":{"command":"deploy prod"}}`))
@@ -621,7 +621,7 @@ policies:
         when:
           response_matches: ["AKIA[0-9A-Z]{16}"]
 `, "enforce")
-	srv.approvals.AutoApproveRun(engine.ToolCall{Agent: "main", Session: "s1", RunID: "approved-run"}, time.Minute)
+	grantRun(t, srv, engine.ToolCall{Tool: "exec", Agent: "main", Session: "s1", RunID: "approved-run"})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/tool/exec", strings.NewReader(
 		`{"agent":"main","session":"s1","run_id":"approved-run","params":{"command":"deploy prod"},"response":"leaked AKIA1234567890ABCDEF"}`))
@@ -1124,29 +1124,6 @@ func TestServerTimeouts(t *testing.T) {
 	defer ln.Close()
 
 	go func() { _ = srv.Serve(ln) }()
-	time.Sleep(50 * time.Millisecond)
-	t.Cleanup(func() { _ = srv.Shutdown(context.Background()) })
-
-	srv.mu.Lock()
-	httpSrv := srv.server
-	srv.mu.Unlock()
-
-	require.NotNil(t, httpSrv)
-	assert.Equal(t, 30*time.Second, httpSrv.ReadTimeout)
-	assert.Equal(t, 30*time.Second, httpSrv.WriteTimeout)
-	assert.Equal(t, 120*time.Second, httpSrv.IdleTimeout)
-}
-
-func TestListenAndServeTimeouts(t *testing.T) {
-	srv, _, _ := setupTestServer(t, testPolicyYAML, "enforce")
-
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	addr := ln.Addr().String()
-	ln.Close() // free the port for ListenAndServe
-
-	go func() { _ = srv.ListenAndServe(addr) }()
-	// Give it a moment to start
 	time.Sleep(50 * time.Millisecond)
 	t.Cleanup(func() { _ = srv.Shutdown(context.Background()) })
 
@@ -1948,7 +1925,7 @@ func TestResolveApproval_AuditFailureLeavesApprovalPendingAndUnusable(t *testing
 		t.Fatal("audit failure woke the approval waiter")
 	default:
 	}
-	grant, consumed, consumeErr := srv.approvals.ConsumeApproved(call)
+	grant, consumed, consumeErr := srv.approvals.ConsumeApprovedFor(call, "")
 	require.NoError(t, consumeErr)
 	assert.False(t, consumed)
 	assert.Nil(t, grant)
@@ -1957,7 +1934,7 @@ func TestResolveApproval_AuditFailureLeavesApprovalPendingAndUnusable(t *testing
 	srv.sink = &mockSink{}
 	recorder = resolve()
 	assert.Equal(t, http.StatusOK, recorder.Code)
-	grant, consumed, consumeErr = srv.approvals.ConsumeApproved(call)
+	grant, consumed, consumeErr = srv.approvals.ConsumeApprovedFor(call, "")
 	require.NoError(t, consumeErr)
 	require.True(t, consumed)
 	assert.Equal(t, pending.ID, grant.ID)
@@ -2002,7 +1979,7 @@ func TestResolveApproval_DurableAuditFailureKeepsOneTimeApprovalButSkipsPolicy(t
 	_, statErr := os.Stat(engine.DefaultAutoAllowedPath())
 	assert.True(t, os.IsNotExist(statErr), "durable rule was installed without its required audit record")
 
-	grant, consumed, consumeErr := srv.approvals.ConsumeApproved(call)
+	grant, consumed, consumeErr := srv.approvals.ConsumeApprovedFor(call, "")
 	require.NoError(t, consumeErr)
 	require.True(t, consumed, "failed durable persistence must preserve the already-audited one-time approval")
 	assert.Equal(t, pending.ID, grant.ID)
@@ -2968,4 +2945,20 @@ func TestNotificationActionMatchesApprovalAliases(t *testing.T) {
 			}
 		}
 	}
+}
+
+// grantRun publishes a run-scoped auto-approval through the store's
+// production bulk-approval path: enqueue, snapshot, resolve, publish.
+func grantRun(t *testing.T, srv *Server, call engine.ToolCall) {
+	t.Helper()
+	request, autoApproved, err := srv.approvals.CreateOrAutoApproved(call, engine.Decision{Action: engine.ActionAsk}, "")
+	require.NoError(t, err)
+	require.False(t, autoApproved)
+	snapshot, err := srv.approvals.BeginRunScopeSnapshot(call, []string{request.ID}, time.Minute)
+	require.NoError(t, err)
+	_, err = srv.approvals.ResolveBeforePublishForRunScopeSnapshot(snapshot, request.ID, "operator", nil)
+	require.NoError(t, err)
+	_, _, installed, err := srv.approvals.AutoApproveRunBeforePublishForRunScopeSnapshot(snapshot, nil)
+	require.NoError(t, err)
+	require.True(t, installed)
 }

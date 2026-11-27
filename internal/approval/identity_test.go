@@ -51,7 +51,7 @@ func TestPrivateApprovalRestartPreservesExactIdentity(t *testing.T) {
 	require.Equal(t, key, restored.dedupKey)
 	require.True(t, restored.HasRedactions())
 	require.True(t, restored.CanAuthorizeRun(), "parameter redaction must not disable an unchanged run identity")
-	require.NoError(t, restarted.Resolve(req.ID, true, "operator"))
+	require.NoError(t, restarted.ResolveBeforePublish(req.ID, true, "operator", nil))
 	for name, mutate := range map[string]func(*engine.ToolCall){
 		"suffix": func(c *engine.ToolCall) {
 			c.Params["command"] = "review --token=synthetic-private-value ; echo changed"
@@ -123,11 +123,11 @@ func TestPrivateApprovalMigratesLegacyPendingAndExpiresLegacyGrants(t *testing.T
 	idempotent, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, string(migrated), string(idempotent))
-	_, consumed, err := store.ConsumeApproved(call)
+	_, consumed, err := store.ConsumeApprovedFor(call, "")
 	require.NoError(t, err)
 	require.False(t, consumed)
-	require.NoError(t, store.Resolve(pending.ID, true, "operator"))
-	_, consumed, err = store.ConsumeApproved(call)
+	require.NoError(t, store.ResolveBeforePublish(pending.ID, true, "operator", nil))
+	_, consumed, err = store.ConsumeApprovedFor(call, "")
 	require.NoError(t, err)
 	require.True(t, consumed)
 }
@@ -140,7 +140,7 @@ func TestApprovalIdentityKeyLossAndUnsafeFilesFailClosed(t *testing.T) {
 			req, err := store.Create(testCall(), testDecision())
 			require.NoError(t, err)
 			if kind == "missing-replay" {
-				require.NoError(t, store.Resolve(req.ID, true, "operator"))
+				require.NoError(t, store.ResolveBeforePublish(req.ID, true, "operator", nil))
 			}
 			keyPath := path + ".identity-key"
 			key, err := os.ReadFile(keyPath)
@@ -162,14 +162,14 @@ func TestApprovalIdentityKeyLossAndUnsafeFilesFailClosed(t *testing.T) {
 					t.Skipf("link unavailable: %v", err)
 				}
 			}
-			require.Error(t, store.Resolve(req.ID, true, "operator"))
+			require.Error(t, store.ResolveBeforePublish(req.ID, true, "operator", nil))
 			store.Close()
 			restarted := NewStore(WithPersistenceFile(path))
 			defer restarted.Close()
 			require.Error(t, restarted.identityErr)
 			_, err = restarted.Create(testCall(), testDecision())
 			require.Error(t, err)
-			_, consumed, err := restarted.ConsumeApproved(testCall())
+			_, consumed, err := restarted.ConsumeApprovedFor(testCall(), "")
 			require.Error(t, err)
 			require.False(t, consumed)
 			if strings.HasPrefix(kind, "missing") {
@@ -232,8 +232,8 @@ func TestRedactedRunScopeCannotGrantFutureAuthorityAfterRestart(t *testing.T) {
 					restarted.AbortRunScopeSnapshot(snapshot)
 				}
 				require.Error(t, err, "redacted identity must not become authority for a literal redaction-marker scope")
-				require.NoError(t, restarted.Resolve(id, true, "operator"))
-				_, consumed, err := restarted.ConsumeApproved(call)
+				require.NoError(t, restarted.ResolveBeforePublish(id, true, "operator", nil))
+				_, consumed, err := restarted.ConsumeApprovedFor(call, "")
 				require.NoError(t, err)
 				require.True(t, consumed, "the individually reviewed original action must remain resumable")
 			})
@@ -271,18 +271,18 @@ func TestApprovalSnapshotsCallerValuesOnceBeforeIdentityAndReview(t *testing.T) 
 	require.True(t, ok)
 	require.Equal(t, "first-target", restored.Call.Params["target"])
 	require.Equal(t, json.Number("9007199254740993"), restored.Call.Params["sequence"], "journal restoration must preserve the displayed integer")
-	require.NoError(t, restarted.Resolve(req.ID, true, "operator"))
+	require.NoError(t, restarted.ResolveBeforePublish(req.ID, true, "operator", nil))
 	call.Params["target"] = "different-target"
-	_, consumed, err := restarted.ConsumeApproved(call)
+	_, consumed, err := restarted.ConsumeApprovedFor(call, "")
 	require.NoError(t, err)
 	require.False(t, consumed)
 	call.Params["target"] = "first-target"
 	call.Params["sequence"] = int64(9007199254740992)
-	_, consumed, err = restarted.ConsumeApproved(call)
+	_, consumed, err = restarted.ConsumeApprovedFor(call, "")
 	require.NoError(t, err)
 	require.False(t, consumed, "adjacent integers above float64 precision must not share authority")
 	call.Params["sequence"] = int64(9007199254740993)
-	_, consumed, err = restarted.ConsumeApproved(call)
+	_, consumed, err = restarted.ConsumeApprovedFor(call, "")
 	require.NoError(t, err)
 	require.True(t, consumed)
 }

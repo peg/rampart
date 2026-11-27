@@ -6,23 +6,16 @@ package mcp
 import "testing"
 
 func TestMapToolNameDestructiveInferencePrecedesOrdinaryDefaults(t *testing.T) {
-	if got := MapToolName("delete_file", nil); got != "mcp-destructive" {
+	if got := MapToolName("delete_file"); got != "mcp-destructive" {
 		t.Fatalf("delete_file = %q, want mcp-destructive", got)
 	}
-	if got := MapToolName("filesystem_delete_file", nil); got != "mcp-destructive" {
+	if got := MapToolName("filesystem_delete_file"); got != "mcp-destructive" {
 		t.Fatalf("filesystem_delete_file = %q, want mcp-destructive", got)
 	}
-	if got := MapToolName("execute_command", nil); got != "exec" {
+	if got := MapToolName("execute_command"); got != "exec" {
 		t.Fatalf("execute_command = %q, want exec", got)
 	}
-	if got := MapToolName("move_file", nil); got != "mcp-dangerous" {
+	if got := MapToolName("move_file"); got != "mcp-dangerous" {
 		t.Fatalf("move_file = %q, want mcp-dangerous", got)
-	}
-}
-
-func TestMapToolNameExplicitCustomMappingStillWins(t *testing.T) {
-	custom := map[string]string{"delete_file": "write"}
-	if got := MapToolName("delete_file", custom); got != "write" {
-		t.Fatalf("custom delete_file = %q, want write", got)
 	}
 }

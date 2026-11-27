@@ -311,7 +311,7 @@ func TestRemoveRule(t *testing.T) {
 	err := writeConfigAtomic(path, cfg)
 	require.NoError(t, err)
 
-	err = RemoveRule(path, "test-policy", 1)
+	err = removeRule(path, "test-policy", 1, nil)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(path)
@@ -339,7 +339,7 @@ func TestRemoveRuleRemovesEmptyPolicy(t *testing.T) {
 	err := writeConfigAtomic(path, cfg)
 	require.NoError(t, err)
 
-	err = RemoveRule(path, "single-rule", 0)
+	err = removeRule(path, "single-rule", 0, nil)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(path)

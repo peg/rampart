@@ -16,7 +16,7 @@ rampart version
 ### Homebrew
 
 ```bash
-brew upgrade rampart
+brew upgrade peg/tap/rampart
 ```
 
 If `rampart serve install` was run from an older Homebrew release, its service
@@ -45,33 +45,30 @@ Rerun the official PowerShell installer:
 irm https://rampart.sh/install.ps1 | iex
 ```
 
-Use this installer for every Windows binary upgrade; in-process self-upgrade is
-intentionally disabled on Windows. The installer also repairs the affected
+Use this installer for every Windows binary upgrade. It also repairs the affected
 legacy `~\.rampart` ACL found on v1.2.x installations.
 
-### Manual Binary
+### Install script (macOS and Linux)
 
-For an existing manually installed binary on macOS or Linux, use the built-in
-upgrader:
+Rerun the official installer:
 
 ```bash
-rampart upgrade
+curl -fsSL https://rampart.sh/install | sh
 ```
 
-It verifies the release checksum and candidate version before replacing the
-running CLI's installation. It retains rollback state until the managed runtime
-has restarted successfully. Homebrew-managed binaries direct you to Homebrew
-instead. If Rampart cannot run, use the [official installer](installation.md)
-and its reported installation path; avoid copying an unchecked archive over an
-existing executable.
+It verifies the release checksum and embedded version, replaces the binary
+atomically, and restarts a managed systemd or launchd Rampart service. Avoid
+copying an unchecked archive over an existing executable.
+
+Not sure which method installed Rampart? `rampart upgrade` prints the matching
+command. It does not download or replace anything itself.
 
 ### Custom background services: manual migration
 
 The v1.9.1 updater restarts a `serve --background` process with default options.
 Installing a corrected destination binary cannot repair that earlier restart.
 Automatic preservation of custom background launch options and working directory
-also remains unavailable in this release; use this route for later self-upgrades
-until preservation is explicitly supported.
+also remains unavailable; use this route for later upgrades of such a service.
 
 1. Record the service's original command options and working directory from
    your deployment definition. Keep credentials in their existing secret source;
@@ -119,7 +116,9 @@ rampart protect
 rampart verify --all
 ```
 
-Run `rampart protect` once after replacing the binary. It preserves user-owned
+`rampart upgrade --no-binary` refreshes unmodified built-in policy profiles in
+`~/.rampart/policies/` to the new binary's versions; edited and custom policies
+are preserved. Run `rampart protect` once after replacing the binary. It preserves user-owned
 configuration, refreshes Rampart-managed hooks and plugins for detected agents,
 migrates recognized legacy integrations, and runs the matching behavioral
 verification. This is especially important when a release adds a newer native
@@ -162,9 +161,9 @@ Rampart does not rewrite arbitrary upstream-owned configuration.
 
 ## What Upgrades Preserve
 
-Binary upgrades preserve user-owned state. The self-upgrader also refreshes
-unchanged Rampart-managed built-in policy profiles; edited and custom policies
-are preserved:
+Binary upgrades preserve user-owned state. `rampart upgrade --no-binary`
+refreshes unchanged Rampart-managed built-in policy profiles; edited and custom
+policies are preserved:
 
 | Preserved | Location |
 |-----------|----------|

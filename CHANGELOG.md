@@ -32,6 +32,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ollama launch <agent> [--model <name>] [-- args]`, or `codex --oss` when
   Ollama is not installed.
 
+### Removed
+
+- **In-process self-upgrade** — `rampart upgrade` no longer downloads or
+  replaces the binary. It prints the upgrade command for how Rampart was
+  installed (`brew upgrade peg/tap/rampart`, the `install.sh` one-liner, or the
+  `install.ps1` one-liner on Windows); those installers verify checksums and
+  restart managed services. The `[version]` argument and the `--yes` and
+  `--no-policy-update` flags are gone. `rampart upgrade --no-binary` still
+  refreshes unmodified built-in policy profiles; run it after upgrading.
+
 ### Security
 
 - **Privilege wrappers no longer soften deny rules** — deny and ask rules now
