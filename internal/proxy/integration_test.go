@@ -407,14 +407,14 @@ func TestStandardPolicy_GlobEdgeCases(t *testing.T) {
 		note       string
 	}{
 		{
-			// sudo rm -rf / should hit require-privileged-approval (sudo **), NOT
-			// block-destructive (rm -rf /), because the command starts with "sudo".
-			name:       "exec: sudo rm -rf / → ask (sudo wins, not deny)",
+			// Deny rules judge the command a privilege wrapper runs, so approving
+			// a sudo prompt can never approve a command that is denied without it.
+			name:       "exec: sudo rm -rf / → deny",
 			tool:       "exec",
 			params:     map[string]any{"command": "sudo rm -rf /"},
-			wantStatus: http.StatusAccepted,
-			wantAction: "ask",
-			note:       "sudo ** pattern in require-privileged-approval triggers before deny patterns",
+			wantStatus: http.StatusForbidden,
+			wantAction: "deny",
+			note:       "block-destructive sees through sudo and outranks require-privileged-approval",
 		},
 		{
 			// cat /root/.ssh/id_rsa via exec is caught by block-credential-commands.

@@ -37,7 +37,7 @@ Rampart does **not** claim to stop a skilled human who has already compromised y
 │  • rampart serve process                     │
 │  • Audit log directory (when user-separated) │
 │  • Policy registry sources (when verified)   │
-│  • HMAC signing key (~/.rampart/signing.key) │
+│  • Approval keys and tokens (when user-sep.) │
 ├─────────────────────────────────────────────┤
 │ Untrusted                                    │
 │  • AI agent tool calls (all input)           │
@@ -291,11 +291,17 @@ v0.6.6 added Windows policy parity. Key differences from Linux/macOS:
 
 ## Deployment Recommendations
 
-| Setup | Agent reads audit? | Agent modifies policy? | Best for |
-|-------|-------------------|----------------------|----------|
-| Same user (default) | ✅ Yes | ✅ Yes | Development, testing |
-| Separate user | ❌ No | ❌ No | Production, unsupervised agents |
-| Separate user + SIEM | ❌ No | ❌ No | Enterprise, compliance |
+| Setup | Agent reads audit? | Agent modifies policy? | Agent can reach approval state? | Best for |
+|-------|-------------------|----------------------|--------------------------------|----------|
+| Same user (default) | ✅ Yes | ✅ Yes | ⚠️ Only policy stands in the way | Development, testing |
+| Separate user | ❌ No | ❌ No | ❌ No | Production, unsupervised agents |
+| Separate user + SIEM | ❌ No | ❌ No | ❌ No | Enterprise, compliance |
+
+In the same-user setup, Rampart's signing key, tokens and approval state live in
+files the agent's OS user can read and write. The standard policies deny the
+direct ways to reach them, but an interpreter or an unlisted tool can still get
+there (see Interpreter Bypass). Treat approvals as advisory in this setup, and
+use user separation wherever an approval must be a hard boundary.
 
 **Prerequisite:** The agent must run as a non-root user. If the agent runs as root, user separation provides no protection — root can read and modify all files regardless of ownership.
 

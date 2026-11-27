@@ -16,12 +16,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   llama.cpp. It needs no `rampart serve`. Linux and macOS with a POSIX shell
   only. A missing or failing `rampart`, a malformed reply, or a ten-second
   timeout refuses the call, as do `ask`, `require_approval`, and unmapped
-  tools such as MCP, `glob`, `grep`, and `task`. `rampart doctor` checks the
+  tools such as MCP and `task`. `glob`, `grep`, and `list` are checked as
+  reads of the directory they search. `rampart doctor` checks the
   installed file and warns when `OPENCODE_PURE` would skip plugins; it does not
   prove OpenCode loaded the plugin. Bare `rampart protect` does not enroll
   OpenCode yet, since it has no `rampart verify` check. The integration was
   parked before 1.10.0; this restores it on the current hook, which now
   answers `allow` for OpenCode where it defers for Claude Code.
+
+### Security
+
+- **Privilege wrappers no longer soften deny rules** — deny and ask rules now
+  judge the command that `sudo`, `doas` or `pkexec` runs, so a command denied
+  on its own stays denied behind a privilege wrapper instead of becoming an
+  approval prompt. Allow rules still do not look through a wrapper.
+- **Rampart's approval keys are protected like its tokens** — the standard,
+  guard and OpenClaw profiles deny direct reads of the files that back
+  approvals. The threat model now states that approvals are advisory when the
+  agent runs as the same OS user as Rampart.
 
 ## [1.11.1] - 2026-11-26
 
