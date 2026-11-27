@@ -28,30 +28,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// verdictsFile records the shipped profiles' protective verdicts (watch, ask
-// or deny) for a corpus of commands. TestShippedProfileVerdicts fails when any
-// recorded verdict changes, and scripts/check-verdict-loosening.sh fails a pull
-// request whose recorded verdicts get weaker or disappear unless
-// testdata/verdicts-loosened.tsv lists the change. Allowed commands are not
-// recorded: they cannot get weaker. Every row must hold on every platform, so
-// commands whose verdict depends on the host's case folding are tested per OS
-// in internal/engine instead.
+// verdictsFile records commands that every installed combination asks about
+// or denies. TestShippedProfileVerdicts fails when a recorded verdict changes,
+// and scripts/check-verdict-loosening.sh fails a pull request that weakens or
+// removes a row unless testdata/verdicts-loosened.tsv lists the change. A
+// command allowed by any combination is not recorded, so the public file never
+// shows which forms get through. Rows must hold on every platform; verdicts
+// that depend on case folding are tested per OS in internal/engine.
 const verdictsFile = "testdata/verdicts.tsv"
 
 var updateVerdicts = flag.Bool("update-verdicts", false, "rewrite "+verdictsFile+" from current policy")
 
-type verdictSet struct {
+// verdictSets mirror `rampart serve` after setup: the embedded standard
+// profile as primary plus the overlays installed in the policy directory.
+var verdictSets = []struct {
 	name     string
-	profiles []string // embedded profile names, or a path under policies/
+	overlays []string // embedded profile names, or a path under policies/
 	openclaw bool
-}
-
-// verdictSets are the installed combinations a release must not weaken.
-var verdictSets = []verdictSet{
-	{name: "standard", profiles: []string{"standard"}},
-	{name: "standard+guard", profiles: []string{"standard", "guard"}},
-	{name: "openclaw+guard", profiles: []string{"openclaw", "guard"}, openclaw: true},
-	{name: "standard+headless", profiles: []string{"standard", "examples/headless.yaml"}},
+}{
+	{name: "standard"},
+	{name: "standard+guard", overlays: []string{"guard"}},
+	{name: "openclaw+guard", overlays: []string{"openclaw", "guard"}, openclaw: true},
+	{name: "standard+headless", overlays: []string{"examples/headless.yaml"}},
 }
 
 type verdictRow struct {
@@ -65,51 +63,53 @@ func TestShippedProfileVerdicts(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, rows)
 
-	engines := make(map[string]*engine.Engine, len(verdictSets))
-	for _, set := range verdictSets {
-		engines[set.name] = verdictEngine(t, set)
+	setIndex := make(map[string]int, len(verdictSets))
+	engines := make([]*engine.Engine, len(verdictSets))
+	for i, set := range verdictSets {
+		setIndex[set.name] = i
+		engines[i] = verdictEngine(t, set.overlays)
 	}
-	evaluate := func(set verdictSet, command string) string {
+	evaluate := func(i int, command string) string {
 		params := map[string]any{"command": command}
 		agent := "claude-code"
-		if set.openclaw {
+		if verdictSets[i].openclaw {
 			agent = "openclaw:main"
 			params["rampart_integration"] = "openclaw"
 		}
 		call := engine.ToolCall{Agent: agent, Session: "verdicts", Tool: "exec", Params: params, Input: params}
-		return engines[set.name].Evaluate(call).Action.String()
+		return engines[i].Evaluate(call).Action.String()
 	}
 
 	if *updateVerdicts {
-		var commands []string
+		var updated []verdictRow
 		seen := map[string]bool{}
 		for _, row := range rows {
-			if !seen[row.command] {
-				seen[row.command] = true
-				commands = append(commands, row.command)
+			if seen[row.command] {
+				continue
 			}
-		}
-		var updated []verdictRow
-		for _, command := range commands {
-			for _, set := range verdictSets {
-				if action := evaluate(set, command); verdictRank(action) > 0 {
-					updated = append(updated, verdictRow{set: set.name, action: action, command: command})
+			seen[row.command] = true
+			actions := make([]string, len(verdictSets))
+			protected := true
+			for i := range verdictSets {
+				actions[i] = evaluate(i, row.command)
+				protected = protected && blocks(actions[i])
+			}
+			for i, set := range verdictSets {
+				if protected {
+					updated = append(updated, verdictRow{set: set.name, action: actions[i], command: row.command})
 				}
 			}
 		}
+		sort.SliceStable(updated, func(i, j int) bool { return updated[i].command < updated[j].command })
 		require.NoError(t, writeVerdicts(verdictsFile, updated))
 		return
 	}
 
-	known := map[string]bool{}
-	for _, set := range verdictSets {
-		known[set.name] = true
-	}
 	var changed []string
 	for _, row := range rows {
-		require.Truef(t, known[row.set], "unknown profile set %q in %s", row.set, verdictsFile)
-		set := verdictSetNamed(row.set)
-		if got := evaluate(set, row.command); got != row.action {
+		i, ok := setIndex[row.set]
+		require.Truef(t, ok, "unknown profile set %q in %s", row.set, verdictsFile)
+		if got := evaluate(i, row.command); got != row.action {
 			changed = append(changed, fmt.Sprintf("%s: %q was %s, now %s", row.set, row.command, row.action, got))
 		}
 	}
@@ -120,49 +120,31 @@ func TestShippedProfileVerdicts(t *testing.T) {
 	}
 }
 
-func verdictEngine(t *testing.T, set verdictSet) *engine.Engine {
+func verdictEngine(t *testing.T, overlays []string) *engine.Engine {
 	t.Helper()
+	standard, err := Profile("standard")
+	require.NoError(t, err)
 	dir := t.TempDir()
-	for i, profile := range set.profiles {
+	for _, overlay := range overlays {
 		var content []byte
-		var err error
-		if strings.HasSuffix(profile, ".yaml") {
-			content, err = os.ReadFile(filepath.FromSlash(profile))
+		if strings.HasSuffix(overlay, ".yaml") {
+			content, err = os.ReadFile(filepath.FromSlash(overlay))
 		} else {
-			content, err = Profile(profile)
+			content, err = Profile(overlay)
 		}
 		require.NoError(t, err)
-		// Files load in name order; keep the listed layering.
-		name := fmt.Sprintf("%02d-%s", i, strings.TrimSuffix(filepath.Base(profile), ".yaml")) + ".yaml"
+		name := strings.TrimSuffix(filepath.Base(overlay), ".yaml") + ".yaml"
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), content, 0o600))
 	}
-	eng, err := engine.New(engine.NewMultiStore("", dir, nil), nil)
+	store := engine.NewMixedStore(engine.NewMemoryStore(standard, "embedded:standard"), dir, nil)
+	eng, err := engine.New(store, nil)
 	require.NoError(t, err)
 	return eng
 }
 
-func verdictSetNamed(name string) verdictSet {
-	for _, set := range verdictSets {
-		if set.name == name {
-			return set
-		}
-	}
-	return verdictSet{}
-}
-
-// verdictRank orders actions by how much they restrict. It matches
-// scripts/check-verdict-loosening.sh.
-func verdictRank(action string) int {
-	switch action {
-	case "deny":
-		return 3
-	case "ask", "require_approval", "webhook":
-		return 2
-	case "watch":
-		return 1
-	default:
-		return 0
-	}
+// blocks reports whether an action stops the call for a decision.
+func blocks(action string) bool {
+	return action == "deny" || action == "ask" || action == "require_approval"
 }
 
 func readVerdicts(path string) ([]verdictRow, error) {
@@ -193,14 +175,8 @@ func readVerdicts(path string) ([]verdictRow, error) {
 }
 
 func writeVerdicts(path string, rows []verdictRow) error {
-	sort.SliceStable(rows, func(i, j int) bool {
-		if rows[i].command != rows[j].command {
-			return rows[i].command < rows[j].command
-		}
-		return setIndex(rows[i].set) < setIndex(rows[j].set)
-	})
 	var b strings.Builder
-	b.WriteString("# Protective verdicts of the shipped profiles. Generated; see policies/verdicts_test.go.\n")
+	b.WriteString("# Commands every shipped combination asks about or denies. Generated; see policies/verdicts_test.go.\n")
 	b.WriteString("# To add a command, append a row with any set and action, then run\n")
 	b.WriteString("#   go test ./policies -run TestShippedProfileVerdicts -update-verdicts\n")
 	b.WriteString("# set\taction\tcommand\n")
@@ -208,13 +184,4 @@ func writeVerdicts(path string, rows []verdictRow) error {
 		fmt.Fprintf(&b, "%s\t%s\t%s\n", row.set, row.action, strconv.Quote(row.command))
 	}
 	return os.WriteFile(path, []byte(b.String()), 0o644)
-}
-
-func setIndex(name string) int {
-	for i, set := range verdictSets {
-		if set.name == name {
-			return i
-		}
-	}
-	return len(verdictSets)
 }
