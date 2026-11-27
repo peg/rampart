@@ -519,7 +519,7 @@ func TestPolicyMutationsPreserveRichConfig(t *testing.T) {
 		{
 			name: "remove rule",
 			run: func(path string) error {
-				return RemoveRule(path, "rich-policy", 0)
+				return removeRule(path, "rich-policy", 0, nil)
 			},
 		},
 	}

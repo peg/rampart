@@ -57,11 +57,11 @@ func FuzzMatchCondition(f *testing.F) {
 
 		for _, cond := range conditions {
 			// Test matchCondition - should never panic
-			result := matchCondition(cond, call, nil)
+			result := matchConditionForAction(cond, call, nil, ActionDeny)
 			_ = result
 
 			// Test ExplainCondition - should never panic
-			matched, explanation := ExplainCondition(cond, call)
+			matched, explanation := ExplainConditionForAction(cond, call, ActionDeny)
 			_, _ = matched, explanation
 
 			// Test condition methods
