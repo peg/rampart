@@ -276,12 +276,35 @@ func TestVerifyCursorHooksAndAdapterBlockCanary(t *testing.T) {
 	}
 }
 
-func TestVerifyClaudeAndClineAdaptersBlockCanary(t *testing.T) {
+func TestVerifyNativeAdaptersBlockCanary(t *testing.T) {
 	testSetHome(t, t.TempDir())
-	for _, target := range []string{"claude-code", "cline"} {
+	for _, target := range []string{"claude-code", "cline", "opencode"} {
 		if check := verifyNativeHookAdapter(context.Background(), target); check.Status != verificationPass {
 			t.Fatalf("%s adapter check: %#v", target, check)
 		}
+	}
+}
+
+func TestVerifyOpenCodePluginInstalled(t *testing.T) {
+	skipOnWindows(t, "OpenCode integration is Linux and macOS only")
+	testSetHome(t, t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("OPENCODE_PURE", "")
+	if check := verifyOpenCodePluginInstalled(); check.Status != verificationFail {
+		t.Fatalf("missing plugin: %#v", check)
+	}
+	setup := newSetupOpenCodeCmd()
+	setup.SetOut(new(bytes.Buffer))
+	setup.SetArgs(nil)
+	if err := setup.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if check := verifyOpenCodePluginInstalled(); check.Status != verificationPass {
+		t.Fatalf("installed plugin: %#v", check)
+	}
+	t.Setenv("OPENCODE_PURE", "1")
+	if check := verifyOpenCodePluginInstalled(); check.Status != verificationFail {
+		t.Fatalf("OPENCODE_PURE set: %#v", check)
 	}
 }
 

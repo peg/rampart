@@ -31,10 +31,9 @@ or a linked plugin file or directory.
 OpenCode [discovers global plugins at startup](https://opencode.ai/docs/plugins/#from-local-files).
 Successful setup means the file was installed; it does not prove the host
 loaded it. Bare `rampart protect` does not enroll this experimental
-integration: `protect` only enrolls integrations that `rampart verify` can
-check behaviorally, and OpenCode has no active verifier yet. OpenCode also
-continues when a plugin fails to load, so a silent enrollment could look
-protected when it is not.
+integration, because OpenCode continues when a plugin fails to load, so a
+silent enrollment could look protected when it is not. Use
+`rampart launch opencode` to install, verify and start it in one step.
 
 After upgrading Rampart, rerun setup and restart OpenCode to update the managed
 plugin and the bound Rampart executable. Repeating setup repairs owned file
@@ -111,9 +110,9 @@ rampart doctor
 ```
 
 Doctor checks whether the managed plugin file matches the current installation
-and warns when `OPENCODE_PURE` is set. It does not launch OpenCode or prove hook ingestion. There is no
-`rampart verify opencode` command, and `rampart verify --all` excludes this
-static integration from behavioral results.
+and warns when `OPENCODE_PURE` is set. `rampart verify opencode` also sends a
+destructive canary through `rampart hook --format opencode` and requires a
+deny. Neither launches OpenCode or proves it loaded the plugin.
 
 The V1 pre-tool hook does not cover manual shell commands, PTYs,
 command-template shell interpolation, debug tool execution, attached-file or

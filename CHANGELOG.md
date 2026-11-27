@@ -19,12 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tools such as MCP and `task`. `glob`, `grep`, and `list` are checked as
   reads of the directory they search. `rampart doctor` checks the
   installed file and warns when `OPENCODE_PURE` would skip plugins; it does not
-  prove OpenCode loaded the plugin. Bare `rampart protect` does not enroll
-  OpenCode yet, since it has no `rampart verify` check. The integration was
+  prove OpenCode loaded the plugin. `rampart verify opencode` checks the
+  plugin and sends a deny canary through the OpenCode adapter;
+  `rampart launch opencode` runs it before starting OpenCode. Bare
+  `rampart protect` does not enroll OpenCode. The integration was
   parked before 1.10.0; this restores it on the current hook, which now
   answers `allow` for OpenCode where it defers for Claude Code.
 - **`rampart launch <agent>`** — one command to a protected local-model
-  agent. Launch installs Rampart's hooks for Claude Code or Codex if they are
+  agent. Launch installs Rampart's hooks for Claude Code, Codex or OpenCode if they are
   missing, runs the same safe canaries as `rampart verify`, and refuses to
   start the agent unless every check passes. It then runs
   `ollama launch <agent> [--model <name>] [-- args]`, or `codex --oss` when
