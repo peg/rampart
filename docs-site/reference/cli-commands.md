@@ -855,38 +855,6 @@ Remove an installed community policy profile from `~/.rampart/policies/`. Built-
 rampart policy remove docker-restricted
 ```
 
-### `rampart policy sync <git-url>`
-
-Sync a Rampart policy from a git repository. Requires `git` in `PATH` and an HTTPS URL pointing to a publicly accessible repo. Looks for `rampart.yaml`, `policy.yaml`, or `.rampart/policy.yaml` in the repo root. Writes the result to `~/.rampart/policies/org-sync.yaml` and persists state to `~/.rampart/sync-state.json`.
-
-```bash
-rampart policy sync https://github.com/myorg/policies   # One-shot sync
-rampart policy sync https://github.com/myorg/policies --watch           # Poll for updates
-rampart policy sync https://github.com/myorg/policies --watch --interval 10m  # Custom interval
-rampart policy sync                                      # Re-use previously saved URL
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--watch` | `false` | Poll for policy updates in the foreground |
-| `--interval` | `5m` | How often to poll when using `--watch` |
-
-#### `rampart policy sync status`
-
-Show the current sync configuration and last sync result.
-
-```bash
-rampart policy sync status
-```
-
-#### `rampart policy sync stop`
-
-Remove the configured sync URL, stopping future syncs.
-
-```bash
-rampart policy sync stop
-```
-
 ### `rampart pending`
 
 List commands waiting for human approval.

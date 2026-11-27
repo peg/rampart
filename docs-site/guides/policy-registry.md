@@ -106,13 +106,3 @@ To add a policy to the community registry:
 3. Update `registry/registry.json` with the name, description, path, and SHA256
 
 Community policies must pass `rampart policy lint` with no warnings before merging.
-
-## Team policies vs. community policies
-
-| | Community registry | Git sync |
-|---|---|---|
-| Source | Rampart's curated list | Any HTTPS git repo |
-| Updates | Manual (`fetch --force`) | Automatic (`--watch`) |
-| Use case | Getting started, standard profiles | Team-wide policy distribution |
-
-For team-managed policies, see [Git-based Policy Sync](policy-sync.md).
