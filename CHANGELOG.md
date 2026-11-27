@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   policy file and no longer updates.
 - **Compliance reports** — `rampart report compliance` is gone. `rampart report`
   (HTML) and `rampart report export` are unchanged.
+- **Experimental external audit witness** — `rampart audit witness` and the
+  `--witness-config` and `--require-witness` flags of `rampart audit verify`
+  are gone. The local hash-chained audit log and `rampart audit verify` remain.
 - **Policy registry** — `rampart policy search`, `fetch` and `install`, the
   embedded registry manifest, `RAMPART_REGISTRY_URL`, community-policy
   suggestions in `rampart init` and `rampart doctor`, and
