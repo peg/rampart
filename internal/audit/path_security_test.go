@@ -177,27 +177,6 @@ func TestReadEventsFromOffsetRejectsSymlink(t *testing.T) {
 	}
 }
 
-func TestCEFFileSinkRejectsSymlinkWithoutTouchingTarget(t *testing.T) {
-	victim := filepath.Join(t.TempDir(), "victim")
-	const original = "cef victim"
-	if err := os.WriteFile(victim, []byte(original), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	link := filepath.Join(t.TempDir(), "cef.log")
-	createTestSymlink(t, victim, link)
-
-	if _, err := NewCEFFileSink(link, nil); err == nil || !strings.Contains(err.Error(), "regular non-symlink") {
-		t.Fatalf("NewCEFFileSink accepted symlink: %v", err)
-	}
-	data, err := os.ReadFile(victim)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != original {
-		t.Fatalf("CEF symlink target changed: got %q", data)
-	}
-}
-
 func TestJSONLSinkMetadataAndLogAreOwnerOnlyOnUnix(t *testing.T) {
 	if os.PathSeparator == '\\' {
 		t.Skip("Unix mode bits")

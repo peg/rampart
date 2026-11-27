@@ -304,9 +304,6 @@ rampart serve --addr 127.0.0.1             # Bind to localhost only
 rampart serve --port 8080                  # Custom port
 rampart serve --config policy.yaml         # Custom policy
 rampart serve --audit-dir /var/log/rampart # Custom audit log directory
-rampart serve --syslog localhost:514       # With syslog output
-rampart serve --cef                        # With CEF file output
-rampart serve --syslog localhost:514 --cef # CEF to syslog
 rampart serve --tls-auto                   # HTTPS with auto-generated self-signed cert
 rampart serve --tls-cert cert.pem --tls-key key.pem  # HTTPS with your own cert
 ```
@@ -807,38 +804,6 @@ Remove a policy file from `~/.rampart/policies/`. Built-in profiles (`standard`,
 
 ```bash
 rampart policy remove my-policy
-```
-
-### `rampart policy sync <git-url>`
-
-Sync a Rampart policy from a git repository. Requires `git` in `PATH` and an HTTPS URL pointing to a publicly accessible repo. Looks for `rampart.yaml`, `policy.yaml`, or `.rampart/policy.yaml` in the repo root. Writes the result to `~/.rampart/policies/org-sync.yaml` and persists state to `~/.rampart/sync-state.json`.
-
-```bash
-rampart policy sync https://github.com/myorg/policies   # One-shot sync
-rampart policy sync https://github.com/myorg/policies --watch           # Poll for updates
-rampart policy sync https://github.com/myorg/policies --watch --interval 10m  # Custom interval
-rampart policy sync                                      # Re-use previously saved URL
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--watch` | `false` | Poll for policy updates in the foreground |
-| `--interval` | `5m` | How often to poll when using `--watch` |
-
-#### `rampart policy sync status`
-
-Show the current sync configuration and last sync result.
-
-```bash
-rampart policy sync status
-```
-
-#### `rampart policy sync stop`
-
-Remove the configured sync URL, stopping future syncs.
-
-```bash
-rampart policy sync stop
 ```
 
 ### `rampart pending`
