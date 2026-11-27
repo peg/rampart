@@ -167,7 +167,6 @@ nav:
     - Agent Teams: features/agent-teams.md
     - External Witnessing (Experimental): features/external-witness.md
     - Webhooks: features/webhooks.md
-    - Security Posture: guides/compliance.md
   - Reference:
     - CLI Commands: reference/cli-commands.md
     - API Reference: reference/api-reference.md

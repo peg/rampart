@@ -48,6 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the YAML file yourself (for example, a `git pull` into `~/.rampart/policies/`).
   An existing `~/.rampart/policies/org-sync.yaml` keeps loading as a normal
   policy file and no longer updates.
+- **Compliance reports** — `rampart report compliance` is gone. `rampart report`
+  (HTML) and `rampart report export` are unchanged.
 
 ### Security
 
