@@ -1,0 +1,6 @@
+# Reviewed weaker verdicts. scripts/check-verdict-loosening.sh fails a change
+# that weakens or removes a row of verdicts.tsv unless the change adds that
+# exact row here with a reason. "now" is "unrecorded" for a removed row. The
+# command is quoted as in verdicts.tsv. Rows already on the base branch approve
+# nothing. Clear rows only after they have reached main.
+# set	was	now	command	reason

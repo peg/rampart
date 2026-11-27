@@ -266,12 +266,42 @@ jobs:
           python -m unittest internal/plugin/hermes/test_hermes_plugin.py
           python -m unittest scripts/test_compat_hermes_env.py
 
+  verdict-loosening:
+    name: verdict loosening
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fetch base revision
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git fetch --no-tags --depth=1 origin "$BASE_SHA"
+
+      - name: Recorded verdicts do not get weaker without review
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        # Run the base revision's script so a pull request cannot relax the check that judges it.
+        run: |
+          script=scripts/check-verdict-loosening.sh
+          if git cat-file -e "$BASE_SHA:$script" 2>/dev/null; then
+            git show "$BASE_SHA:$script" >"$RUNNER_TEMP/base-check.sh"
+            bash "$RUNNER_TEMP/base-check.sh" "$BASE_SHA"
+          else
+            "$script" "$BASE_SHA"
+          fi
+
   ci-gate:
     name: CI gate
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [test, docker-smoke, release-dry-run, hermes-min-python]
+    needs: [test, docker-smoke, release-dry-run, hermes-min-python, verdict-loosening]
     steps:
       - name: Require every CI job
         env:
@@ -279,6 +309,7 @@ jobs:
           DOCKER_RESULT: ${{ needs.docker-smoke.result }}
           RELEASE_RESULT: ${{ needs.release-dry-run.result }}
           HERMES_MIN_PYTHON_RESULT: ${{ needs.hermes-min-python.result }}
+          VERDICT_RESULT: ${{ needs.verdict-loosening.result }}
         run: |
           for result in "$TEST_RESULT" "$DOCKER_RESULT" "$RELEASE_RESULT" "$HERMES_MIN_PYTHON_RESULT"; do
             if [ "$result" != success ]; then
@@ -286,3 +317,8 @@ jobs:
               exit 1
             fi
           done
+          # Runs only for pull requests; pushes and release calls skip it.
+          if [ "$VERDICT_RESULT" != success ] && [ "$VERDICT_RESULT" != skipped ]; then
+            echo "Verdict loosening result: $VERDICT_RESULT"
+            exit 1
+          fi

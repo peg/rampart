@@ -1,2 +1,3 @@
 # Registry digests and embedded policies use the same bytes on every platform.
 policies/**/*.yaml text eol=lf
+policies/testdata/*.tsv text eol=lf
