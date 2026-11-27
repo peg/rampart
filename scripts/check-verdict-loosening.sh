@@ -15,8 +15,7 @@ set -euo pipefail
 base_ref="${1:?usage: $0 BASE_REF}"
 file=policies/testdata/verdicts.tsv
 ack=policies/testdata/verdicts-loosened.tsv
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$repo_root"
+cd "$(git rev-parse --show-toplevel)"
 
 git rev-parse --verify --quiet "$base_ref^{commit}" >/dev/null || {
   echo "Base revision $base_ref is not available." >&2

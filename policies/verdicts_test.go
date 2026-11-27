@@ -29,12 +29,13 @@ import (
 )
 
 // verdictsFile records commands that every installed combination asks about
-// or denies. TestShippedProfileVerdicts fails when a recorded verdict changes,
-// and scripts/check-verdict-loosening.sh fails a pull request that weakens or
-// removes a row unless testdata/verdicts-loosened.tsv lists the change. A
-// command allowed by any combination is not recorded, so the public file never
-// shows which forms get through. Rows must hold on every platform; verdicts
-// that depend on case folding are tested per OS in internal/engine.
+// or denies. TestShippedProfileVerdicts fails unless the file is exactly what
+// current policy generates, and scripts/check-verdict-loosening.sh fails a pull
+// request that weakens or removes a row unless testdata/verdicts-loosened.tsv
+// lists the change. A command allowed by any combination is not recorded, so
+// the public file never shows which forms get through. Rows must hold on every
+// platform; verdicts that depend on case folding are tested per OS in
+// internal/engine.
 const verdictsFile = "testdata/verdicts.tsv"
 
 var updateVerdicts = flag.Bool("update-verdicts", false, "rewrite "+verdictsFile+" from current policy")
@@ -52,71 +53,52 @@ var verdictSets = []struct {
 	{name: "standard+headless", overlays: []string{"examples/headless.yaml"}},
 }
 
-type verdictRow struct {
-	set     string
-	action  string
-	command string
-}
-
 func TestShippedProfileVerdicts(t *testing.T) {
-	rows, err := readVerdicts(verdictsFile)
+	commands, err := readVerdictCommands(verdictsFile)
 	require.NoError(t, err)
-	require.NotEmpty(t, rows)
+	require.NotEmpty(t, commands)
 
-	setIndex := make(map[string]int, len(verdictSets))
 	engines := make([]*engine.Engine, len(verdictSets))
 	for i, set := range verdictSets {
-		setIndex[set.name] = i
 		engines[i] = verdictEngine(t, set.overlays)
 	}
 	evaluate := func(i int, command string) string {
 		params := map[string]any{"command": command}
 		agent := "claude-code"
 		if verdictSets[i].openclaw {
-			agent = "openclaw:main"
+			agent = "main"
 			params["rampart_integration"] = "openclaw"
 		}
 		call := engine.ToolCall{Agent: agent, Session: "verdicts", Tool: "exec", Params: params, Input: params}
 		return engines[i].Evaluate(call).Action.String()
 	}
 
-	if *updateVerdicts {
-		var updated []verdictRow
-		seen := map[string]bool{}
-		for _, row := range rows {
-			if seen[row.command] {
-				continue
-			}
-			seen[row.command] = true
-			actions := make([]string, len(verdictSets))
-			protected := true
-			for i := range verdictSets {
-				actions[i] = evaluate(i, row.command)
-				protected = protected && blocks(actions[i])
-			}
-			for i, set := range verdictSets {
-				if protected {
-					updated = append(updated, verdictRow{set: set.name, action: actions[i], command: row.command})
-				}
+	var b strings.Builder
+	b.WriteString(verdictsHeader)
+	for _, command := range commands {
+		actions := make([]string, len(verdictSets))
+		protected := true
+		for i := range verdictSets {
+			actions[i] = evaluate(i, command)
+			protected = protected && blocks(actions[i])
+		}
+		for i, set := range verdictSets {
+			if protected {
+				fmt.Fprintf(&b, "%s\t%s\t%s\n", set.name, actions[i], strconv.Quote(command))
 			}
 		}
-		sort.SliceStable(updated, func(i, j int) bool { return updated[i].command < updated[j].command })
-		require.NoError(t, writeVerdicts(verdictsFile, updated))
+	}
+	want := b.String()
+	if *updateVerdicts {
+		require.NoError(t, os.WriteFile(verdictsFile, []byte(want), 0o644))
 		return
 	}
-
-	var changed []string
-	for _, row := range rows {
-		i, ok := setIndex[row.set]
-		require.Truef(t, ok, "unknown profile set %q in %s", row.set, verdictsFile)
-		if got := evaluate(i, row.command); got != row.action {
-			changed = append(changed, fmt.Sprintf("%s: %q was %s, now %s", row.set, row.command, row.action, got))
-		}
-	}
-	if len(changed) > 0 {
-		t.Fatalf("%d recorded verdicts changed. If every change is intended, run\n"+
+	got, err := os.ReadFile(verdictsFile)
+	require.NoError(t, err)
+	if string(got) != want {
+		t.Fatalf("%s differs from current policy (- recorded, + current). If every change is intended, run\n"+
 			"  go test ./policies -run TestShippedProfileVerdicts -update-verdicts\n"+
-			"and review the diff of %s.\n%s", len(changed), verdictsFile, strings.Join(changed, "\n"))
+			"and review the diff.\n%s", verdictsFile, lineDiff(string(got), want))
 	}
 }
 
@@ -147,13 +129,15 @@ func blocks(action string) bool {
 	return action == "deny" || action == "ask" || action == "require_approval"
 }
 
-func readVerdicts(path string) ([]verdictRow, error) {
+// readVerdictCommands returns the sorted, distinct commands of a verdicts file.
+func readVerdictCommands(path string) ([]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	var rows []verdictRow
+	seen := map[string]bool{}
+	var commands []string
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 1<<20), 1<<20)
 	for line := 1; scanner.Scan(); line++ {
@@ -169,19 +153,42 @@ func readVerdicts(path string) ([]verdictRow, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s:%d: command: %w", path, line, err)
 		}
-		rows = append(rows, verdictRow{set: fields[0], action: fields[1], command: command})
+		if !seen[command] {
+			seen[command] = true
+			commands = append(commands, command)
+		}
 	}
-	return rows, scanner.Err()
+	sort.Strings(commands)
+	return commands, scanner.Err()
 }
 
-func writeVerdicts(path string, rows []verdictRow) error {
-	var b strings.Builder
-	b.WriteString("# Commands every shipped combination asks about or denies. Generated; see policies/verdicts_test.go.\n")
-	b.WriteString("# To add a command, append a row with any set and action, then run\n")
-	b.WriteString("#   go test ./policies -run TestShippedProfileVerdicts -update-verdicts\n")
-	b.WriteString("# set\taction\tcommand\n")
-	for _, row := range rows {
-		fmt.Fprintf(&b, "%s\t%s\t%s\n", row.set, row.action, strconv.Quote(row.command))
+const verdictsHeader = "# Commands every shipped combination asks about or denies. Generated; see policies/verdicts_test.go.\n" +
+	"# To add a command, append a row with any set and action, then run\n" +
+	"#   go test ./policies -run TestShippedProfileVerdicts -update-verdicts\n" +
+	"# set\taction\tcommand\n"
+
+func lineDiff(got, want string) string {
+	in := func(s string) map[string]bool {
+		m := map[string]bool{}
+		for _, line := range strings.Split(s, "\n") {
+			m[line] = true
+		}
+		return m
 	}
-	return os.WriteFile(path, []byte(b.String()), 0o644)
+	gotLines, wantLines := in(got), in(want)
+	var out []string
+	for _, line := range strings.Split(got, "\n") {
+		if !wantLines[line] {
+			out = append(out, "- "+line)
+		}
+	}
+	for _, line := range strings.Split(want, "\n") {
+		if !gotLines[line] {
+			out = append(out, "+ "+line)
+		}
+	}
+	if len(out) == 0 {
+		return "rows are duplicated or out of order"
+	}
+	return strings.Join(out, "\n")
 }

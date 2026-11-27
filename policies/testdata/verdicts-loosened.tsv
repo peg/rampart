@@ -2,5 +2,5 @@
 # that weakens or removes a row of verdicts.tsv unless the change adds that
 # exact row here with a reason. "now" is "unrecorded" for a removed row. The
 # command is quoted as in verdicts.tsv. Rows already on the base branch approve
-# nothing, so this file may be cleared at any time.
+# nothing. Clear rows only after they have reached main.
 # set	was	now	command	reason
