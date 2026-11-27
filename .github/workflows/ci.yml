@@ -290,7 +290,8 @@ jobs:
         run: |
           script=scripts/check-verdict-loosening.sh
           if git cat-file -e "$BASE_SHA:$script" 2>/dev/null; then
-            git show "$BASE_SHA:$script" | bash -s -- "$BASE_SHA"
+            git show "$BASE_SHA:$script" >"$RUNNER_TEMP/base-check.sh"
+            bash "$RUNNER_TEMP/base-check.sh" "$BASE_SHA"
           else
             "$script" "$BASE_SHA"
           fi
