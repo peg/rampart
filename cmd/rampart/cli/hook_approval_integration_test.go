@@ -80,16 +80,20 @@ func testHookApprovalClientServerContract(t *testing.T, session string) {
 	defer cancel()
 	result := make(chan hookDecisionType, 1)
 	go func() { result <- client.requestApprovalCtx(ctx, call, "review the complete write", 10*time.Second) }()
-	var pending *approval.Request
+	var pendingID string
 	require.Eventually(t, func() bool {
-		items := srv.Approvals().List()
-		if len(items) == 1 {
-			pending = items[0]
-			return true
+		var list struct {
+			Approvals []struct {
+				ID string `json:"id"`
+			} `json:"approvals"`
 		}
-		return false
+		if json.Unmarshal(request("GET", "/v1/approvals", nil), &list) != nil || len(list.Approvals) != 1 {
+			return false
+		}
+		pendingID = list.Approvals[0].ID
+		return true
 	}, 5*time.Second, 10*time.Millisecond)
-	view := request("GET", "/v1/approvals/"+pending.ID, nil)
+	view := request("GET", "/v1/approvals/"+pendingID, nil)
 	var detail struct{ Action approval.ActionReview }
 	decoder := json.NewDecoder(bytes.NewReader(view))
 	decoder.UseNumber()
@@ -104,7 +108,7 @@ func testHookApprovalClientServerContract(t *testing.T, session string) {
 	require.Equal(t, call.Params["revision"], detail.Action.Params["revision"])
 	require.Equal(t, call.Input, detail.Action.Input)
 	require.NotContains(t, string(view), "synthetic-private-value")
-	request("POST", "/v1/approvals/"+pending.ID+"/resolve", map[string]any{"approved": true, "resolved_by": "contract-test"})
+	request("POST", "/v1/approvals/"+pendingID+"/resolve", map[string]any{"approved": true, "resolved_by": "contract-test"})
 	select {
 	case decision := <-result:
 		require.Equal(t, hookAllow, decision)

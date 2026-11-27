@@ -1728,29 +1728,6 @@ func doctorOpenClawProviderDiscovery(emit emitFn) (warnings int) {
 	return 1
 }
 
-func normalizedReleaseVersion(version string) (string, bool) {
-	version = strings.TrimSpace(version)
-	if version == "" || version == "dev" || version == "unknown" || strings.Contains(version, "dirty") || strings.Contains(version, "staging") || strings.HasPrefix(version, "v0.0.0-") {
-		return "", false
-	}
-	version = strings.TrimPrefix(version, "v")
-	if isGoPseudoVersion(version) {
-		return "", false
-	}
-	if strings.Contains(version, "-g") {
-		return "", false
-	}
-	parsed, ok := parseReleaseVersion(version)
-	if !ok {
-		return "", false
-	}
-	normalized := fmt.Sprintf("%d.%d.%d", parsed.major, parsed.minor, parsed.patch)
-	if len(parsed.prerelease) > 0 {
-		normalized += "-" + strings.Join(parsed.prerelease, ".")
-	}
-	return normalized, true
-}
-
 // isGitDescribeVersion reports a `git describe` build such as
 // v1.9.7-55-g4d91f21: a commit after the tag, not that release or a
 // prerelease of it, so comparing it with a release tag is meaningless.

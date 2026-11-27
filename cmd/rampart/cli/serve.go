@@ -892,10 +892,6 @@ func waitForBackgroundReady(path string, pid int, timeout time.Duration) error {
 	}
 }
 
-func isRampartServeCommand(comm, args string) bool {
-	return isRampartServeCommandForExecutable(comm, args, "")
-}
-
 func isRampartServeCommandForExecutable(comm, args, expectedExecutable string) bool {
 	executable, remaining, ok := splitCommandLineExecutable(args)
 	if !ok {

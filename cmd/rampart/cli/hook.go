@@ -988,7 +988,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					}
 					if err := sessionMgr.RecordAskWithAudit(parsed.ToolUseID, call.Tool, cmdStr2, cmdStr2, policyName, reasonMsg, askAudit, auditApprovalID); err != nil {
 						// NOTE: Use Debug, not Warn. Claude Code treats ANY stderr as a hook error
-						// for ask decisions. RecordAsk is best-effort anyway.
+						// for ask decisions. Recording the ask is best-effort anyway.
 						logger.Debug("hook: failed to record ask in session state", "error", err)
 					}
 				}

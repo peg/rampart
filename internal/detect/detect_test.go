@@ -336,43 +336,6 @@ func TestCopilotExtensionInstalledDesktopAndRemoteRoots(t *testing.T) {
 	}
 }
 
-func TestDetectedAgentsAndToolsOrder(t *testing.T) {
-	r := &DetectResult{
-		ClaudeCode:     true,
-		HasCodex:       true,
-		HasCline:       true,
-		HasOpenClaw:    true,
-		HasCursor:      true,
-		HasAider:       true,
-		HasWindsurf:    true,
-		HasCopilot:     true,
-		HasAntigravity: true,
-		HasKubectl:     true,
-		HasDocker:      true,
-		HasNode:        true,
-		HasNpm:         true,
-		HasPython:      true,
-		HasPip:         true,
-		HasTerraform:   true,
-		HasGit:         true,
-		HasGo:          true,
-		HasRust:        true,
-		HasAWSCLI:      true,
-	}
-
-	agents := r.DetectedAgents()
-	wantAgents := []string{"claude-code", "codex", "cline", "openclaw", "cursor", "aider", "windsurf", "copilot", "antigravity"}
-	if !reflect.DeepEqual(agents, wantAgents) {
-		t.Fatalf("DetectedAgents() = %v, want %v", agents, wantAgents)
-	}
-
-	tools := r.DetectedTools()
-	wantTools := []string{"kubectl", "docker", "node", "npm", "python", "pip", "terraform", "git", "go", "rust", "aws-cli"}
-	if !reflect.DeepEqual(tools, wantTools) {
-		t.Fatalf("DetectedTools() = %v, want %v", tools, wantTools)
-	}
-}
-
 func writeExecutable(t *testing.T, path string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {

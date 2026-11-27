@@ -444,14 +444,6 @@ func cleanExpiredRulesLocked(policyPath string) (int, error) {
 	return removed, writeConfigAtomic(policyPath, &cfg)
 }
 
-// RemoveRule removes a specific rule by policy name and rule index from
-// a policy file. Used to consume once:true rules after they fire.
-func RemoveRule(policyPath, policyName string, ruleIndex int) error {
-	return withPolicyFileLock(policyPath, func() error {
-		return removeRule(policyPath, policyName, ruleIndex, nil)
-	})
-}
-
 func removeRule(policyPath, policyName string, ruleIndex int, expected *Rule) error {
 	data, err := os.ReadFile(policyPath)
 	if err != nil {
