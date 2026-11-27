@@ -177,6 +177,7 @@ func TestOpenCodeFeedbackRedacts(t *testing.T) {
 
 func TestOpenCodeSearchesAreReadsOfTheirRoot(t *testing.T) {
 	directory := t.TempDir()
+	elsewhere := filepath.Join(t.TempDir(), ".ssh") // absolute on every OS
 	cases := []struct {
 		tool string
 		args map[string]any
@@ -184,7 +185,7 @@ func TestOpenCodeSearchesAreReadsOfTheirRoot(t *testing.T) {
 	}{
 		{"grep", map[string]any{"pattern": "TODO"}, directory},
 		{"glob", map[string]any{"pattern": "**/*.go", "path": "src"}, filepath.Join(directory, "src")},
-		{"list", map[string]any{"path": "/home/alice/.ssh"}, "/home/alice/.ssh"},
+		{"list", map[string]any{"path": elsewhere}, elsewhere},
 	}
 	for _, tc := range cases {
 		parsed, err := parseOpenCodeInput(bytes.NewReader(openCodeTestInput(t, directory, tc.tool, tc.args)))
