@@ -53,6 +53,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Experimental external audit witness** — `rampart audit witness` and the
   `--witness-config` and `--require-witness` flags of `rampart audit verify`
   are gone. The local hash-chained audit log and `rampart audit verify` remain.
+- **Policy registry** — `rampart policy search`, `fetch` and `install`, the
+  embedded registry manifest, `RAMPART_REGISTRY_URL`, community-policy
+  suggestions in `rampart init` and `rampart doctor`, and
+  `rampart init --profile <community-policy>` are gone. `rampart policy list`
+  and `show` cover built-in profiles only, and `list --refresh` is gone. To add
+  a policy, copy its YAML into `~/.rampart/policies/` (for example
+  `rampart policy show production-guard > ~/.rampart/policies/production-guard.yaml`,
+  or a file from `policies/community/`), or use project policies.
 
 ### Security
 

@@ -220,8 +220,7 @@ That creates `.rampart/policy.yaml`. Set `RAMPART_NO_PROJECT_POLICY=1` when
 working in a repository whose policy you do not trust.
 
 [Policy guide →](https://docs.rampart.sh/features/policy-engine/) ·
-[Policy schema →](https://docs.rampart.sh/reference/policy-schema/) ·
-[Community policies →](https://docs.rampart.sh/community-policies/)
+[Policy schema →](https://docs.rampart.sh/reference/policy-schema/)
 
 ## Approvals
 
