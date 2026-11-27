@@ -37,6 +37,18 @@ cannot yet prove that an already-running or installed service uses the same
 file. Advanced custom-config deployments should use `rampart serve install`,
 the appropriate `rampart setup <agent>` command, and explicit verification.
 
+### `rampart launch`
+
+Protect and verify an agent, then start it on a local model. Fails closed:
+the agent is not started unless every safe canary passes. See
+[Local Models](../integrations/local-models.md).
+
+```bash
+rampart launch claude --model qwen3-coder   # via `ollama launch claude`
+rampart launch codex --model gpt-oss:20b    # via ollama, or `codex --oss -m` without it
+rampart launch claude -- -p "hello"         # args after -- go to the agent
+```
+
 ### `rampart verify`
 
 Actively test expected policy decisions with fixed, non-executing canaries.

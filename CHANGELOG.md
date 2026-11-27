@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`rampart launch <agent>`** — one command to a protected local-model
+  agent. Launch installs Rampart's hooks for Claude Code or Codex if they are
+  missing, runs the same safe canaries as `rampart verify`, and refuses to
+  start the agent unless every check passes. It then runs
+  `ollama launch <agent> [--model <name>] [-- args]`, or `codex --oss` when
+  Ollama is not installed.
+
 ## [1.11.1] - 2026-11-26
 
 ### Security
