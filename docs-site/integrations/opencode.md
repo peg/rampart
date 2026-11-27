@@ -50,11 +50,10 @@ drift without replacing unrelated settings.
 | `webfetch` | `fetch` | Requested URL; no arbitrary network or subprocess inspection. |
 | `question`, `plan_exit` | `interact` | Host interaction. |
 | `todowrite` | `process` | Host todo state. |
+| `glob`, `grep`, `list` | `read` | The directory searched (the project directory when no `path` is given). Files found inside it are not checked one by one. |
 
-Unmapped tool names, including additional custom and MCP tools, plus `glob`,
-`grep`, `task`, `skill`, code-mode `execute`, `lsp`, and `websearch` refuse
-execution. Directory search tools remain unavailable until every inspected
-file can be evaluated. Delegated agents and MCP execution are also unavailable
+Unmapped tool names, including additional custom and MCP tools, plus `task`, `skill`, code-mode `execute`, `lsp`, and `websearch` refuse
+execution. Delegated agents and MCP execution are also unavailable
 through this integration's initial contract.
 
 OpenCode calls its shell tool `bash` even when another shell is selected.

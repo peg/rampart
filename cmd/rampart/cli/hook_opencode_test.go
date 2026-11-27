@@ -47,7 +47,7 @@ func TestOpenCodeActionIdentity(t *testing.T) {
 
 func TestOpenCodeMalformedOrUnsupportedActionRefuses(t *testing.T) {
 	dir := t.TempDir()
-	for _, tool := range []string{"glob", "grep", "task", "skill", "execute", "lsp", "websearch", "mcp_example", "custom_tool", " Bash"} {
+	for _, tool := range []string{"task", "skill", "execute", "lsp", "websearch", "mcp_example", "custom_tool", " Bash"} {
 		if _, err := parseOpenCodeInput(bytes.NewReader(openCodeTestInput(t, dir, tool, map[string]any{}))); err == nil {
 			t.Fatalf("unexpected support for %q", tool)
 		}
@@ -172,5 +172,30 @@ func TestOpenCodeFeedbackRedacts(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "synthetic-credential-marker") {
 		t.Fatal("feedback persisted sensitive value")
+	}
+}
+
+func TestOpenCodeSearchesAreReadsOfTheirRoot(t *testing.T) {
+	directory := t.TempDir()
+	cases := []struct {
+		tool string
+		args map[string]any
+		want string
+	}{
+		{"grep", map[string]any{"pattern": "TODO"}, directory},
+		{"glob", map[string]any{"pattern": "**/*.go", "path": "src"}, filepath.Join(directory, "src")},
+		{"list", map[string]any{"path": "/home/alice/.ssh"}, "/home/alice/.ssh"},
+	}
+	for _, tc := range cases {
+		parsed, err := parseOpenCodeInput(bytes.NewReader(openCodeTestInput(t, directory, tc.tool, tc.args)))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.tool, err)
+		}
+		if parsed.Tool != "read" || parsed.Params["path"] != tc.want {
+			t.Fatalf("%s mapped to %q %v, want read %q", tc.tool, parsed.Tool, parsed.Params["path"], tc.want)
+		}
+	}
+	if _, err := parseOpenCodeInput(bytes.NewReader(openCodeTestInput(t, directory, "grep", map[string]any{"path": 7}))); err == nil {
+		t.Fatal("non-string search path was accepted")
 	}
 }

@@ -94,6 +94,24 @@ func parseOpenCodeInput(reader io.Reader) (*hookParseResult, error) {
 		}
 		params["path"] = result.PolicyPaths[0]
 		params["paths"] = append([]string(nil), result.PolicyPaths...)
+	case "glob", "grep", "list":
+		// Searches are judged by the directory they search, so a search rooted
+		// in a protected directory is denied like a read of it.
+		result.Tool = "read"
+		root := input.Directory
+		if raw, exists := input.Args["path"]; exists {
+			dir, ok := raw.(string)
+			if !ok || strings.IndexByte(dir, 0) >= 0 {
+				return nil, fmt.Errorf("hook: invalid OpenCode search path")
+			}
+			if strings.TrimSpace(dir) != "" {
+				root = dir
+			}
+		}
+		if !filepath.IsAbs(root) {
+			root = filepath.Join(input.Directory, root)
+		}
+		params["path"] = root
 	case "webfetch":
 		result.Tool = "fetch"
 		target, err := required("url")
@@ -106,7 +124,7 @@ func parseOpenCodeInput(reader io.Reader) (*hookParseResult, error) {
 	case "todowrite":
 		result.Tool = "process"
 	default:
-		// Searches, unknown/custom/MCP, code mode, delegated agents and skills do
+		// Unknown/custom/MCP tools, code mode, delegated agents and skills do
 		// not inherit an unmatched allow before their consequences are mapped.
 		return nil, fmt.Errorf("hook: unsupported OpenCode tool; execution refused")
 	}
