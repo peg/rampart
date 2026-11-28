@@ -134,7 +134,7 @@ func supportedIntegrationDrivers() []integrationDriver {
 			Configured:      openCodePluginConfiguredForHome,
 			ProtectionLabel: "OpenCode (experimental plugin configured; host loading unverified)",
 			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
-				return []verificationCheck{verifyOpenCodePluginInstalled(), verifyNativeHookAdapter(ctx, "opencode")}
+				return []verificationCheck{verifyOpenCodePluginInstalled(), verifyOpenCodeVersion(ctx), verifyNativeHookAdapter(ctx, "opencode")}
 			},
 		},
 		{

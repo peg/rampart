@@ -16,14 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and web-fetch tool calls against local Rampart policy before they run, for
   any model provider, including local models through Ollama, LM Studio, or
   llama.cpp. It needs no `rampart serve`. Linux and macOS with a POSIX shell
-  only. A missing or failing `rampart`, a malformed reply, or a ten-second
+  only. The plugin loads in OpenCode 1.x and 2.x, and `rampart verify opencode`
+  fails for any other release. A missing or failing `rampart`, a malformed reply, or a ten-second
   timeout refuses the call, as do `ask`, `require_approval`, and unmapped
   tools such as MCP and `task`. `glob`, `grep`, and `list` are checked as
   reads of the directory they search, and `grep` must stay inside the project. `rampart doctor` checks the
   installed file and warns when `OPENCODE_PURE` would skip plugins; it does not
   prove OpenCode loaded the plugin. `rampart verify opencode` checks the
   plugin and sends a deny canary through the OpenCode adapter;
-  `rampart launch opencode` runs it before starting OpenCode. Bare
+  `rampart launch opencode` runs it before starting OpenCode, retrying for a
+  few seconds while a running `rampart serve` reloads policy. Bare
   `rampart protect` does not enroll OpenCode. The integration was
   parked before 1.10.0; this restores it on the current hook, which now
   answers `allow` for OpenCode where it defers for Claude Code.

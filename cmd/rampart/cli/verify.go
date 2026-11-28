@@ -1557,3 +1557,43 @@ func printVerificationResult(w io.Writer, report verificationReport) {
 		fmt.Fprintf(w, "Assurance: %s\n", strings.ToUpper(strings.ReplaceAll(string(report.Assurance), "_", " ")))
 	}
 }
+
+// openCodeVersion reports the installed OpenCode version. Tests replace it.
+var openCodeVersion = func(ctx context.Context) (string, error) {
+	bin, err := execLookPath("opencode")
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	out, err := osexec.CommandContext(ctx, bin, "--version").Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+// verifyOpenCodeVersion fails for OpenCode releases whose plugin loader
+// Rampart has not been checked against. OpenCode skips a plugin it cannot
+// load and keeps running, so an unknown major version means no protection.
+func verifyOpenCodeVersion(ctx context.Context) verificationCheck {
+	check := verificationCheck{
+		ID: "opencode-version", Name: "OpenCode version can load the Rampart plugin",
+		Expected: "OpenCode 1.x or 2.x",
+		Hint:     "Install a supported OpenCode release, or check for a newer Rampart",
+	}
+	version, err := openCodeVersion(ctx)
+	if err != nil {
+		check.Status, check.Actual, check.Message = verificationFail, "not found", "Could not run `opencode --version`"
+		return check
+	}
+	check.Actual = version
+	fields := strings.Fields(version) // "2.4.1", "v2.4.1" or "opencode 2.4.1"
+	major := ""
+	if len(fields) > 0 {
+		major, _, _ = strings.Cut(strings.TrimPrefix(fields[len(fields)-1], "v"), ".")
+	}
+	if major != "1" && major != "2" {
+		check.Status, check.Message = verificationFail, "This OpenCode release may not load the Rampart plugin"
+		return check
+	}
+	check.Status, check.Message = verificationPass, "Rampart's plugin supports this OpenCode plugin format"
+	return check
+}

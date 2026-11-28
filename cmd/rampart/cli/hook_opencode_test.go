@@ -27,21 +27,31 @@ func openCodeTestInput(t *testing.T, directory, tool string, args map[string]any
 
 func TestOpenCodeActionIdentity(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "directory ")
+	want := filepath.Join(directory, " target ")
 	for _, tool := range []string{"read", "write", "edit"} {
-		parsed, err := parseOpenCodeInput(bytes.NewReader(openCodeTestInput(t, directory, tool, map[string]any{"filePath": " target ", "path": "decoy"})))
+		// OpenCode 1.x sends filePath; 2.x sends path. Relative paths are judged where they resolve.
+		for _, field := range []string{"filePath", "path"} {
+			parsed, err := parseOpenCodeInput(bytes.NewReader(openCodeTestInput(t, directory, tool, map[string]any{field: " target "})))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if parsed.WorkDir != directory || parsed.Params["path"] != want || parsed.SessionID != "session-fixed" || parsed.ToolUseID != "call-fixed" {
+				t.Fatalf("identity changed: %#v", parsed)
+			}
+		}
+		// Each version ignores the other's field, so a call carrying both is refused.
+		if _, err := parseOpenCodeInput(bytes.NewReader(openCodeTestInput(t, directory, tool, map[string]any{"filePath": "target", "path": "decoy"}))); err == nil {
+			t.Fatalf("%s accepted both filePath and path", tool)
+		}
+	}
+	for _, tool := range []string{"bash", "shell"} {
+		parsed, err := parseOpenCodeInput(bytes.NewReader(openCodeTestInput(t, directory, tool, map[string]any{"command": "printf marker ", "workdir": "nested "})))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if parsed.WorkDir != directory || parsed.Params["path"] != " target " || parsed.Params["filePath"] != " target " || parsed.SessionID != "session-fixed" || parsed.ToolUseID != "call-fixed" {
-			t.Fatalf("identity changed: %#v", parsed)
+		if parsed.Tool != "exec" || parsed.WorkDir != filepath.Join(directory, "nested ") || parsed.Params["workdir"] != parsed.WorkDir || parsed.Params["command"] != "printf marker " {
+			t.Fatalf("command/CWD changed: %#v", parsed)
 		}
-	}
-	parsed, err := parseOpenCodeInput(bytes.NewReader(openCodeTestInput(t, directory, "bash", map[string]any{"command": "printf marker ", "workdir": "nested "})))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if parsed.WorkDir != filepath.Join(directory, "nested ") || parsed.Params["workdir"] != parsed.WorkDir || parsed.Params["command"] != "printf marker " {
-		t.Fatalf("command/CWD changed: %#v", parsed)
 	}
 }
 
@@ -52,7 +62,7 @@ func TestOpenCodeMalformedOrUnsupportedActionRefuses(t *testing.T) {
 			t.Fatalf("unexpected support for %q", tool)
 		}
 	}
-	for _, args := range []map[string]any{{}, {"filePath": 42}, {"filePath": ""}, {"filePath": "x\x00y"}} {
+	for _, args := range []map[string]any{{}, {"filePath": 42}, {"filePath": ""}, {"filePath": "x\x00y"}, {"path": 42}, {"path": ""}} {
 		if _, err := parseOpenCodeInput(bytes.NewReader(openCodeTestInput(t, dir, "write", args))); err == nil {
 			t.Fatalf("invalid target accepted: %#v", args)
 		}

@@ -19,6 +19,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"os/signal"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -168,16 +169,21 @@ func protectForLaunch(cmd *cobra.Command, opts *rootOptions, driver integrationD
 	if err := prepareManagedProtection(opts); err != nil {
 		return err
 	}
-	if _, err := resolveProtectionTargets(driver.ID); err != nil {
-		return err
-	}
-	resolvedURL, err := resolveServeURLStrict(serveURL, fmt.Sprintf("http://localhost:%d", defaultServePort))
-	if err != nil {
-		return fmt.Errorf("resolve serve URL: %w", err)
+	// Launch is an explicit request for this agent, so experimental
+	// integrations are allowed here; verification still has to pass.
+	if !integrationDriverSupportsPlatform(driver, runtime.GOOS) {
+		return fmt.Errorf("launch: %s is not supported on %s", driver.DisplayName, runtime.GOOS)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("resolve home: %w", err)
+	}
+	if driver.Installed == nil || !driver.Installed(home) {
+		return fmt.Errorf("launch: %s was not found; install it first", driver.DisplayName)
+	}
+	resolvedURL, err := resolveServeURLStrict(serveURL, fmt.Sprintf("http://localhost:%d", defaultServePort))
+	if err != nil {
+		return fmt.Errorf("resolve serve URL: %w", err)
 	}
 	if !integrationConfiguredForAssurance(driver, home) {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s is not protected yet; installing Rampart %s...\n", driver.DisplayName, driver.Boundary)
@@ -192,11 +198,28 @@ func protectForLaunch(cmd *cobra.Command, opts *rootOptions, driver integrationD
 		return fmt.Errorf("start Rampart policy service: %w", err)
 	}
 	report := runBehavioralVerification(cmd.Context(), driver.VerifyTarget, resolvedURL, timeout)
+	// A service that was already running loads a newly installed policy on
+	// its next reload, so give it a moment before treating a failure as final.
+	for attempt := 0; attempt < launchVerifyRetries && launchVerificationError(report) != nil; attempt++ {
+		select {
+		case <-cmd.Context().Done():
+			return cmd.Context().Err()
+		case <-time.After(launchVerifyRetryDelay):
+		}
+		report = runBehavioralVerification(cmd.Context(), driver.VerifyTarget, resolvedURL, timeout)
+	}
 	_ = writeVerificationReceipt(report)
 	fmt.Fprintln(cmd.OutOrStdout())
 	printVerificationReport(cmd.OutOrStdout(), report)
 	return launchVerificationError(report)
 }
+
+// Verification is retried for up to about five seconds while a running
+// service picks up policy changes.
+var (
+	launchVerifyRetries    = 5
+	launchVerifyRetryDelay = time.Second
+)
 
 func launchVerificationError(report verificationReport) error {
 	if report.Summary.Checks == 0 || report.Summary.Failed > 0 || report.Summary.Unverified > 0 {

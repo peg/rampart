@@ -14,8 +14,9 @@ import (
 	"github.com/peg/rampart/internal/notify"
 )
 
-// The managed plugin sends the original V1 dispatch identity and arguments.
-// This is a before-only protocol; it does not report execution or scan results.
+// The managed plugin sends the dispatch identity and arguments from OpenCode
+// 1.x or 2.x. This is a before-only protocol; it does not report execution or
+// scan results.
 type openCodeHookInput struct {
 	Tool      string         `json:"tool"`
 	SessionID string         `json:"sessionID"`
@@ -54,8 +55,10 @@ func parseOpenCodeInput(reader io.Reader) (*hookParseResult, error) {
 		}
 		return value, nil // Presence checks never change the action's bytes.
 	}
+	// OpenCode 2.x renamed bash to shell, apply_patch to patch, and filePath to
+	// path; the arguments are otherwise the same.
 	switch input.Tool {
-	case "bash":
+	case "bash", "shell":
 		result.Tool = "exec"
 		command, err := required("command")
 		if err != nil {
@@ -78,12 +81,21 @@ func parseOpenCodeInput(reader io.Reader) (*hookParseResult, error) {
 		if input.Tool == "read" {
 			result.Tool = "read"
 		}
-		target, err := required("filePath")
+		field := "filePath"
+		if _, v1 := input.Args[field]; !v1 {
+			field = "path"
+		} else if _, both := input.Args["path"]; both {
+			return nil, fmt.Errorf("hook: ambiguous OpenCode file path")
+		}
+		target, err := required(field)
 		if err != nil {
 			return nil, err
 		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(input.Directory, target)
+		}
 		params["path"] = target
-	case "apply_patch":
+	case "apply_patch", "patch":
 		result.Tool = "write"
 		patch, err := required("patchText")
 		if err != nil {

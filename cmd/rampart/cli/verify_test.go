@@ -308,6 +308,24 @@ func TestVerifyOpenCodePluginInstalled(t *testing.T) {
 	}
 }
 
+func TestVerifyOpenCodeVersion(t *testing.T) {
+	original := openCodeVersion
+	t.Cleanup(func() { openCodeVersion = original })
+	for version, want := range map[string]verificationStatus{
+		"1.19.6": verificationPass, "2.4.1": verificationPass, "v2.4.1": verificationPass, "opencode 2.4.1": verificationPass,
+		"3.0.0": verificationFail, "local": verificationFail, "": verificationFail,
+	} {
+		openCodeVersion = func(context.Context) (string, error) { return version, nil }
+		if got := verifyOpenCodeVersion(context.Background()).Status; got != want {
+			t.Fatalf("%q: status %v, want %v", version, got, want)
+		}
+	}
+	openCodeVersion = func(context.Context) (string, error) { return "", errors.New("not found") }
+	if got := verifyOpenCodeVersion(context.Background()).Status; got != verificationFail {
+		t.Fatalf("missing opencode: %v", got)
+	}
+}
+
 func TestVerifyOpenClawPluginLiveParsesGatewayPayload(t *testing.T) {
 	skipOnWindows(t, "test uses a POSIX OpenClaw shim")
 	testSetHome(t, t.TempDir())

@@ -15,6 +15,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"reflect"
@@ -171,5 +172,23 @@ func TestLaunchVerificationErrorFailsClosed(t *testing.T) {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// Launch is an explicit opt-in, so an experimental integration such as
+// OpenCode is not refused for being experimental.
+func TestLaunchAllowsExperimentalIntegration(t *testing.T) {
+	skipOnWindows(t, "OpenCode integration is Linux and macOS only")
+	testSetHome(t, t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	driver, _, err := resolveLaunchTarget("opencode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	err = protectForLaunch(cmd, &rootOptions{}, driver, "", time.Second)
+	if err == nil || strings.Contains(err.Error(), "experimental") || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("err = %v, want not-found refusal", err)
 	}
 }
