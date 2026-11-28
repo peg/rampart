@@ -82,31 +82,54 @@ function evaluate(payload, directory) {
   });
 }
 
-export default async function RampartPlugin({ directory }) {
-  let config;
-  return {
-    config: async (value) => { config = value; },
-    "tool.execute.before": async (input, output) => {
-      if (process.platform !== "linux" && process.platform !== "darwin") throw new Error(unavailable);
-      if (input.tool === "bash") {
-        // OpenCode names this tool bash even when a different shell is selected.
-        const selected = config?.shell ?? process.env.SHELL ?? "/bin/sh";
-        if (typeof selected !== "string" || !["sh", "bash", "zsh", "dash", "ksh"].includes(path.basename(selected))) {
-          throw new Error("Rampart's OpenCode integration requires a supported POSIX shell.");
-        }
-      }
-      const args = output.args;
-      validateJSON(args);
-      const snapshot = JSON.stringify(args);
-      const payload = JSON.stringify({ tool: input.tool, sessionID: input.sessionID, callID: input.callID, directory, args });
-      if (Buffer.byteLength(payload, "utf8") > maxInput) throw new Error(unavailable);
-      await evaluate(payload, directory);
-      if (output.args !== args) throw new Error(unavailable);
-      validateJSON(args);
-      if (JSON.stringify(args) !== snapshot) throw new Error(unavailable);
-      // The V1 dispatcher executes this original object after later plugins.
-      // Freeze the evaluated representation so it cannot change after permission.
-      freezeJSON(args);
-    },
-  };
+const posixShells = ["sh", "bash", "zsh", "dash", "ksh"];
+
+// Evaluate one call, then make sure the arguments that run are the ones Rampart judged.
+async function guard(tool, sessionID, callID, directory, args) {
+  if (process.platform !== "linux" && process.platform !== "darwin") throw new Error(unavailable);
+  validateJSON(args);
+  const snapshot = JSON.stringify(args);
+  const payload = JSON.stringify({ tool, sessionID, callID, directory, args });
+  if (Buffer.byteLength(payload, "utf8") > maxInput) throw new Error(unavailable);
+  await evaluate(payload, directory);
+  validateJSON(args);
+  if (JSON.stringify(args) !== snapshot) throw new Error(unavailable);
+  freezeJSON(args);
 }
+
+// OpenCode 1.x calls server(); OpenCode 2.x calls setup(). One file serves both.
+export default {
+  id: "rampart",
+  server: async ({ directory }) => {
+    let config;
+    return {
+      config: async (value) => { config = value; },
+      "tool.execute.before": async (input, output) => {
+        if (input.tool === "bash") {
+          // OpenCode 1.x names this tool bash even when a different shell is selected.
+          const selected = config?.shell ?? process.env.SHELL ?? "/bin/sh";
+          if (typeof selected !== "string" || !posixShells.includes(path.basename(selected))) {
+            throw new Error("Rampart's OpenCode integration requires a supported POSIX shell.");
+          }
+        }
+        const args = output.args;
+        await guard(input.tool, input.sessionID, input.callID, directory, args);
+        // The 1.x dispatcher executes this original object after later plugins.
+        if (output.args !== args) throw new Error(unavailable);
+      },
+    };
+  },
+  setup: async (ctx) => {
+    const directory = ctx.location.directory;
+    await ctx.tool.hook("execute.before", async (event) => {
+      const args = event.input;
+      await guard(event.tool, event.sessionID, event.id, directory, args);
+      if (event.input !== args) throw new Error(unavailable);
+    });
+    // Shell hooks cannot fail a call, so replace a command bound for a shell
+    // Rampart cannot parse with one that exits before doing anything.
+    await ctx.shell.hook("create.before", (event) => {
+      if (typeof event.shell !== "string" || !posixShells.includes(path.basename(event.shell))) event.command = "exit 126";
+    });
+  },
+};

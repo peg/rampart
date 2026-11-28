@@ -1,6 +1,6 @@
 ---
 title: Securing OpenCode
-description: "Experimental Rampart policy enforcement for supported OpenCode V1 tool calls on Linux and macOS, including local-model limitations."
+description: "Experimental Rampart policy enforcement for supported OpenCode 1.x and 2.x tool calls on Linux and macOS, including local-model limitations."
 ---
 
 # OpenCode
@@ -10,8 +10,9 @@ tool calls before execution. It evaluates local Rampart policy without
 requiring `rampart serve`, preserves the host's session and call identity, and
 refuses unsupported or approval-required calls.
 
-The initial contract targets OpenCode's V1 dispatcher on Linux and macOS with
-a supported POSIX shell. The [support matrix](../getting-started/support-matrix.md)
+The plugin supports OpenCode 1.x and 2.x on Linux and macOS with a supported
+POSIX shell. One file carries both plugin formats: 1.x calls its `server`
+hook and 2.x calls its `setup` hook. The [support matrix](../getting-started/support-matrix.md)
 records adapter and setup evidence; this integration has no active
 installed-host verifier.
 
@@ -43,21 +44,24 @@ drift without replacing unrelated settings.
 
 | OpenCode tool | Rampart policy surface | Boundary |
 | --- | --- | --- |
-| `bash` | `exec` | Original command and working directory; supported POSIX shells only. |
+| `bash` (1.x), `shell` (2.x) | `exec` | Original command and working directory; supported POSIX shells only. |
 | `read` | `read` | Requested file or directory. |
-| `write`, `edit`, `apply_patch` | `write` | Every represented patch target, including moves; the most restrictive decision wins. |
+| `write`, `edit`, `apply_patch` (1.x), `patch` (2.x) | `write` | Every represented patch target, including moves; the most restrictive decision wins. |
 | `webfetch` | `fetch` | Requested URL; no arbitrary network or subprocess inspection. |
 | `question`, `plan_exit` | `interact` | Host interaction. |
 | `todowrite` | `process` | Host todo state. |
-| `glob`, `grep`, `list` | `read` | The directory searched (the project directory when no `path` is given). Files found inside it are not checked one by one. `grep` returns file contents, so it is refused outside the project directory and at or above the home directory. |
+| `glob`, `grep`, `list` (1.x) | `read` | The directory searched (the project directory when no `path` is given). Files found inside it are not checked one by one. `grep` returns file contents, so it is refused outside the project directory and at or above the home directory. |
 
-Unmapped tool names, including additional custom and MCP tools, plus `task`, `skill`, code-mode `execute`, `lsp`, and `websearch` refuse
-execution. Delegated agents and MCP execution are also unavailable
+Unmapped tool names, including additional custom and MCP tools, plus `task`,
+`subagent`, `skill`, code-mode `execute`, `lsp`, and `websearch` refuse
+execution. A file call that carries both the 1.x `filePath` and the 2.x
+`path` argument is refused, because each version reads a different one. Delegated agents and MCP execution are also unavailable
 through this integration's initial contract.
 
-OpenCode calls its shell tool `bash` even when another shell is selected.
+OpenCode 1.x calls its shell tool `bash` even when another shell is selected.
 Rampart permits the supported `sh`, `bash`, `zsh`, `dash`, and `ksh` names and
-refuses other selections. Windows, PowerShell, and cmd are outside this
+refuses other selections. On 2.x, a command bound for any other shell is
+replaced with `exit 126` before the shell starts. Windows, PowerShell, and cmd are outside this
 integration's platform contract.
 
 ## Decisions and failures
@@ -110,24 +114,27 @@ rampart doctor
 ```
 
 Doctor checks whether the managed plugin file matches the current installation
-and warns when `OPENCODE_PURE` is set. `rampart verify opencode` also sends a
-destructive canary through `rampart hook --format opencode` and requires a
-deny. Neither launches OpenCode or proves it loaded the plugin.
+and warns when `OPENCODE_PURE` is set. `rampart verify opencode` also fails
+unless `opencode --version` reports 1.x or 2.x, the releases whose plugin
+loaders Rampart supports, and sends a destructive canary through
+`rampart hook --format opencode` that must be denied. Neither launches
+OpenCode or proves it loaded the plugin.
 
-The V1 pre-tool hook does not cover manual shell commands, PTYs,
+The pre-tool hook does not cover manual shell commands, PTYs,
 command-template shell interpolation, debug tool execution, attached-file or
-MCP-resource context ingestion, or experimental V2 execution. OpenCode can
+MCP-resource context ingestion. OpenCode can
 persist arguments, streamed metadata, and output files outside this callback;
 the plugin does not claim redaction of those host-owned stores.
 Host-added instruction reads and formatter or language-server side effects are
 outside the requested action evaluated by this plugin.
 
 The upstream contract is pinned to
-[OpenCode v1.18.34](https://github.com/anomalyco/opencode/releases/tag/v1.18.34),
-source revision `aec0b9a6d8898f68f923aaf08b7306d931fd9d76`. The relevant source
-is the [plugin hook interface](https://github.com/anomalyco/opencode/blob/aec0b9a6d8898f68f923aaf08b7306d931fd9d76/packages/plugin/src/index.ts#L266),
-[V1 tool dispatcher](https://github.com/anomalyco/opencode/blob/aec0b9a6d8898f68f923aaf08b7306d931fd9d76/packages/opencode/src/session/tools.ts#L107),
-and [shell selection](https://github.com/anomalyco/opencode/blob/aec0b9a6d8898f68f923aaf08b7306d931fd9d76/packages/core/src/shell.ts#L214).
+[OpenCode v1.19.6](https://github.com/anomalyco/opencode/releases/tag/v1.19.6)
+and [v2.4.1](https://github.com/anomalyco/opencode/releases/tag/v2.4.1).
+In 2.4.1 the relevant source is the
+[plugin loader](https://github.com/anomalyco/opencode/blob/v2.4.1/packages/core/src/plugin/module.ts),
+the [tool hook adapter](https://github.com/anomalyco/opencode/blob/v2.4.1/packages/plugin/src/promise/adapter.ts),
+and the [tool dispatcher](https://github.com/anomalyco/opencode/blob/v2.4.1/packages/core/src/tool.ts).
 A source pin is a compatibility reference, not an installed-host verification.
 
 ## Remove

@@ -63,12 +63,35 @@ func TestMain(m *testing.M) {
 }
 
 const runtimeRunner = `import { pathToFileURL } from "node:url";
-const { default: createPlugin } = await import(pathToFileURL(process.argv[2]).href);
+const { default: plugin } = await import(pathToFileURL(process.argv[2]).href);
 const variant = process.argv[3];
 const directory = process.argv[4];
-const plugin = await createPlugin({ directory });
-await plugin.config({ shell: variant === "nonposix" ? "/bin/pwsh" : "/bin/sh" });
-const input = { tool: variant === "nonposix" ? "bash" : "write", sessionID: "ses_fixture", callID: "call_fixture" };
+const host = process.argv[5];
+const tool = variant === "nonposix" ? "bash" : "write";
+// One call shape for both hosts: OpenCode 1.x server() hooks and 2.x setup() hooks.
+let call, shellHook;
+if (host === "v1") {
+  const hooks = await plugin.server({ directory });
+  await hooks.config({ shell: variant === "nonposix" ? "/bin/pwsh" : "/bin/sh" });
+  call = (args, replace) => {
+    const output = { args };
+    const pending = hooks["tool.execute.before"]({ tool, sessionID: "ses_fixture", callID: "call_fixture" }, output);
+    return { pending, current: () => output.args, replace: (next) => { output.args = next; } };
+  };
+} else {
+  const registered = {};
+  await plugin.setup({
+    location: { directory },
+    tool: { hook: async (name, callback) => { registered["tool." + name] = callback; } },
+    shell: { hook: async (name, callback) => { registered["shell." + name] = callback; } },
+  });
+  shellHook = registered["shell.create.before"];
+  call = (args) => {
+    const event = { tool, sessionID: "ses_fixture", id: "call_fixture", input: args };
+    const pending = registered["tool.execute.before"](event);
+    return { pending, current: () => event.input, replace: (next) => { event.input = next; } };
+  };
+}
 const args = { filePath: "harmless-marker.txt", content: "harmless marker", nested: { list: [{ value: "original" }] } };
 let getterCalls = 0;
 let serializerCalls = 0;
@@ -85,14 +108,20 @@ if (variant === "array-prototype") {
   Object.setPrototypeOf(args.nested.list, prototype);
 }
 if (variant === "proxy") args.nested = new Proxy(args.nested, {});
-const output = { args };
+let shellCommand = "";
+if (shellHook) {
+  const event = { command: "printf marker", shell: variant === "nonposix-v2" ? "/usr/bin/pwsh" : "/bin/zsh" };
+  await shellHook(event);
+  shellCommand = event.command;
+}
 let accepted = false;
 let message = "";
+let dispatch;
 try {
-  const pending = plugin["tool.execute.before"](input, output);
+  dispatch = call(args);
   if (variant === "mutation") args.nested.list[0].value = "changed during evaluation";
-  if (variant === "replacement") output.args = { filePath: args.filePath, content: args.content, nested: { list: [{ value: "original" }] } };
-  await pending;
+  if (variant === "replacement") dispatch.replace({ filePath: args.filePath, content: args.content, nested: { list: [{ value: "original" }] } });
+  await dispatch.pending;
   accepted = true;
 } catch (error) { message = error.message; }
 if (variant === "inherited-tojson") delete Object.prototype.toJSON;
@@ -102,7 +131,7 @@ if (accepted) {
 }
 process.stdout.write(JSON.stringify({ accepted, message, getterCalls, serializerCalls, mutationRefused,
   frozen: Object.isFrozen(args) && Object.isFrozen(args.nested) && Object.isFrozen(args.nested.list) && Object.isFrozen(args.nested.list[0]),
-  sameObject: output.args === args,
+  sameObject: dispatch.current() === args, shellCommand,
   value: args.nested.list[0].value,
 }));
 `
@@ -119,122 +148,132 @@ func TestRuntimePolicyBridgeRefusesUnsafeDecisionsAndRepresentations(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct {
-		name, child, variant string
-		allow, childCalled   bool
-		message              string
-	}{
-		{name: "allow freezes exact original arguments", child: "allow", allow: true, childCalled: true},
-		{name: "in-flight argument change refuses", child: "allow", variant: "mutation", childCalled: true, message: "could not evaluate"},
-		{name: "replacement argument object refuses", child: "allow", variant: "replacement", childCalled: true, message: "could not evaluate"},
-		{name: "deny has generic feedback", child: "deny", childCalled: true, message: "Rampart refused this tool call"},
-		{name: "malformed decision", child: "malformed", childCalled: true, message: "could not evaluate"},
-		{name: "nonzero child cannot grant", child: "nonzero", childCalled: true, message: "could not evaluate"},
-		{name: "empty decision", child: "empty", childCalled: true, message: "could not evaluate"},
-		{name: "unknown decision", child: "unknown", childCalled: true, message: "could not evaluate"},
-		{name: "bounded child output", child: "overflow", childCalled: true, message: "could not evaluate"},
-		{name: "missing child", child: "missing", message: "could not evaluate"},
-		{name: "non-POSIX shell", child: "allow", variant: "nonposix", message: "supported POSIX shell"},
-		{name: "getter rejected without reading it", child: "allow", variant: "getter", message: "could not evaluate"},
-		{name: "toJSON rejected without calling it", child: "allow", variant: "tojson", message: "could not evaluate"},
-		{name: "inherited serializer rejected without calling it", child: "allow", variant: "inherited-tojson", message: "could not evaluate"},
-		{name: "array extra property refused", child: "allow", variant: "extra-array-key", message: "could not evaluate"},
-		{name: "sparse array refused", child: "allow", variant: "sparse-array", message: "could not evaluate"},
-		{name: "custom array prototype refused", child: "allow", variant: "array-prototype", message: "could not evaluate"},
-		{name: "proxy refused", child: "allow", variant: "proxy", message: "could not evaluate"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			// Spaces, quotes, and shell metacharacters must remain literal parts
-			// of the executable name. The bridge uses direct argv execution.
-			binary := filepath.Join(dir, "decision ' \" $() ; ` marker")
-			if tc.child != "missing" {
-				if err := os.Symlink(self, binary); err != nil {
+	for _, host := range []string{"v1", "v2"} {
+		for _, tc := range []struct {
+			name, child, variant string
+			allow, childCalled   bool
+			message, host        string
+		}{
+			{name: "allow freezes exact original arguments", child: "allow", allow: true, childCalled: true},
+			{name: "in-flight argument change refuses", child: "allow", variant: "mutation", childCalled: true, message: "could not evaluate"},
+			{name: "replacement argument object refuses", child: "allow", variant: "replacement", childCalled: true, message: "could not evaluate"},
+			{name: "deny has generic feedback", child: "deny", childCalled: true, message: "Rampart refused this tool call"},
+			{name: "malformed decision", child: "malformed", childCalled: true, message: "could not evaluate"},
+			{name: "nonzero child cannot grant", child: "nonzero", childCalled: true, message: "could not evaluate"},
+			{name: "empty decision", child: "empty", childCalled: true, message: "could not evaluate"},
+			{name: "unknown decision", child: "unknown", childCalled: true, message: "could not evaluate"},
+			{name: "bounded child output", child: "overflow", childCalled: true, message: "could not evaluate"},
+			{name: "missing child", child: "missing", message: "could not evaluate"},
+			{name: "non-POSIX shell", child: "allow", variant: "nonposix", message: "supported POSIX shell", host: "v1"},
+			{name: "non-POSIX shell never runs the command", child: "allow", variant: "nonposix-v2", allow: true, childCalled: true, host: "v2"},
+			{name: "getter rejected without reading it", child: "allow", variant: "getter", message: "could not evaluate"},
+			{name: "toJSON rejected without calling it", child: "allow", variant: "tojson", message: "could not evaluate"},
+			{name: "inherited serializer rejected without calling it", child: "allow", variant: "inherited-tojson", message: "could not evaluate"},
+			{name: "array extra property refused", child: "allow", variant: "extra-array-key", message: "could not evaluate"},
+			{name: "sparse array refused", child: "allow", variant: "sparse-array", message: "could not evaluate"},
+			{name: "custom array prototype refused", child: "allow", variant: "array-prototype", message: "could not evaluate"},
+			{name: "proxy refused", child: "allow", variant: "proxy", message: "could not evaluate"},
+		} {
+			if tc.host != "" && tc.host != host {
+				continue
+			}
+			t.Run(host+"/"+tc.name, func(t *testing.T) {
+				dir := t.TempDir()
+				// Spaces, quotes, and shell metacharacters must remain literal parts
+				// of the executable name. The bridge uses direct argv execution.
+				binary := filepath.Join(dir, "decision ' \" $() ; ` marker")
+				if tc.child != "missing" {
+					if err := os.Symlink(self, binary); err != nil {
+						t.Fatal(err)
+					}
+				}
+				module, err := Render(binary)
+				if err != nil {
 					t.Fatal(err)
 				}
-			}
-			module, err := Render(binary)
-			if err != nil {
-				t.Fatal(err)
-			}
-			modulePath := filepath.Join(dir, "plugin.mjs")
-			runnerPath := filepath.Join(dir, "runner.mjs")
-			capturePath := filepath.Join(dir, "decision.json")
-			if err := os.WriteFile(modulePath, module, 0o600); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(runnerPath, []byte(runtimeRunner), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-			command := exec.CommandContext(ctx, node, runnerPath, modulePath, tc.variant, dir)
-			command.Env = append(os.Environ(), "RAMPART_OPENCODE_TEST_CHILD="+tc.child, "RAMPART_OPENCODE_TEST_CAPTURE="+capturePath)
-			var stdout, stderr bytes.Buffer
-			command.Stdout, command.Stderr = &stdout, &stderr
-			if err := command.Run(); err != nil {
-				t.Fatalf("Node bridge runner: %v; stderr: %s", err, stderr.String())
-			}
-			if strings.Contains(stdout.String()+stderr.String(), "private-child-") {
-				t.Fatal("child diagnostic or reason crossed the plugin output boundary")
-			}
-			var result struct {
-				Accepted        bool   `json:"accepted"`
-				Message         string `json:"message"`
-				GetterCalls     int    `json:"getterCalls"`
-				SerializerCalls int    `json:"serializerCalls"`
-				MutationRefused bool   `json:"mutationRefused"`
-				Frozen          bool   `json:"frozen"`
-				SameObject      bool   `json:"sameObject"`
-				Value           string `json:"value"`
-			}
-			if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
-				t.Fatalf("decode runner result: %v; output: %s", err, stdout.String())
-			}
-			if result.Accepted != tc.allow || !strings.Contains(result.Message, tc.message) || result.GetterCalls != 0 || result.SerializerCalls != 0 {
-				t.Fatalf("bridge result = %+v, want allow %t and message containing %q", result, tc.allow, tc.message)
-			}
-			if tc.allow && (!result.Frozen || !result.MutationRefused || !result.SameObject || result.Value != "original") {
-				t.Fatalf("allowed representation was changed or remained mutable: %+v", result)
-			}
-			capture, err := os.ReadFile(capturePath)
-			if !tc.childCalled {
-				if !os.IsNotExist(err) {
-					t.Fatalf("unsafe representation or missing binary invoked the decision child: %v", err)
+				modulePath := filepath.Join(dir, "plugin.mjs")
+				runnerPath := filepath.Join(dir, "runner.mjs")
+				capturePath := filepath.Join(dir, "decision.json")
+				if err := os.WriteFile(modulePath, module, 0o600); err != nil {
+					t.Fatal(err)
 				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			var recorded struct {
-				Arguments []string `json:"arguments"`
-				Directory string   `json:"directory"`
-				Payload   struct {
-					Tool, SessionID, CallID, Directory string
-					Args                               struct {
-						FilePath, Content string
-						Nested            struct{ List []struct{ Value string } }
+				if err := os.WriteFile(runnerPath, []byte(runtimeRunner), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				command := exec.CommandContext(ctx, node, runnerPath, modulePath, tc.variant, dir, host)
+				command.Env = append(os.Environ(), "RAMPART_OPENCODE_TEST_CHILD="+tc.child, "RAMPART_OPENCODE_TEST_CAPTURE="+capturePath)
+				var stdout, stderr bytes.Buffer
+				command.Stdout, command.Stderr = &stdout, &stderr
+				if err := command.Run(); err != nil {
+					t.Fatalf("Node bridge runner: %v; stderr: %s", err, stderr.String())
+				}
+				if strings.Contains(stdout.String()+stderr.String(), "private-child-") {
+					t.Fatal("child diagnostic or reason crossed the plugin output boundary")
+				}
+				var result struct {
+					Accepted        bool   `json:"accepted"`
+					Message         string `json:"message"`
+					GetterCalls     int    `json:"getterCalls"`
+					SerializerCalls int    `json:"serializerCalls"`
+					MutationRefused bool   `json:"mutationRefused"`
+					Frozen          bool   `json:"frozen"`
+					SameObject      bool   `json:"sameObject"`
+					Value           string `json:"value"`
+					ShellCommand    string `json:"shellCommand"`
+				}
+				if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+					t.Fatalf("decode runner result: %v; output: %s", err, stdout.String())
+				}
+				if result.Accepted != tc.allow || !strings.Contains(result.Message, tc.message) || result.GetterCalls != 0 || result.SerializerCalls != 0 {
+					t.Fatalf("bridge result = %+v, want allow %t and message containing %q", result, tc.allow, tc.message)
+				}
+				if host == "v2" && (result.ShellCommand == "exit 126") != (tc.variant == "nonposix-v2") {
+					t.Fatalf("shell guard = %q for variant %q", result.ShellCommand, tc.variant)
+				}
+				if tc.allow && (!result.Frozen || !result.MutationRefused || !result.SameObject || result.Value != "original") {
+					t.Fatalf("allowed representation was changed or remained mutable: %+v", result)
+				}
+				capture, err := os.ReadFile(capturePath)
+				if !tc.childCalled {
+					if !os.IsNotExist(err) {
+						t.Fatalf("unsafe representation or missing binary invoked the decision child: %v", err)
 					}
-				} `json:"payload"`
-			}
-			if err := json.Unmarshal(capture, &recorded); err != nil {
-				t.Fatal(err)
-			}
-			wantArgs := []string{"hook", "--format", "opencode", "--mode", "enforce"}
-			if strings.Join(recorded.Arguments, "\x00") != strings.Join(wantArgs, "\x00") {
-				t.Fatalf("decision subprocess arguments = %q", recorded.Arguments)
-			}
-			// macOS's temporary directory can be reached through /var and
-			// /private/var. Compare directory identity as well as payload bytes.
-			wantDir, wantErr := os.Stat(dir)
-			gotDir, gotErr := os.Stat(recorded.Directory)
-			if wantErr != nil || gotErr != nil || !os.SameFile(wantDir, gotDir) || recorded.Payload.Directory != dir || recorded.Payload.Tool != "write" || recorded.Payload.SessionID != "ses_fixture" || recorded.Payload.CallID != "call_fixture" {
-				t.Fatalf("dispatch identity/CWD changed: %+v", recorded)
-			}
-			if recorded.Payload.Args.FilePath != "harmless-marker.txt" || recorded.Payload.Args.Content != "harmless marker" || len(recorded.Payload.Args.Nested.List) != 1 || recorded.Payload.Args.Nested.List[0].Value != "original" {
-				t.Fatalf("decision child received another action representation: %+v", recorded.Payload.Args)
-			}
-		})
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				var recorded struct {
+					Arguments []string `json:"arguments"`
+					Directory string   `json:"directory"`
+					Payload   struct {
+						Tool, SessionID, CallID, Directory string
+						Args                               struct {
+							FilePath, Content string
+							Nested            struct{ List []struct{ Value string } }
+						}
+					} `json:"payload"`
+				}
+				if err := json.Unmarshal(capture, &recorded); err != nil {
+					t.Fatal(err)
+				}
+				wantArgs := []string{"hook", "--format", "opencode", "--mode", "enforce"}
+				if strings.Join(recorded.Arguments, "\x00") != strings.Join(wantArgs, "\x00") {
+					t.Fatalf("decision subprocess arguments = %q", recorded.Arguments)
+				}
+				// macOS's temporary directory can be reached through /var and
+				// /private/var. Compare directory identity as well as payload bytes.
+				wantDir, wantErr := os.Stat(dir)
+				gotDir, gotErr := os.Stat(recorded.Directory)
+				if wantErr != nil || gotErr != nil || !os.SameFile(wantDir, gotDir) || recorded.Payload.Directory != dir || recorded.Payload.Tool != "write" || recorded.Payload.SessionID != "ses_fixture" || recorded.Payload.CallID != "call_fixture" {
+					t.Fatalf("dispatch identity/CWD changed: %+v", recorded)
+				}
+				if recorded.Payload.Args.FilePath != "harmless-marker.txt" || recorded.Payload.Args.Content != "harmless marker" || len(recorded.Payload.Args.Nested.List) != 1 || recorded.Payload.Args.Nested.List[0].Value != "original" {
+					t.Fatalf("decision child received another action representation: %+v", recorded.Payload.Args)
+				}
+			})
+		}
 	}
 }
