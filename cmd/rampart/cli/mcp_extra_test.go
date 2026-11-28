@@ -101,29 +101,3 @@ func TestResolveMCPPolicyPath_Fallback(t *testing.T) {
 		t.Fatal("expected non-empty policy")
 	}
 }
-
-func TestResolveTestPolicyPath_ExistingFile(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "rampart.yaml")
-	os.WriteFile(p, []byte("version: 1\n"), 0o644)
-
-	got, cleanup, err := resolveTestPolicyPath(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanup()
-	if got != p {
-		t.Errorf("got %q, want %q", got, p)
-	}
-}
-
-func TestResolveTestPolicyPath_Fallback(t *testing.T) {
-	got, cleanup, err := resolveTestPolicyPath("/nonexistent/rampart.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanup()
-	if got == "" {
-		t.Fatal("expected temp file path")
-	}
-}

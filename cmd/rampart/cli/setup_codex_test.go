@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,7 +29,7 @@ func TestSetupCodexInstallsNativeHooksWithoutCodexOrPreload(t *testing.T) {
 	settings := testReadJSONMap(t, filepath.Join(home, ".codex", "hooks.json"))
 	assertRampartCodexHook(t, settings, "PreToolUse")
 	assertRampartCodexHook(t, settings, "PostToolUse")
-	if !strings.Contains(stdout.String(), "Open `/hooks`") {
+	if !strings.Contains(stdout.String(), "type `/hooks`, and trust the Rampart hooks") {
 		t.Fatalf("setup output must explain Codex hook trust:\n%s", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "Rampart approvals do not replace Codex sandbox or permission approvals") ||
@@ -513,5 +514,50 @@ func TestCodexManagedHooksOnlyMeansNotConfigured(t *testing.T) {
 				t.Fatalf("verify should pass: %#v", check)
 			}
 		})
+	}
+}
+
+// trustCodexHooksForTest records Codex trust for Rampart hooks at the first
+// position of each event, where a fresh setup puts them.
+func trustCodexHooksForTest(t *testing.T, home string) {
+	t.Helper()
+	hooksPath := filepath.Join(home, ".codex", "hooks.json")
+	var config strings.Builder
+	for _, event := range []string{"pre_tool_use", "post_tool_use"} {
+		key, _ := json.Marshal(hooksPath + ":" + event + ":0:0")
+		fmt.Fprintf(&config, "[hooks.state.%s]\ntrusted_hash = \"sha256:test\"\n\n", key)
+	}
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".codex", "config.toml"), []byte(config.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestVerifyCodexHooksTrustedReadsCodexTrustRecords(t *testing.T) {
+	home := t.TempDir()
+	testSetHome(t, home)
+	if err := testExecuteRoot(t, "setup", "codex"); err != nil {
+		t.Fatal(err)
+	}
+	if check := verifyCodexHooksTrusted(); check.Status != verificationFail || !strings.Contains(check.Actual, "PreToolUse, PostToolUse") {
+		t.Fatalf("untrusted hooks verification = %#v", check)
+	}
+
+	trustCodexHooksForTest(t, home)
+	if check := verifyCodexHooksTrusted(); check.Status != verificationPass {
+		t.Fatalf("trusted hooks verification = %#v", check)
+	}
+
+	// Codex writes Windows paths as escaped basic strings or literal strings.
+	hooksPath := filepath.Join(home, ".codex", "hooks.json")
+	windowsStyle := strings.ReplaceAll(strings.ToUpper(hooksPath), "/", `\`)
+	config := fmt.Sprintf("[hooks.state.'%s:pre_tool_use:0:0']\ntrusted_hash = \"x\"\n", windowsStyle)
+	if err := os.WriteFile(filepath.Join(home, ".codex", "config.toml"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if check := verifyCodexHooksTrusted(); check.Status != verificationFail || check.Actual != "not trusted: PostToolUse" {
+		t.Fatalf("partly trusted hooks verification = %#v", check)
 	}
 }
