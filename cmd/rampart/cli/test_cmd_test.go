@@ -365,3 +365,39 @@ func TestPrintTestResultColor(t *testing.T) {
 		t.Errorf("expected green ANSI code, got: %s", output)
 	}
 }
+
+// A rampart.yaml in the working folder can only tighten the hook's policy,
+// and rampart test must judge a call the way the hook does.
+func TestRunTestMatchesHookWithProjectPolicy(t *testing.T) {
+	testSetHome(t, t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile("rampart.yaml", []byte(`version: "1"
+default_action: allow
+policies:
+  - name: project-allow-all
+    rules:
+      - action: allow
+        when:
+          default: true
+  - name: project-deny-curl
+    match:
+      tool: exec
+    rules:
+      - action: deny
+        when:
+          command_matches: ["curl *"]
+        message: no curl here
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for command, want := range map[string]string{"rm -rf /": "deny", "curl example.com": "deny", "git status": "allow"} {
+		var out bytes.Buffer
+		if err := runTest(&out, &bytes.Buffer{}, &rootOptions{configPath: "rampart.yaml"}, command, "exec", true, true); err != nil {
+			t.Fatalf("%s: %v", command, err)
+		}
+		if !strings.Contains(out.String(), `"action":"`+want+`"`) {
+			t.Errorf("%s: got %s, want %s", command, out.String(), want)
+		}
+	}
+}

@@ -503,6 +503,7 @@ func TestDoctorHooksUnprotectedAgentWarnsOnceAnotherIsProtected(t *testing.T) {
 		marker, err := integrationSetupMarkerPath("codex")
 		requireNoErr(t, err)
 		requireNoErr(t, os.Remove(marker)) // as an install from an earlier release has it
+		trustCodexHooksForTest(t, os.Getenv("HOME"))
 		if _, _, codex := codexStatus(t); codex.Status != "ok" {
 			t.Fatalf("codex=%+v, want current hooks reported ok", codex)
 		}

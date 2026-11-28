@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rampart verify codex` and `rampart doctor` now read Codex's hook trust
+  records in `config.toml` and fail when Codex has not trusted Rampart's
+  hooks, because Codex skips untrusted hooks. Before, verify reported the
+  hooks as configured.
+- `rampart test "<command>"` now judges a call with the same policy the
+  installed hook enforces: the built-in standard profile, `~/.rampart/policies`,
+  and a `rampart.yaml` or `.rampart/policy.yaml` layered as a project policy.
+  Before, a `rampart.yaml` in the working folder replaced the standard policy
+  in `rampart test` only.
 - Windows recursive deletes through a pipeline (`Get-ChildItem C:\ -Recurse |
   Remove-Item`) and `[IO.Directory]::Delete` are judged like `rm -rf` of the
   same folder.

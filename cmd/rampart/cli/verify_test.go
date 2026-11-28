@@ -77,6 +77,7 @@ func TestRunAllBehavioralVerificationsWritesAggregateEvidence(t *testing.T) {
 	if err := installCodexHooks(filepath.Join(home, ".codex", "hooks.json"), command, commandWindows, false); err != nil {
 		t.Fatal(err)
 	}
+	trustCodexHooksForTest(t, home)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer verification-token" {
 			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
@@ -104,7 +105,7 @@ func TestRunAllBehavioralVerificationsWritesAggregateEvidence(t *testing.T) {
 	if report.SchemaVersion != verifyAllJSONSchemaVersion || !report.SafeCanaries {
 		t.Fatalf("unexpected aggregate metadata: %#v", report)
 	}
-	if report.Summary.Targets != 2 || report.Summary.PassedTargets != 2 || report.Summary.Checks != 12 {
+	if report.Summary.Targets != 2 || report.Summary.PassedTargets != 2 || report.Summary.Checks != 13 {
 		t.Fatalf("unexpected aggregate summary: %#v", report.Summary)
 	}
 	if len(report.Results) != 2 || report.Results[0].Target != "policy" || report.Results[1].Target != "codex" {
