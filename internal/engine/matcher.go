@@ -1035,7 +1035,8 @@ func containsFold(value, substring string) bool {
 }
 
 func mayNeedCanonicalCommandAliases(command string) bool {
-	if strings.Contains(command, "rm") || strings.Contains(command, "find") || strings.ContainsAny(command, "'\"\\") {
+	if strings.Contains(command, "rm") || strings.Contains(command, "find") || strings.ContainsAny(command, "'\"\\") ||
+		mayBeWindowsDelete(command) {
 		return true
 	}
 	return platformUsesCaseInsensitiveNames(runtime.GOOS) && strings.IndexFunc(command, unicode.IsUpper) >= 0 &&
@@ -1626,7 +1627,13 @@ func visitCanonicalCommandAliases(command string, visit func(string) bool) bool 
 		return overflow
 	}
 	emit := func(operand string) bool {
-		return emitAlias("rm -rf " + cleanRestrictivePOSIXPath(operand))
+		if !emitAlias("rm -rf " + cleanRestrictivePOSIXPath(operand)) {
+			return false
+		}
+		if mapped := windowsPathAsPOSIX(operand); mapped != "" {
+			return emitAlias("rm -rf " + mapped)
+		}
+		return true
 	}
 	visitRM := func(tokens, targets []string) bool {
 		for _, operand := range restrictiveRMOperands(tokens) {
@@ -1643,6 +1650,11 @@ func visitCanonicalCommandAliases(command string, visit func(string) bool) bool 
 		return true
 	}
 	for _, segment := range SplitCompoundCommand(stripUnquotedShellComment(command)) {
+		for _, operand := range windowsDeleteOperands(segment) {
+			if !emit(operand) {
+				return overflow
+			}
+		}
 		tokens := unwrapRestrictiveExecutor(shellWords(segment))
 		if len(tokens) == 0 {
 			continue
