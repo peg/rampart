@@ -61,11 +61,19 @@ func windowsDeleteOperands(segment string) []string {
 
 // windowsPathAsPOSIX maps a Windows or Git Bash path onto the POSIX layout the
 // destructive rules describe: a drive root becomes "/", the Users folder
-// becomes "/home", and everything else keeps its path below "/". It returns ""
-// when the value is not a drive path.
+// becomes "/home", a home variable such as $env:USERPROFILE becomes "~", and
+// everything else keeps its path below "/". It returns "" when the value is
+// neither.
 func windowsPathAsPOSIX(value string) string {
 	value = strings.Trim(value, `"'`)
 	var rest string
+	if home, ok := cutHomeVariable(value); ok {
+		home = strings.Trim(strings.ReplaceAll(home, `\`, "/"), "/")
+		if home == "" || home == "*" {
+			return "~"
+		}
+		return "~/" + home
+	}
 	switch {
 	case len(value) >= 2 && isASCIILetter(value[0]) && value[1] == ':':
 		rest = value[2:]
@@ -82,6 +90,21 @@ func windowsPathAsPOSIX(value string) string {
 		rest = strings.TrimSuffix("home/"+tail, "/")
 	}
 	return "/" + rest
+}
+
+// cutHomeVariable strips a leading $env:USERPROFILE, $env:HOME, $HOME or
+// %USERPROFILE% and returns the rest of the path.
+func cutHomeVariable(value string) (string, bool) {
+	lower := strings.ToLower(value)
+	for _, prefix := range []string{"$env:userprofile", "${env:userprofile}", "$env:home", "${env:home}", "$home", "%userprofile%", "%homepath%"} {
+		if strings.HasPrefix(lower, prefix) {
+			rest := value[len(prefix):]
+			if rest == "" || rest[0] == '\\' || rest[0] == '/' {
+				return rest, true
+			}
+		}
+	}
+	return "", false
 }
 
 // isCmdSwitch reports cmd.exe switches such as /q or /a:h, as opposed to a

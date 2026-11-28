@@ -307,6 +307,21 @@ policies:
             - "kill -KILL $(pgrep rampart"
             - "kill -TERM $(pgrep rampart"
         message: "Killing Rampart processes is not allowed — policy enforcement must remain active"
+      # Windows spellings: Stop-Process and its aliases, taskkill, and a
+      # Get-Process listing piped into one of them.
+      - action: deny
+        when:
+          command_matches:
+            - "stop-process **rampart*"
+            - "Stop-Process **rampart*"
+            - "spps **rampart*"
+            - "kill -n* **rampart*"
+            - "taskkill **rampart*"
+            - "**rampart* | stop-process*"
+            - "**rampart* | Stop-Process*"
+            - "**rampart* | spps*"
+            - "**rampart* | kill*"
+        message: "Killing Rampart processes is not allowed — policy enforcement must remain active"
       # Block removing/overwriting the rampart binary itself.
       - action: deny
         when:
