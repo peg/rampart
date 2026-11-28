@@ -143,7 +143,9 @@ func patternNamePieces(patterns []string) []string {
 		for _, piece := range strings.FieldsFunc(pattern, func(r rune) bool {
 			return r == ' ' || r == '/' || r == '=' || r == '<'
 		}) {
-			if seen[piece] || strings.IndexAny(piece, "*?[") == 0 || len(pieces) >= maxGlobVariantPieces {
+			// "~" pieces are home paths or 8.3 short names such as ENV~1, which
+			// a glob never expands to, so they would only witness false matches.
+			if seen[piece] || strings.IndexAny(piece, "*?[") == 0 || strings.Contains(piece, "~") || len(pieces) >= maxGlobVariantPieces {
 				continue
 			}
 			seen[piece] = true

@@ -2914,6 +2914,15 @@ func matchResponseCondition(
 // splitting on "*" and checking that all non-empty segments appear in order.
 func matchWildcardSegments(pattern, name string) bool {
 	parts := strings.Split(pattern, "*")
+	// Text after the last "*" is anchored at the end, as in any glob:
+	// "* .env" matches "cat .env", not "cat .environment".
+	if last := parts[len(parts)-1]; last != "" {
+		if !strings.HasSuffix(name, last) {
+			return false
+		}
+		name = name[:len(name)-len(last)]
+		parts = parts[:len(parts)-1]
+	}
 	remaining := name
 	for _, part := range parts {
 		if part == "" {

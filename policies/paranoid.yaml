@@ -130,6 +130,10 @@ policies:
             - "* */.env"
             - "* */.env *"
             - "* */.env.*"
+            - "* .envrc"
+            - "* .envrc *"
+            - "* */.envrc"
+            - "* */.envrc *"
             - "*<.env*"
             - "*<*/.env*"
           command_contains:
