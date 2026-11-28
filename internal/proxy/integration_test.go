@@ -99,11 +99,11 @@ func TestEndToEnd_StandardProfile(t *testing.T) {
 			wantAction: "deny",
 		},
 		{
-			name:       "read: .env → watched",
+			name:       "read: .env → denied",
 			tool:       "read",
 			params:     map[string]any{"path": "/app/.env"},
-			wantStatus: http.StatusOK,
-			wantAction: "watch",
+			wantStatus: http.StatusForbidden,
+			wantAction: "deny",
 		},
 		{
 			name:       "read: main.go → allowed",

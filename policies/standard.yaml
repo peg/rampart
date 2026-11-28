@@ -525,9 +525,9 @@ policies:
         message: "Cloud upload requires approval"
 
   - name: watch-env-access
-    description: "Log access to environment variables and .env files — may contain API keys or secrets"
+    description: "Log environment variable dumps"
     match:
-      tool: ["exec", "read", "write"]
+      tool: ["exec"]
     rules:
       - action: watch
         when:
@@ -537,19 +537,6 @@ policies:
             - "printenv"
             - "printenv *"
         message: "Environment variable dump logged"
-      - action: watch
-        when:
-          path_matches:
-            - "**/.env"
-            - "**/.env.*"
-            - "**/.envrc"
-          path_not_matches:
-            - "**/.env.example"
-            - "**/.env.example.*"
-            - "**/*.env.example"
-            - "**/.env.sample"
-            - "**/.env.template"
-        message: ".env file access logged — may contain secrets"
 
   - name: block-env-var-injection
     description: "Block high-risk environment variable assignments; read-only inspection remains allowed"
@@ -637,6 +624,20 @@ policies:
     match:
       tool: ["read"]
     rules:
+      - action: deny
+        when:
+          path_matches:
+            # .env files hold API keys; templates stay readable
+            - "**/.env"
+            - "**/.env.*"
+            - "**/.envrc"
+          path_not_matches:
+            - "**/.env.example"
+            - "**/.env.example.*"
+            - "**/*.env.example"
+            - "**/.env.sample"
+            - "**/.env.template"
+        message: ".env files cannot be read by agents. Use .env.example for the variable names"
       - action: deny
         when:
           path_matches:
