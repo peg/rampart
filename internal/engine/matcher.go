@@ -1649,8 +1649,14 @@ func visitCanonicalCommandAliases(command string, visit func(string) bool) bool 
 		}
 		return true
 	}
-	for _, segment := range SplitCompoundCommand(stripUnquotedShellComment(command)) {
-		for _, operand := range windowsDeleteOperands(segment) {
+	segments := SplitCompoundCommand(stripUnquotedShellComment(command))
+	for _, operand := range pipedDeleteTargets(segments) {
+		if !emit(operand) {
+			return overflow
+		}
+	}
+	for _, segment := range segments {
+		for _, operand := range append(windowsDeleteOperands(segment), dotNetDeleteTargets(segment)...) {
 			if !emit(operand) {
 				return overflow
 			}
@@ -1762,7 +1768,12 @@ func cleanRestrictivePOSIXPath(value string) string {
 
 func matchRestrictiveCommandDialectFirst(patterns []string, command string, action Action, dialect string) string {
 	match := func(candidate string) string {
-		return matchCommandFirstForActionOS(patterns, candidate, "windows", action)
+		if matched := matchCommandFirstForActionOS(patterns, candidate, "windows", action); matched != "" {
+			return matched
+		}
+		// The unwrapped body of cmd /c or powershell -c gets the same glob and
+		// recursive-read analysis as a top-level command.
+		return matchGlobOperandFirst(patterns, candidate, action)
 	}
 
 	norm := normalizeCommandForOS(command, dialect)
