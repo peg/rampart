@@ -332,8 +332,15 @@ func TestShippedPoliciesBlockEnvFileReadsThroughAnyShellReader(t *testing.T) {
 		"grep KEY .env", "awk 1 .env", "sed -n p .env", "head -5 app/.env.production",
 		`grep k ".env"`, "cat ./.env", "cat <.env", "sudo awk 1 .env", "source .env",
 		"grep k ~/project/.env.local", "cat .envrc",
+		// Shell expansion and recursive search reach .env without naming it.
+		"cat .en?", "cat .e*", "cat .[e]nv", "cat app/.en?.local", "cat */.e*", "cat .{env,x}",
+		"cat <.en?", "grep -r KEY .", "grep -rn KEY", "grep -iR KEY src/", "rgrep KEY .",
+		"grep --recursive KEY .", "rg --hidden KEY", "rg -uu KEY", "grep -r --include=.e* KEY .",
 	}
-	unrelated := []string{"cat env.txt", "npm run env", "grep -r KEY src/"}
+	unrelated := []string{
+		"cat env.txt", "npm run env", "cat *.go", "ls src/*", "cat src/[a-z]*.txt",
+		"grep -r --include=*.go KEY src/", "rg KEY", "grep -n KEY src/main.go", "rg -r x KEY",
+	}
 	for profile, policy := range profiles {
 		eng, err := New(NewFileStore(filepath.Join("..", "..", "policies", profile)), logger)
 		if err != nil {

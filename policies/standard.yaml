@@ -778,7 +778,8 @@ policies:
           command_not_matches:
             - "**/.ssh/*.pub"
         message: "Credential file access via shell blocked"
-      # Any command that names a .env file as an operand, whichever reader it uses.
+      # Any command that reads a .env file, whether it names it, matches it with a
+      # glob (.en?), or searches a whole tree (grep -r).
       - action: deny
         when:
           command_matches:
@@ -792,7 +793,7 @@ policies:
             - "*</.env*"
             - "*=.env*"
             - "*/.env.*"
-        message: "Credential file access via shell blocked"
+        message: ".env files cannot be read through the shell. To search a tree, use rg or grep --include=<glob>"
       # Credential exfiltration via curl @file upload syntax
       - action: deny
         when:

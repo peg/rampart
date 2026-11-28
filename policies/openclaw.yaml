@@ -484,7 +484,8 @@ policies:
             - "cat **/.env"
             - "cat **/.env.*"
         message: "Credential and Rampart authority files cannot be read through shell execution"
-      # Any command that names a .env file as an operand, whichever reader it uses.
+      # Any command that reads a .env file, whether it names it, matches it with a
+      # glob (.en?), or searches a whole tree (grep -r).
       - action: deny
         when:
           command_matches:
@@ -498,7 +499,7 @@ policies:
             - "*</.env*"
             - "*=.env*"
             - "*/.env.*"
-        message: "Credential and Rampart authority files cannot be read through shell execution"
+        message: ".env files cannot be read through the shell. To search a tree, use rg or grep --include=<glob>"
 
   # ── Block credential access ────────────────────────────────────────────
   - name: block-credential-reads

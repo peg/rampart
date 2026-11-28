@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names a `.env` file the same way they already treated `cat .env`: denied.
   This includes `.env.example` and `source .env`; use the file read tool to
   view examples.
+- Deny rules now also catch a file reached through a shell glob or brace
+  (`cat .en?`, `cat .{env,x}`) and recursive search that would read it
+  (`grep -r`, `rgrep`, `rg --hidden` or `-uu`).
+
+### Changed
+
+- A recursive `grep` without `--include` is denied in the standard, OpenClaw
+  and Guard profiles, because it reads `.env` files under its root. Use `rg`,
+  which skips hidden files, or `grep -r --include=<glob>`.
 
 ## [1.12.0] - 2026-11-27
 
