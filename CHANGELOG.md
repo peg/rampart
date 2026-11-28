@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Windows recursive deletes through a pipeline (`Get-ChildItem C:\ -Recurse |
+  Remove-Item`) and `[IO.Directory]::Delete` are judged like `rm -rf` of the
+  same folder.
+- PowerShell recursive searches (`gci -r | sls KEY`) are denied like
+  `grep -r` unless the listing has `-Include` or `-Filter`, and `cmd /c` or
+  `powershell -c` bodies get the same glob and recursive-search checks as a
+  top-level command.
+- `rm -rf ./build` and other deletes of a named subfolder are no longer
+  denied; only `rm -rf ./*` is.
 - The standard, OpenClaw and Guard profiles now treat any shell command that
   names a `.env` file the same way they already treated `cat .env`: denied.
   This includes `.env.example` and `source .env`; use the file read tool to

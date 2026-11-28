@@ -14,7 +14,7 @@ const (
 )
 
 func matchGlobOperandFirst(patterns []string, command string, action Action) string {
-	if !strings.ContainsAny(command, "*?[{") && !strings.Contains(command, "grep") && !strings.Contains(command, "rg ") {
+	if !strings.ContainsAny(command, "*?[{|") && !strings.Contains(command, "grep") && !strings.Contains(command, "rg ") {
 		return ""
 	}
 	variants, complete := globOperandVariants(patterns, command)
@@ -84,7 +84,54 @@ func globOperandVariants(patterns []string, command string) ([]string, bool) {
 			}
 		}
 	}
+	if reader, includes, ok := pipedRecursiveRead(command); ok {
+		for _, piece := range pieces {
+			name, ok := globWitness("*", piece, true)
+			variant := reader + " ./" + name
+			if ok && (len(includes) == 0 || matchAny(includes, name)) && !seen[variant] {
+				seen[variant] = true
+				variants = append(variants, variant)
+			}
+		}
+	}
 	return variants, true
+}
+
+// pipedRecursiveRead reports a PowerShell pipeline such as "gci -r | sls key",
+// whose reader gets every file under a folder, hidden ones included. It
+// returns the reader and any -Include or -Filter globs of the listing.
+func pipedRecursiveRead(command string) (string, []string, bool) {
+	if !strings.Contains(command, "|") {
+		return "", nil, false
+	}
+	recursive := false
+	var includes []string
+	for _, segment := range SplitCompoundCommand(command) {
+		tokens := tokenizeForOS(segment, "powershell")
+		if len(tokens) == 0 {
+			continue
+		}
+		switch head := strings.ToLower(strings.TrimSuffix(shellWrapperBasename(tokens[0]), ".exe")); head {
+		case "get-childitem", "gci", "ls", "dir":
+			recursive, includes = false, nil
+			for index := 1; index < len(tokens); index++ {
+				switch token := strings.ToLower(tokens[index]); {
+				case token == "-filter" || token == "-include":
+					if index+1 < len(tokens) {
+						index++
+						includes = append(includes, strings.Split(tokens[index], ",")...)
+					}
+				case strings.HasPrefix(token, "-r") || token == "/s":
+					recursive = true
+				}
+			}
+		case "select-string", "sls", "get-content", "gc", "type", "cat":
+			if recursive {
+				return head, includes, true
+			}
+		}
+	}
+	return "", nil, false
 }
 
 // patternNamePieces returns the file-name parts of command patterns: each
