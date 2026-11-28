@@ -322,9 +322,11 @@ policies:
         when:
           command_contains:
             - ".claude/settings.json"
+            - ".claude\\settings.json"
             - ".local/bin/codex"
             - ".local/bin/rampart-shim"
             - ".claude/settings.local.json"
+            - ".claude\\settings.local.json"
           command_not_matches:
             - "ls .claude/settings.json"
             - "ls -l .claude/settings.json"
