@@ -101,4 +101,3 @@ func TestResolveMCPPolicyPath_Fallback(t *testing.T) {
 		t.Fatal("expected non-empty policy")
 	}
 }
-
