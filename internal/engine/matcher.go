@@ -1650,7 +1650,12 @@ func visitCanonicalCommandAliases(command string, visit func(string) bool) bool 
 		return true
 	}
 	segments := SplitCompoundCommand(stripUnquotedShellComment(command))
-	for _, operand := range pipedDeleteTargets(segments) {
+	piped := pipedDeleteTargets(segments)
+	if unwrapped := NormalizeCommand(command); unwrapped != "" && unwrapped != command {
+		// powershell -Command "gci C:\ -r | Remove-Item" pipes inside the wrapper.
+		piped = append(piped, pipedDeleteTargets(SplitCompoundCommand(unwrapped))...)
+	}
+	for _, operand := range piped {
 		if !emit(operand) {
 			return overflow
 		}
