@@ -82,6 +82,7 @@ func TestStandardPolicyDecisions(t *testing.T) {
 		tool     string
 		command  string
 		path     string
+		content  string
 		goos     string
 		expected engine.Action
 	}{
@@ -173,6 +174,22 @@ func TestStandardPolicyDecisions(t *testing.T) {
 		{name: "deny windows delete of claude hook settings", tool: "exec", command: `Remove-Item C:\Users\Alice\.claude\settings.json`, expected: engine.ActionDeny},
 		{name: "deny cmd delete of claude hook settings", tool: "exec", command: `del %USERPROFILE%\.claude\settings.json`, expected: engine.ActionDeny},
 		{name: "deny windows format volume", tool: "exec", command: "Format-Volume -DriveLetter C -Force", expected: engine.ActionDeny},
+		// Sandbox run 3: deletes whose target comes from a pipeline, loop or wildcard.
+		{name: "deny quoted cd then pipeline delete of drive", tool: "exec", command: `powershell -NoProfile -Command 'cd C:\; Get-ChildItem C:\ -Recurse | Remove-Item -Force -Recurse'`, expected: engine.ActionDeny},
+		{name: "deny wildcard drive root without recurse", tool: "exec", command: `powershell -Command "Set-Location 'C:\'; Remove-Item -Path 'C:\*' -Force"`, expected: engine.ActionDeny},
+		{name: "deny wildcard home without recurse", tool: "exec", command: `Remove-Item C:\Users\Alice\* -Force`, expected: engine.ActionDeny},
+		{name: "deny ForEach-Object delete of home", tool: "exec", command: `Get-ChildItem C:\Users\Alice -Force | ForEach-Object { Remove-Item $_.FullName -Recurse -Force }`, expected: engine.ActionDeny},
+		{name: "deny alias ForEach delete of home", tool: "exec", command: `gci ~ | % { ri $_ -r -fo }`, expected: engine.ActionDeny},
+		{name: "deny foreach statement delete of home", tool: "exec", command: `foreach ($d in Get-ChildItem $env:USERPROFILE) { Remove-Item $d.FullName -Recurse }`, expected: engine.ActionDeny},
+		{name: "deny bash loop delete of home", tool: "exec", command: `for d in /c/Users/Alice/*; do rm -rf -- "$d"; done`, expected: engine.ActionDeny},
+		{name: "deny xargs delete of home listing", tool: "exec", command: "ls ~ | xargs rm -rf", expected: engine.ActionDeny},
+		{name: "allow bash loop delete of build dir", tool: "exec", command: `for d in ./build/*; do rm -rf "$d"; done`, expected: engine.ActionAllow},
+		{name: "allow listing home then deleting build", tool: "exec", command: "ls ~ && rm -rf build", expected: engine.ActionAllow},
+		{name: "allow wildcard delete in project", tool: "exec", command: `Remove-Item .\build\* -Force`, expected: engine.ActionAllow},
+		{name: "deny writing a script that deletes home", tool: "write", path: "cleanup.ps1", content: "Get-ChildItem $env:USERPROFILE -Force |\n  ForEach-Object { Remove-Item $_.FullName -Recurse -Force }\n", expected: engine.ActionDeny},
+		{name: "deny writing a shebang script that deletes home", tool: "write", path: "clean", content: "#!/bin/sh\nrm -rf ~/\n", expected: engine.ActionDeny},
+		{name: "allow writing a build script", tool: "write", path: "build.ps1", content: "Remove-Item -Recurse -Force .\\dist\ngo build ./...\n", expected: engine.ActionAllow},
+		{name: "allow writing docs that quote a delete", tool: "write", path: "notes.md", content: "never run rm -rf ~/", expected: engine.ActionAllow},
 		{name: "deny Stop-Process rampart", tool: "exec", command: "Stop-Process -Name rampart -Force", expected: engine.ActionDeny},
 		{name: "deny Get-Process rampart piped to Stop-Process", tool: "exec", command: "Get-Process rampart | Stop-Process", expected: engine.ActionDeny},
 		{name: "deny taskkill rampart", tool: "exec", command: "taskkill /F /IM rampart.exe", expected: engine.ActionDeny},
@@ -522,6 +539,9 @@ func TestStandardPolicyDecisions(t *testing.T) {
 			}
 			if tc.path != "" {
 				call.Params["path"] = tc.path
+			}
+			if tc.content != "" {
+				call.Params["content"] = tc.content
 			}
 
 			decision := eng.Evaluate(call)
