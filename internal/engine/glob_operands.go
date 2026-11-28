@@ -46,6 +46,9 @@ func globOperandVariants(patterns []string, command string) ([]string, bool) {
 			variants = append(variants, variant)
 		}
 	}
+	// Windows wildcards match names that start with a dot, so "findstr /s
+	// key *" and "Select-String -Path *" read .env files.
+	dotfiles := windowsGlobReader(tokens[0])
 	visited := map[string]bool{}
 	for _, token := range tokens[1:] {
 		if visited[token] || !strings.ContainsAny(token, "*?[{") {
@@ -64,7 +67,10 @@ func globOperandVariants(patterns []string, command string) ([]string, bool) {
 				continue
 			}
 			for _, piece := range pieces {
-				if name, ok := globWitness(base, piece, false); ok {
+				if dotfiles && strings.ContainsAny(piece, "*?[") {
+					continue // "*.go" must not witness ".env.go"
+				}
+				if name, ok := globWitness(base, piece, dotfiles); ok {
 					add(prefix + name)
 				}
 			}
@@ -234,4 +240,12 @@ func globRuneMatches(t globToken, r rune) bool {
 	default:
 		return r != '/'
 	}
+}
+
+func windowsGlobReader(head string) bool {
+	switch strings.TrimSuffix(shellWrapperBasename(head), ".exe") {
+	case "findstr", "select-string", "sls", "get-content", "gc", "type", "more":
+		return true
+	}
+	return false
 }

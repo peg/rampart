@@ -793,6 +793,14 @@ policies:
             - "*</.env*"
             - "*=.env*"
             - "*/.env.*"
+            # Quoted or parenthesized operands: [IO.File]::ReadAllText('.env'),
+            # for /f %a in (.env), Get-Content -LiteralPath "C:\app\.env"
+            - "*(.env)*"
+            - "*'.env'*"
+            - "*\".env\"*"
+            - "*/.env)*"
+            - "*/.env'*"
+            - "*/.env\"*"
         message: ".env files cannot be read through the shell. To search a tree, use rg or grep --include=<glob>"
       # Credential exfiltration via curl @file upload syntax
       - action: deny
