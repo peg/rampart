@@ -1,6 +1,9 @@
 package engine
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // Windows recursive deletes are rewritten to the portable "rm -rf <path>"
 // form so the POSIX destructive rules cover PowerShell, cmd.exe and Git Bash
@@ -8,8 +11,8 @@ import "strings"
 
 // mayBeWindowsDelete is a cheap prefilter for windowsDeleteOperands.
 func mayBeWindowsDelete(command string) bool {
-	lower := strings.ToLower(command)
-	for _, word := range []string{"remove-item", "ri ", "del ", "erase ", "rd ", "rmdir "} {
+	lower := strings.ToLower(command) + " "
+	for _, word := range []string{"remove-item", "ri ", "del ", "erase ", "rd ", "rmdir ", "::delete("} {
 		if strings.Contains(lower, word) {
 			return true
 		}
@@ -90,3 +93,62 @@ func isCmdSwitch(token string) bool {
 func isASCIILetter(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
+
+// pipedDeleteTargets returns the folders that "Get-ChildItem C:\ -Recurse |
+// Remove-Item" deletes: whatever a listing passes to a remover that names no
+// path of its own.
+func pipedDeleteTargets(segments []string) []string {
+	var listed, targets []string
+	for _, segment := range segments {
+		tokens := tokenizeForOS(segment, "powershell")
+		if len(tokens) == 0 {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSuffix(shellWrapperBasename(tokens[0]), ".exe")) {
+		case "get-childitem", "gci", "ls", "dir", "get-item", "gi":
+			listed = powerShellPathOperands(tokens[1:])
+			if len(listed) == 0 {
+				listed = []string{"."}
+			}
+		case "remove-item", "ri", "del", "erase", "rd", "rmdir", "rm":
+			if len(powerShellPathOperands(tokens[1:])) == 0 {
+				targets = append(targets, listed...)
+			}
+		}
+	}
+	return targets
+}
+
+// powerShellPathOperands returns the positional and -Path/-LiteralPath
+// arguments of a PowerShell file cmdlet.
+func powerShellPathOperands(args []string) []string {
+	var paths []string
+	for index := 0; index < len(args); index++ {
+		token := strings.ToLower(args[index])
+		switch {
+		case token == "-path" || token == "-literalpath" || token == "-lp":
+			if index+1 < len(args) {
+				index++
+				paths = append(paths, args[index])
+			}
+		case token == "-filter" || token == "-include" || token == "-exclude" || token == "-depth":
+			index++ // skip the option's value
+		case strings.HasPrefix(token, "-") || isCmdSwitch(token):
+		default:
+			paths = append(paths, args[index])
+		}
+	}
+	return paths
+}
+
+// dotNetDeleteTargets returns the folders a [IO.Directory]::Delete call
+// removes.
+func dotNetDeleteTargets(segment string) []string {
+	var targets []string
+	for _, match := range dotNetDirectoryDelete.FindAllStringSubmatch(segment, -1) {
+		targets = append(targets, match[1])
+	}
+	return targets
+}
+
+var dotNetDirectoryDelete = regexp.MustCompile(`(?i)\[(?:system\.)?io\.directory\]::delete\(\s*['"]([^'"]+)['"]`)
