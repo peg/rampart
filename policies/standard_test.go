@@ -230,7 +230,7 @@ func TestStandardPolicyDecisions(t *testing.T) {
 		{name: "deny xargs -J mv into .rampart", tool: "exec", command: "echo /tmp/x | xargs -J % mv % ~/.rampart/policies/standard.yaml", expected: engine.ActionDeny},
 		// ...while reading and mentioning .rampart stays usable.
 		{name: "allow cd then cat .rampart policy", tool: "exec", command: "cd $HOME/project && cat .rampart/policy.yaml", expected: engine.ActionAllow},
-		{name: "allow cd then grep for .rampart", tool: "exec", command: "cd /home/alice/src/rampart && grep -rn .rampart internal/", expected: engine.ActionAllow},
+		{name: "allow cd then grep for .rampart", tool: "exec", command: "cd /home/alice/src/rampart && grep -rn --include=*.go .rampart internal/", expected: engine.ActionAllow},
 		{name: "allow cleanup then ls .rampart", tool: "exec", command: "rm -rf build && ls .rampart", expected: engine.ActionAllow},
 		{name: "allow touch .rampartrc", tool: "exec", command: "touch .rampartrc", expected: engine.ActionAllow},
 		{name: "allow commit message mentioning .rampart", tool: "exec", command: "git commit -m '> see .rampart/policy.yaml'", expected: engine.ActionAllow},
@@ -396,7 +396,7 @@ func TestStandardPolicyDecisions(t *testing.T) {
 		{name: "deny attached redirect into policy", tool: "exec", command: "echo x >>/home/alice/.rampart/policies/guard.yaml", expected: engine.ActionDeny},
 		{name: "allow cat policy", tool: "exec", command: "cat ~/.rampart/policies/guard.yaml", expected: engine.ActionAllow},
 		{name: "allow ls policy dir", tool: "exec", command: "ls -la ~/.rampart/policies", expected: engine.ActionAllow},
-		{name: "allow grep mentioning policy dir", tool: "exec", command: "grep -rn .rampart/policies internal/", expected: engine.ActionAllow},
+		{name: "allow grep mentioning policy dir", tool: "exec", command: "grep -rn --include=*.go .rampart/policies internal/", expected: engine.ActionAllow},
 		{name: "allow commit message mentioning policy dir", tool: "exec", command: "git commit -m 'docs: explain ~/.rampart/policies'", expected: engine.ActionAllow},
 		{name: "allow redirect to dev null", tool: "exec", command: "rampart status > /dev/null", expected: engine.ActionAllow},
 		// Launchers expose the command they run to deny and ask rules.

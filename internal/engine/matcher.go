@@ -642,6 +642,9 @@ func matchRestrictiveCommandCandidateFirst(patterns []string, command string, ac
 	if matched := matchRestrictiveAlternateCommandFirst(patterns, command, action); matched != "" {
 		return matched
 	}
+	if matched := matchGlobOperandFirst(patterns, command, action); matched != "" {
+		return matched
+	}
 	return matchPerOperandReaderFirst(patterns, command, action)
 }
 
