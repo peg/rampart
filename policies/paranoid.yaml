@@ -116,6 +116,31 @@ policies:
             - "127.0.0.1"
         message: "Allowed package registry/docs fetch"
 
+  - name: block-credential-commands
+    priority: 1
+    match:
+      tool: ["exec"]
+    rules:
+      - action: deny
+        when:
+          command_matches:
+            - "* .env"
+            - "* .env *"
+            - "* .env.*"
+            - "* */.env"
+            - "* */.env *"
+            - "* */.env.*"
+            - "*<.env*"
+            - "*<*/.env*"
+          command_contains:
+            - ".ssh/id_"
+            - ".ssh\\id_"
+            - ".aws/credentials"
+            - ".aws\\credentials"
+            - ".netrc"
+            - ".git-credentials"
+        message: "Credential file access blocked"
+
   - name: block-credential-access
     priority: 1
     match:
