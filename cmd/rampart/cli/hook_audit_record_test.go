@@ -28,6 +28,11 @@ func TestReadBoundedHookInput(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("oversized input error = %v, want size-limit error", err)
 	}
+
+	got, err = readBoundedHookInput(strings.NewReader("\ufeff{}"))
+	if err != nil || string(got) != "{}" {
+		t.Fatalf("BOM-prefixed input = %q, %v; want {}", got, err)
+	}
 }
 
 func TestHookAuditCompactsEscapedNearMiBRequest(t *testing.T) {
