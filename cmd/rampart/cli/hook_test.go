@@ -43,34 +43,43 @@ func TestDeriveGitContext_NoGit(t *testing.T) {
 	}
 }
 
-func TestDeriveGitContextAt_UsesSingleGitProcess(t *testing.T) {
-	if os.PathSeparator == '\\' {
-		t.Skip("shell-based process-count fixture is Unix-only")
-	}
+func TestDeriveGitContextAtReadsRepositoryWithoutGit(t *testing.T) {
 	t.Setenv("RAMPART_SESSION", "")
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "calls")
-	gitPath := filepath.Join(dir, "git")
-	script := "#!/bin/sh\n" +
-		"printf 'call\\n' >> \"$RAMPART_GIT_CALL_LOG\"\n" +
-		"[ \"$2\" = \"/workspace/repository \" ] || exit 1\n" +
-		"printf '/workspace/repository \\nmain\\n'\n"
-	if err := os.WriteFile(gitPath, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir)
-	t.Setenv("RAMPART_GIT_CALL_LOG", logPath)
-
-	ctx := deriveGitContextAt("/workspace/repository ")
-	if ctx.root != "/workspace/repository " || ctx.session != "repository /main" {
-		t.Fatalf("unexpected git context: %+v", ctx)
-	}
-	calls, err := os.ReadFile(logPath)
+	t.Setenv("PATH", t.TempDir()) // no git binary
+	repo, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Count(string(calls), "call\n"); got != 1 {
-		t.Fatalf("git process count = %d, want 1", got)
+	repo = filepath.Join(repo, "repository")
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(repo, ".git", "HEAD"), "ref: refs/heads/feature/x\n")
+	sub := filepath.Join(repo, "src", "pkg")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if ctx := deriveGitContextAt(sub); ctx.root != repo || ctx.session != "repository/feature/x" {
+		t.Fatalf("branch checkout: %+v", ctx)
+	}
+
+	write(filepath.Join(repo, ".git", "HEAD"), "0123456789abcdef0123456789abcdef01234567\n")
+	if ctx := deriveGitContextAt(repo); ctx.session != "repository/detached" {
+		t.Fatalf("detached HEAD: %+v", ctx)
+	}
+
+	// A linked worktree's .git file points at its own HEAD.
+	worktree := filepath.Join(filepath.Dir(repo), "wt")
+	write(filepath.Join(repo, ".git", "worktrees", "wt", "HEAD"), "ref: refs/heads/topic\n")
+	write(filepath.Join(worktree, ".git"), "gitdir: "+filepath.Join(repo, ".git", "worktrees", "wt")+"\n")
+	if ctx := deriveGitContextAt(worktree); ctx.root != worktree || ctx.session != "wt/topic" {
+		t.Fatalf("worktree: %+v", ctx)
 	}
 }
 
