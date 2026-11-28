@@ -120,7 +120,8 @@ Run 'rampart setup codex --remove' to uninstall.`,
 			fmt.Fprintf(out, "✓ Rampart lifecycle hooks installed in %s\n", hooksPath)
 			fmt.Fprintln(out, "  Covers Codex CLI, IDE extension, and desktop local tool calls.")
 			fmt.Fprintln(out, "  Codex will require review of this hook definition before first use.")
-			fmt.Fprintln(out, "  Open `/hooks` in Codex and trust the Rampart hooks. Rampart cannot check that you did.")
+			fmt.Fprintln(out, "  Next: start `codex`, type `/hooks`, and trust the Rampart hooks. Codex skips them until you do.")
+			fmt.Fprintln(out, "  Then run `rampart verify codex` to confirm.")
 			if codexUserHooksDisabled(home) {
 				fmt.Fprintln(out, "⚠ Codex config.toml sets allow_managed_hooks_only = true, so Codex skips these hooks.")
 			}
@@ -502,4 +503,89 @@ func windowsQuoteCodexHookArg(value string) string {
 func containsRampartPreload(content string) bool {
 	return strings.Contains(content, "rampart preload") ||
 		strings.Contains(content, "Rampart wrapper")
+}
+
+// codexUntrustedRampartHooks returns the Rampart hook events that have no
+// trust record in Codex's config.toml. Codex keeps trust in
+// [hooks.state."<hooks.json>:<event>:<group>:<handler>"] trusted_hash and
+// skips a user hook without one. Whether a recorded hash still matches the
+// hook is not checked; only Codex computes it.
+func codexUntrustedRampartHooks(home string) ([]string, error) {
+	hooksPath := filepath.Join(codexHomeDir(home), "hooks.json")
+	data, err := os.ReadFile(hooksPath)
+	if err != nil {
+		return nil, err
+	}
+	var settings map[string]any
+	if err := decodeUserJSON(data, &settings); err != nil {
+		return nil, err
+	}
+	trusted := codexTrustedHookKeys(filepath.Join(codexHomeDir(home), "config.toml"))
+	hooks, _ := settings["hooks"].(map[string]any)
+	var untrusted []string
+	for _, event := range []struct{ name, label string }{{"PreToolUse", "pre_tool_use"}, {"PostToolUse", "post_tool_use"}} {
+		entries, _ := hooks[event.name].([]any)
+		for group, entry := range entries {
+			matcher, _ := entry.(map[string]any)
+			handlers, _ := matcher["hooks"].([]any)
+			for index, raw := range handlers {
+				handler, _ := raw.(map[string]any)
+				if handler == nil || !isRampartCodexHandler(handler) {
+					continue
+				}
+				key := fmt.Sprintf("%s:%s:%d:%d", hooksPath, event.label, group, index)
+				if !trusted[codexHookKeyFold(key)] {
+					untrusted = append(untrusted, event.name)
+				}
+			}
+		}
+	}
+	return untrusted, nil
+}
+
+// codexTrustedHookKeys returns the hooks.state keys in config.toml that have
+// a trusted_hash.
+func codexTrustedHookKeys(path string) map[string]bool {
+	keys := map[string]bool{}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return keys
+	}
+	current := ""
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") {
+			current = ""
+			if rest, ok := strings.CutPrefix(line, "[hooks.state."); ok {
+				if key, ok := unquoteTOMLKey(strings.TrimSuffix(rest, "]")); ok {
+					current = key
+				}
+			}
+			continue
+		}
+		if name, _, ok := strings.Cut(line, "="); ok && current != "" && strings.TrimSpace(name) == "trusted_hash" {
+			keys[codexHookKeyFold(current)] = true
+		}
+	}
+	return keys
+}
+
+func unquoteTOMLKey(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	switch {
+	case len(raw) >= 2 && raw[0] == '\'' && raw[len(raw)-1] == '\'':
+		return raw[1 : len(raw)-1], true
+	case len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"':
+		var key string
+		if json.Unmarshal([]byte(raw), &key) == nil {
+			return key, true
+		}
+	}
+	return "", false
+}
+
+// codexHookKeyFold compares keys the way the file system compares paths on
+// Windows and macOS: separators and letter case do not matter.
+func codexHookKeyFold(key string) string {
+	return strings.ToLower(strings.ReplaceAll(key, `\`, "/"))
 }

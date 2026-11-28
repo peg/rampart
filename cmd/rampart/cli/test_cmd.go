@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/peg/rampart/internal/engine"
-	"github.com/peg/rampart/policies"
 	"github.com/spf13/cobra"
 )
 
@@ -289,16 +288,15 @@ func runTest(w, errW io.Writer, opts *rootOptions, arg, toolName string, noColor
 		return fmt.Errorf("test: %w", err)
 	}
 
-	policyPath, cleanup, err := resolveTestPolicyPath(opts.configPath)
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	slog.SetDefault(quiet)
+
+	// Judge the call with the policy the installed hook enforces here.
+	store, cleanup, err := hookPolicyStore(nil, opts.configPath, "", deriveGitContext().root, quiet)
 	if err != nil {
-		return err
+		return fmt.Errorf("test: %w", err)
 	}
 	defer cleanup()
-
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	includeHomePolicyDir := opts.configPath == "" || opts.configPath == "rampart.yaml"
-	store := newTestPolicyStore(policyPath, includeHomePolicyDir, nil)
 	eng, err := engine.New(store, nil)
 	if err != nil {
 		return fmt.Errorf("test: create engine: %w", err)
@@ -329,63 +327,6 @@ func runTest(w, errW io.Writer, opts *rootOptions, arg, toolName string, noColor
 		return exitCodeError{code: 1}
 	}
 	return nil
-}
-
-func newTestPolicyStore(policyPath string, includeHomePolicyDir bool, logger *slog.Logger) engine.PolicyStore {
-	if !includeHomePolicyDir {
-		return engine.NewFileStore(policyPath)
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		policyDir := filepath.Join(home, ".rampart", "policies")
-		if _, statErr := os.Stat(policyDir); statErr == nil {
-			return engine.NewMultiStore(policyPath, policyDir, logger)
-		}
-	}
-	return engine.NewFileStore(policyPath)
-}
-
-func resolveTestPolicyPath(path string) (string, func(), error) {
-	if strings.TrimSpace(path) == "" {
-		path = "rampart.yaml"
-	}
-
-	_, err := os.Stat(path)
-	if err == nil {
-		return path, func() {}, nil
-	}
-	if !os.IsNotExist(err) {
-		return "", nil, fmt.Errorf("test: check policy config %s: %w", path, err)
-	}
-
-	home, err := os.UserHomeDir()
-	if err == nil {
-		stdPath := home + "/.rampart/policies/standard.yaml"
-		if _, statErr := os.Stat(stdPath); statErr == nil {
-			return stdPath, func() {}, nil
-		}
-	}
-
-	fmt.Fprintf(os.Stderr, "⚠ No policy file found — using embedded standard policy\n\n")
-	data, err := policies.Profile("standard")
-	if err != nil {
-		return "", nil, fmt.Errorf("test: no policy found. Run 'rampart init' to create one")
-	}
-
-	tmp, err := os.CreateTemp("", "rampart-test-policy-*.yaml")
-	if err != nil {
-		return "", nil, fmt.Errorf("test: create temporary policy file: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmp.Name())
-		return "", nil, fmt.Errorf("test: write temporary policy file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmp.Name())
-		return "", nil, fmt.Errorf("test: close temporary policy file: %w", err)
-	}
-
-	return tmp.Name(), func() { _ = os.Remove(tmp.Name()) }, nil
 }
 
 func printTestResult(w io.Writer, d engine.Decision, noColor bool) {

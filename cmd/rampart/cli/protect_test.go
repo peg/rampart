@@ -303,6 +303,7 @@ func TestEnsureServeRunningDoesNotReplaceUnreachableExplicitEndpoint(t *testing.
 func TestProtectionPlanConfiguresVerifiesAndRecordsCodex(t *testing.T) {
 	home := t.TempDir()
 	testSetHome(t, home)
+	trustCodexHooksForTest(t, home)
 	t.Setenv("RAMPART_TOKEN", "verification-token")
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

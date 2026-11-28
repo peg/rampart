@@ -85,7 +85,7 @@ func supportedIntegrationDrivers() []integrationDriver {
 			Configured:      codexHooksConfiguredForHome,
 			ProtectionState: codexProtectionState,
 			VerifyChecks: func(ctx context.Context, _ time.Duration) []verificationCheck {
-				return []verificationCheck{verifyCodexHooksInstalled(), verifyCodexHookAdapter(ctx)}
+				return []verificationCheck{verifyCodexHooksInstalled(), verifyCodexHooksTrusted(), verifyCodexHookAdapter(ctx)}
 			},
 		},
 		{
