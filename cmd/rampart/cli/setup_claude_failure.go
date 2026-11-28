@@ -78,7 +78,10 @@ func detectClaudeVersionFromPath() (claudeVersion, bool) {
 	if err != nil {
 		return claudeVersion{}, false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	// The first start of the native Windows binary in a fresh profile (antivirus
+	// scan, payload unpack) can take several seconds; a short timeout made
+	// --hook-failure=block refuse to install any hook.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	cmd := osexec.CommandContext(ctx, path, "--version")
 	cmd.Env = claudeVersionProbeEnv()
