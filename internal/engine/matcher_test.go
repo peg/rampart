@@ -150,13 +150,13 @@ func TestPlatformMatchingCaseRules(t *testing.T) {
 	}
 
 	pathPatterns := []string{"C:/Users/Alice/.ssh/**"}
-	if !matchAnyForOS(pathPatterns, "c:/users/alice/.SSH/id_rsa", "windows") {
+	if matchPathFirstForActionOS(pathPatterns, "c:/users/alice/.SSH/id_rsa", "", "windows", ActionDeny) == "" {
 		t.Fatal("Windows path matching must be case-insensitive")
 	}
-	if !matchAnyForOS([]string{"/Users/Alice/.ssh/**"}, "/users/alice/.SSH/id_rsa", "darwin") {
+	if matchPathFirstForActionOS([]string{"/Users/Alice/.ssh/**"}, "/users/alice/.SSH/id_rsa", "", "darwin", ActionDeny) == "" {
 		t.Fatal("macOS path matching must account for the default case-insensitive filesystem")
 	}
-	if matchAnyForOS([]string{"/Home/Alice/**"}, "/home/alice/file", "linux") {
+	if matchPathFirstForActionOS([]string{"/Home/Alice/**"}, "/home/alice/file", "", "linux", ActionDeny) != "" {
 		t.Fatal("Linux path matching must remain case-sensitive")
 	}
 }
@@ -280,7 +280,7 @@ func TestWindowsRuntimeCommandMatchingIsCaseInsensitive(t *testing.T) {
 		t.Skip("Windows runtime behavior is exercised by the Windows CI job")
 	}
 	cond := Condition{CommandMatches: []string{"Stop-Service *"}}
-	if !matchCondition(cond, ToolCall{Tool: "exec", Params: map[string]any{"command": "sToP-sErViCe WinDefend"}}, NewSlidingWindowCounter()) {
+	if !matchConditionForAction(cond, ToolCall{Tool: "exec", Params: map[string]any{"command": "sToP-sErViCe WinDefend"}}, NewSlidingWindowCounter(), ActionDeny) {
 		t.Fatal("mixed-case Windows command bypassed command_matches")
 	}
 }
@@ -348,9 +348,9 @@ func TestCleanPaths(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			cleaned, _ := cleanPaths(tt.input)
+			cleaned, _ := cleanPathsAt(tt.input, "")
 			if cleaned != tt.want {
-				t.Errorf("cleanPaths(%q) cleaned = %q, want %q", tt.input, cleaned, tt.want)
+				t.Errorf("cleanPathsAt(%q) cleaned = %q, want %q", tt.input, cleaned, tt.want)
 			}
 		})
 	}
@@ -367,7 +367,7 @@ func TestCleanPathsResolvesLongestExistingSymlinkAncestor(t *testing.T) {
 	}
 
 	input := filepath.Join(link, "not-created", "child.txt")
-	cleaned, resolved := cleanPaths(input)
+	cleaned, resolved := cleanPathsAt(input, "")
 	if cleaned != filepath.Clean(input) {
 		t.Fatalf("cleaned path = %q, want %q", cleaned, filepath.Clean(input))
 	}
@@ -382,7 +382,7 @@ func TestCleanPathsResolvesLongestExistingSymlinkAncestor(t *testing.T) {
 
 	cond := Condition{PathMatches: []string{filepath.Join(resolvedTarget, "**")}}
 	call := ToolCall{Tool: "write", Params: map[string]interface{}{"path": input}}
-	if !matchCondition(cond, call, nil) {
+	if !matchConditionForAction(cond, call, nil, ActionDeny) {
 		t.Fatal("write through a symlinked parent must match the resolved target policy")
 	}
 }
@@ -404,7 +404,7 @@ func TestRelativeToolPathUsesHostWorkingDirectory(t *testing.T) {
 		Params:  map[string]any{"path": "../../protected/credential.txt"},
 	}
 	cond := Condition{PathMatches: []string{filepath.ToSlash(filepath.Join(protectedDir, "**"))}}
-	if !matchCondition(cond, call, nil) {
+	if !matchConditionForAction(cond, call, nil, ActionDeny) {
 		t.Fatalf("relative path %q was not resolved against host cwd %q", call.Path(), workDir)
 	}
 }
@@ -416,7 +416,7 @@ func TestRelativeToolPathKeepsProjectPolicyCompatibility(t *testing.T) {
 		Params:  map[string]any{"path": "secrets/credential.txt"},
 	}
 	condition := Condition{PathMatches: []string{"secrets/**"}}
-	if !matchCondition(condition, call, nil) {
+	if !matchConditionForAction(condition, call, nil, ActionDeny) {
 		t.Fatal("relative project policy should still match after host-CWD resolution")
 	}
 }
@@ -441,7 +441,7 @@ func TestRelativeToolPathResolvesSymlinkFromHostWorkingDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	cond := Condition{PathMatches: []string{filepath.ToSlash(filepath.Join(resolvedTarget, "**"))}}
-	if !matchCondition(cond, call, nil) {
+	if !matchConditionForAction(cond, call, nil, ActionDeny) {
 		t.Fatal("relative write through a workspace symlink must match the resolved target policy")
 	}
 }
@@ -681,7 +681,7 @@ func TestMatchCondition_WindowsShellWrappers(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cond := Condition{CommandMatches: []string{tt.pattern}}
 			call := ToolCall{Tool: "exec", Params: map[string]interface{}{"command": tt.command}}
-			if !matchCondition(cond, call, nil) {
+			if !matchConditionForAction(cond, call, nil, ActionDeny) {
 				t.Fatalf("wrapped command %q did not match %q", tt.command, tt.pattern)
 			}
 		})
@@ -739,9 +739,9 @@ func TestMatchCondition_PathTraversalBypass(t *testing.T) {
 				Tool:   "read",
 				Params: map[string]interface{}{"path": tt.path},
 			}
-			got := matchCondition(cond, call, nil)
+			got := matchConditionForAction(cond, call, nil, ActionDeny)
 			if got != tt.want {
-				t.Errorf("matchCondition(path_matches=/etc/shadow, path=%q) = %v, want %v",
+				t.Errorf("matchConditionForAction(path_matches=/etc/shadow, path=%q, ActionDeny) = %v, want %v",
 					tt.path, got, tt.want)
 			}
 		})
@@ -766,9 +766,9 @@ func TestMatchCondition_PathTraversalBypass(t *testing.T) {
 				Tool:   "read",
 				Params: map[string]interface{}{"path": tt.path},
 			}
-			got := matchCondition(condSSH, call, nil)
+			got := matchConditionForAction(condSSH, call, nil, ActionDeny)
 			if got != tt.want {
-				t.Errorf("matchCondition(path_matches=%s/.ssh/*, path=%q) = %v, want %v",
+				t.Errorf("matchConditionForAction(path_matches=%s/.ssh/*, path=%q, ActionDeny) = %v, want %v",
 					home, tt.path, got, tt.want)
 			}
 		})
@@ -816,9 +816,9 @@ func TestMatchCondition_CommandContains(t *testing.T) {
 				Tool:   "exec",
 				Params: map[string]interface{}{"command": tt.cmd},
 			}
-			got := matchCondition(cond, call, nil)
+			got := matchConditionForAction(cond, call, nil, ActionDeny)
 			if got != tt.want {
-				t.Errorf("matchCondition(command_contains=%v, cmd=%q) = %v, want %v",
+				t.Errorf("matchConditionForAction(command_contains=%v, cmd=%q, ActionDeny) = %v, want %v",
 					tt.contains, tt.cmd, got, tt.want)
 			}
 		})
@@ -1079,7 +1079,7 @@ func BenchmarkRestrictiveCommandMiss(b *testing.B) {
 func TestEmptyCommandContainsCannotGrantExecution(t *testing.T) {
 	cond := Condition{CommandContains: []string{""}}
 	call := ToolCall{Tool: "exec", Params: map[string]any{"command": "anything at all"}}
-	for _, action := range []Action{ActionAllow, ActionWatch, ActionWebhook} {
+	for _, action := range []Action{ActionAllow, ActionWatch} {
 		if matchConditionForAction(cond, call, nil, action) {
 			t.Errorf("empty command_contains unexpectedly matched granting action %s", action)
 		}
@@ -1208,9 +1208,9 @@ func TestMatchCondition_ShellWrapperBypass(t *testing.T) {
 				Tool:   "exec",
 				Params: map[string]interface{}{"command": tt.cmd},
 			}
-			got := matchCondition(cond, call, nil)
+			got := matchConditionForAction(cond, call, nil, ActionDeny)
 			if got != tt.want {
-				t.Errorf("matchCondition(command_matches=%q, cmd=%q) = %v, want %v",
+				t.Errorf("matchConditionForAction(command_matches=%q, cmd=%q, ActionDeny) = %v, want %v",
 					tt.pattern, tt.cmd, got, tt.want)
 			}
 		})
@@ -1269,9 +1269,9 @@ func TestMatchCondition_AdversarialExecReleaseMatrix(t *testing.T) {
 				"command_effective": "echo safe",
 			}
 			call := ToolCall{Tool: "exec", Params: params}
-			got := matchCondition(tt.cond, call, nil)
+			got := matchConditionForAction(tt.cond, call, nil, ActionDeny)
 			if got != tt.want {
-				t.Fatalf("matchCondition(%+v, command=%q) = %v, want %v", tt.cond, tt.command, got, tt.want)
+				t.Fatalf("matchConditionForAction(%+v, command=%q, ActionDeny) = %v, want %v", tt.cond, tt.command, got, tt.want)
 			}
 		})
 	}
@@ -1376,9 +1376,9 @@ func TestMatchCondition_AgentDepth(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			call := ToolCall{Tool: "agent", AgentDepth: tt.depth}
-			got := matchCondition(tt.cond, call, nil)
+			got := matchConditionForAction(tt.cond, call, nil, ActionDeny)
 			if got != tt.want {
-				t.Fatalf("matchCondition(agent_depth, depth=%d) = %v, want %v", tt.depth, got, tt.want)
+				t.Fatalf("matchConditionForAction(agent_depth, depth=%d, ActionDeny) = %v, want %v", tt.depth, got, tt.want)
 			}
 		})
 	}
@@ -1440,9 +1440,9 @@ func TestMatchCondition_ToolParamMatches(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			call := ToolCall{Tool: "mcp", Input: tt.input}
-			got := matchCondition(tt.cond, call, nil)
+			got := matchConditionForAction(tt.cond, call, nil, ActionDeny)
 			if got != tt.want {
-				t.Fatalf("matchCondition(tool_param_matches, input=%v) = %v, want %v", tt.input, got, tt.want)
+				t.Fatalf("matchConditionForAction(tool_param_matches, input=%v, ActionDeny) = %v, want %v", tt.input, got, tt.want)
 			}
 		})
 	}

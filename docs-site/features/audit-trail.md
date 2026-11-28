@@ -18,11 +18,6 @@ An identity that can replace all local records and checkpoints can still
 construct a different valid history. Independent retention is needed to
 detect that rewrite; hashing alone does not make files immutable.
 
-For independently retained checkpoints, see [External Witnessing](external-witness.md).
-It is optional and runs separately from local logging. Verification checks every
-retained checkpoint, so a newer checkpoint cannot conceal a conflict with older
-evidence.
-
 ## Viewing the Audit Trail
 
 ```bash
@@ -123,8 +118,8 @@ integrity check.
 For stronger guarantees:
 
 - For centralized HTTP/SDK deployments, run `rampart serve` as a [separate user](../deployment/user-separation.md) so the agent cannot access service-owned audit files; native hooks need an external sink for an independent trust boundary
-- Configure [SIEM export](siem-integration.md) to a separately controlled
-  collector with suitable retention and access controls. Export is best effort;
-  the local verifier does not retrieve or validate remote evidence.
+- Forward the JSONL audit log with any log shipper to a separately controlled
+  collector with suitable retention and access controls. The local verifier
+  does not retrieve or validate remote evidence.
 - Use [webhook notifications](webhooks.md) for selected alerts to an external
   system, rather than as a complete copy of the audit trail.

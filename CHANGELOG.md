@@ -7,6 +7,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-11-27
+
+### Added
+
+- **Experimental OpenCode integration is back** — `rampart setup opencode`
+  installs a dependency-free plugin that checks OpenCode's shell, file, patch,
+  and web-fetch tool calls against local Rampart policy before they run, for
+  any model provider, including local models through Ollama, LM Studio, or
+  llama.cpp. It needs no `rampart serve`. Linux and macOS with a POSIX shell
+  only. The plugin loads in OpenCode 1.x and 2.x, and `rampart verify opencode`
+  fails for any other release. A missing or failing `rampart`, a malformed reply, or a ten-second
+  timeout refuses the call, as do `ask`, `require_approval`, and unmapped
+  tools such as MCP and `task`. `glob`, `grep`, and `list` are checked as
+  reads of the directory they search, and `grep` must stay inside the project. `rampart doctor` checks the
+  installed file and warns when `OPENCODE_PURE` would skip plugins; it does not
+  prove OpenCode loaded the plugin. `rampart verify opencode` checks the
+  plugin and sends a deny canary through the OpenCode adapter;
+  `rampart launch opencode` runs it before starting OpenCode, retrying for a
+  few seconds while a running `rampart serve` reloads policy. Bare
+  `rampart protect` does not enroll OpenCode. The integration was
+  parked before 1.10.0; this restores it on the current hook, which now
+  answers `allow` for OpenCode where it defers for Claude Code.
+- **`rampart launch <agent>`** — one command to a protected local-model
+  agent. Launch installs Rampart's hooks for Claude Code, Codex or OpenCode if they are
+  missing, runs the same safe canaries as `rampart verify`, and refuses to
+  start the agent unless every check passes. It then runs
+  `ollama launch <agent> [--model <name>] [-- args]`, or `codex --oss` when
+  Ollama is not installed.
+
+### Removed
+
+- **In-process self-upgrade** — `rampart upgrade` no longer downloads or
+  replaces the binary. It prints the upgrade command for how Rampart was
+  installed (`brew upgrade peg/tap/rampart`, the `install.sh` one-liner, or the
+  `install.ps1` one-liner on Windows); those installers verify checksums and
+  restart managed services. The `[version]` argument and the `--yes` and
+  `--no-policy-update` flags are gone. `rampart upgrade --no-binary` still
+  refreshes unmodified built-in policy profiles; run it after upgrading.
+- **Syslog and CEF audit export** — the `rampart serve --syslog` and `--cef`
+  flags are gone. The JSONL audit log can be forwarded with any log shipper.
+- **`rampart policy sync`** — the git-based policy sync command and its
+  `status` and `stop` subcommands are gone. To share a team policy, distribute
+  the YAML file yourself (for example, a `git pull` into `~/.rampart/policies/`).
+  An existing `~/.rampart/policies/org-sync.yaml` keeps loading as a normal
+  policy file and no longer updates.
+- **Compliance reports** — `rampart report compliance` is gone. `rampart report`
+  (HTML) and `rampart report export` are unchanged.
+- **Experimental external audit witness** — `rampart audit witness` and the
+  `--witness-config` and `--require-witness` flags of `rampart audit verify`
+  are gone. The local hash-chained audit log and `rampart audit verify` remain.
+- **Policy registry** — `rampart policy search`, `fetch` and `install`, the
+  embedded registry manifest, `RAMPART_REGISTRY_URL`, community-policy
+  suggestions in `rampart init` and `rampart doctor`, and
+  `rampart init --profile <community-policy>` are gone. `rampart policy list`
+  and `show` cover built-in profiles only, and `list --refresh` is gone. To add
+  a policy, copy its YAML into `~/.rampart/policies/` (for example
+  `rampart policy show production-guard > ~/.rampart/policies/production-guard.yaml`,
+  or a file from `policies/community/`), or use project policies.
+- **The `webhook` policy action and semantic verification** — rules can no
+  longer hand a decision to an external HTTP service, so the rampart-verify
+  sidecar no longer plugs into Rampart. A policy with `action: webhook` or a
+  rule-level `webhook:` block now fails to load and `rampart policy lint`
+  reports it; replace the rule with `ask` or `deny`. `notify:` webhook
+  notifications are unchanged.
+
+### Security
+
+- **Privilege wrappers no longer soften deny rules** — deny and ask rules now
+  judge the command that `sudo`, `doas` or `pkexec` runs, including after
+  combined options such as `sudo -nu root` and `sudo -R <dir>`, so a command
+  that a deny rule matches on its own stays denied behind a privilege wrapper
+  instead of becoming an approval prompt. Allow rules still do not look
+  through a wrapper.
+- **OpenCode `grep` stays inside the project** — OpenCode's grep returns file
+  contents and searches hidden files, so a grep rooted outside the project
+  directory, or at or above the home directory, is refused.
+- **Rampart's approval keys are protected like its tokens** — the standard,
+  guard and OpenClaw profiles deny direct reads of the files that back
+  approvals. The threat model now states that approvals are advisory when the
+  agent runs as the same OS user as Rampart.
+
 ## [1.11.1] - 2026-11-26
 
 ### Security

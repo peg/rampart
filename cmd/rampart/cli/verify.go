@@ -176,7 +176,7 @@ service build identity.`,
 			if target != "policy" {
 				driver, ok := findIntegrationDriver(target)
 				if !ok {
-					return fmt.Errorf("verify: unsupported target %q (supported: openclaw, claude-code, cline, codex, gemini, antigravity, copilot, cursor, policy)", target)
+					return fmt.Errorf("verify: unsupported target %q (supported: openclaw, claude-code, cline, codex, gemini, antigravity, copilot, cursor, opencode, policy)", target)
 				}
 				if strings.TrimSpace(driver.VerifyTarget) == "" || driver.VerifyChecks == nil {
 					command := integrationDriverVerificationCommand(driver)
@@ -555,6 +555,9 @@ func verifyNativeHookAdapter(ctx context.Context, target string) verificationChe
 	case "cline":
 		agent = "cline"
 		payload = `{"clineVersion":"4","hookName":"tool_call","taskId":"rampart-verification","preToolUse":{"toolName":"run_commands","parameters":{"commands":"[\"rm -rf /\"]"}},"tool_call":{"id":"rampart-verification","name":"run_commands","input":{"commands":["rm -rf /"]}}}`
+	case "opencode":
+		// The directory is filled in below; OpenCode requires an absolute one.
+		payload = `{"tool":"bash","sessionID":"rampart-verification","callID":"rampart-verification","directory":%q,"args":{"command":"rm -rf /"}}`
 	default:
 		return verificationCheck{ID: checkID, Name: checkName, Status: verificationUnverified, Message: "unsupported adapter verifier"}
 	}
@@ -564,6 +567,9 @@ func verifyNativeHookAdapter(ctx context.Context, target string) verificationChe
 		return verificationCheck{ID: checkID, Name: checkName, Status: verificationUnverified, Actual: "temporary directory unavailable", Message: err.Error()}
 	}
 	defer os.RemoveAll(auditDir)
+	if target == "opencode" {
+		payload = fmt.Sprintf(payload, auditDir)
+	}
 	var stdout, stderr bytes.Buffer
 	hookCmd := NewRootCmd(ctx, &stdout, &stderr)
 	hookCmd.SetIn(strings.NewReader(payload))
@@ -576,10 +582,13 @@ func verifyNativeHookAdapter(ctx context.Context, target string) verificationChe
 		return verificationCheck{ID: checkID, Name: checkName, Status: verificationFail, Expected: "structured deny", Actual: strings.TrimSpace(stdout.String()), Message: "Rampart's hook response was not valid JSON"}
 	}
 	denied := false
-	if target == "claude-code" {
+	switch target {
+	case "claude-code":
 		specific, _ := output["hookSpecificOutput"].(map[string]any)
 		denied = specific["permissionDecision"] == "deny"
-	} else {
+	case "opencode":
+		denied = output["decision"] == "deny"
+	default:
 		denied, _ = output["cancel"].(bool)
 	}
 	if !denied {
@@ -593,6 +602,28 @@ func verifyNativeHookAdapter(ctx context.Context, target string) verificationChe
 		return verificationCheck{ID: checkID, Name: checkName, Status: verificationFail, Expected: "correlated deny audit", Actual: "correlation missing", Message: "The hook audit did not preserve host identity"}
 	}
 	return verificationCheck{ID: checkID, Name: checkName, Status: verificationPass, Expected: "structured deny and audit", Actual: "deny + audit", Message: "The live Rampart hook adapter blocked the destructive canary and recorded its decision"}
+}
+
+func verifyOpenCodePluginInstalled() verificationCheck {
+	check := verificationCheck{
+		ID: "opencode-plugin-installation", Name: "OpenCode plugin is installed",
+		Expected: "current Rampart plugin, OPENCODE_PURE unset",
+		Hint:     "Run `rampart setup opencode`, restart OpenCode, then rerun verification",
+	}
+	home, err := os.UserHomeDir()
+	switch {
+	case err != nil || home == "":
+		check.Status, check.Actual, check.Message = verificationUnverified, "home unavailable", "Could not locate the OpenCode configuration"
+	case os.Getenv("OPENCODE_PURE") != "":
+		check.Status, check.Actual, check.Message = verificationFail, "OPENCODE_PURE set", "OpenCode skips external plugins, so Rampart never runs"
+		check.Hint = "Unset OPENCODE_PURE before starting OpenCode"
+	case !openCodePluginConfiguredForHome(home):
+		check.Status, check.Actual, check.Message = verificationFail, "missing or stale", "OpenCode's global plugin directory has no current Rampart plugin"
+	default:
+		check.Status, check.Actual = verificationPass, "configured"
+		check.Message = "The current Rampart plugin is installed. Whether OpenCode loaded it is not checked"
+	}
+	return check
 }
 
 func verifyGeminiHooksInstalled() verificationCheck {
@@ -1525,4 +1556,44 @@ func printVerificationResult(w io.Writer, report verificationReport) {
 	if report.Assurance != "" {
 		fmt.Fprintf(w, "Assurance: %s\n", strings.ToUpper(strings.ReplaceAll(string(report.Assurance), "_", " ")))
 	}
+}
+
+// openCodeVersion reports the installed OpenCode version. Tests replace it.
+var openCodeVersion = func(ctx context.Context) (string, error) {
+	bin, err := execLookPath("opencode")
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	out, err := osexec.CommandContext(ctx, bin, "--version").Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+// verifyOpenCodeVersion fails for OpenCode releases whose plugin loader
+// Rampart has not been checked against. OpenCode skips a plugin it cannot
+// load and keeps running, so an unknown major version means no protection.
+func verifyOpenCodeVersion(ctx context.Context) verificationCheck {
+	check := verificationCheck{
+		ID: "opencode-version", Name: "OpenCode version can load the Rampart plugin",
+		Expected: "OpenCode 1.x or 2.x",
+		Hint:     "Install a supported OpenCode release, or check for a newer Rampart",
+	}
+	version, err := openCodeVersion(ctx)
+	if err != nil {
+		check.Status, check.Actual, check.Message = verificationFail, "not found", "Could not run `opencode --version`"
+		return check
+	}
+	check.Actual = version
+	fields := strings.Fields(version) // "2.4.1", "v2.4.1" or "opencode 2.4.1"
+	major := ""
+	if len(fields) > 0 {
+		major, _, _ = strings.Cut(strings.TrimPrefix(fields[len(fields)-1], "v"), ".")
+	}
+	if major != "1" && major != "2" {
+		check.Status, check.Message = verificationFail, "This OpenCode release may not load the Rampart plugin"
+		return check
+	}
+	check.Status, check.Message = verificationPass, "Rampart's plugin supports this OpenCode plugin format"
+	return check
 }

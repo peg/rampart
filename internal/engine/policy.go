@@ -14,6 +14,7 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -142,7 +143,7 @@ func (m Match) EffectiveSession() string {
 // Rule is a single policy rule.
 type Rule struct {
 	// Action is what to do when this rule matches: "allow", "deny", "watch",
-	// "ask", or "webhook". "log" is a deprecated alias for "watch".
+	// or "ask". "log" is a deprecated alias for "watch".
 	Action string `yaml:"action"`
 
 	// Ask configures action: ask behavior.
@@ -160,8 +161,10 @@ type Rule struct {
 	// by `rampart allow` and `rampart block` and does not affect enforcement.
 	Added time.Time `yaml:"added,omitempty"`
 
-	// Webhook configures the external webhook for action: webhook rules.
-	Webhook *WebhookActionConfig `yaml:"webhook,omitempty"`
+	// Webhook belonged to the removed webhook action. It is still decoded so
+	// that policies setting it fail validation with errWebhookRemoved rather
+	// than a generic unknown-field error.
+	Webhook any `yaml:"webhook,omitempty" json:"-"`
 
 	// ExpiresAt is an optional UTC timestamp after which this rule is ignored.
 	// Used by `rampart allow --for <duration>` to create time-scoped exceptions.
@@ -183,65 +186,9 @@ type AskActionConfig struct {
 	HeadlessOnly bool `yaml:"headless_only" json:"headless_only"`
 }
 
-// WebhookActionConfig defines the webhook endpoint and behavior for
-// action: webhook rules.
-type WebhookActionConfig struct {
-	// URL is the webhook endpoint to POST to for allow/deny decisions.
-	URL string `yaml:"url"`
-
-	// Timeout is how long to wait for the webhook response.
-	// Default: 5s.
-	Timeout Duration `yaml:"timeout,omitempty"`
-
-	// FailOpen determines behavior on webhook error or timeout.
-	// true = allow on failure, false = deny on failure (default).
-	FailOpen *bool `yaml:"fail_open,omitempty"`
-}
-
-// EffectiveTimeout returns the configured timeout or 5s default.
-// Capped at 30s to prevent resource exhaustion.
-func (c *WebhookActionConfig) EffectiveTimeout() time.Duration {
-	const maxTimeout = 30 * time.Second
-	if c.Timeout.Duration > 0 {
-		if c.Timeout.Duration > maxTimeout {
-			return maxTimeout
-		}
-		return c.Timeout.Duration
-	}
-	return 5 * time.Second
-}
-
-// EffectiveFailOpen returns whether to fail open on error/timeout.
-// Default: false (fail closed — webhook outages block execution).
-func (c *WebhookActionConfig) EffectiveFailOpen() bool {
-	if c.FailOpen == nil {
-		return false
-	}
-	return *c.FailOpen
-}
-
-// Duration is a time.Duration that unmarshals from YAML duration strings
-// like "5s", "1m", "500ms".
-type Duration struct {
-	time.Duration
-}
-
-// UnmarshalYAML parses a duration string.
-func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
-	dur, err := time.ParseDuration(value.Value)
-	if err != nil {
-		return fmt.Errorf("invalid duration %q: %w", value.Value, err)
-	}
-	d.Duration = dur
-	return nil
-}
-
-// MarshalYAML preserves the human-readable duration syntax accepted by
-// UnmarshalYAML. Without this method, yaml.v3 serializes the embedded
-// time.Duration as a nested mapping that cannot be read back by this type.
-func (d Duration) MarshalYAML() (any, error) {
-	return d.Duration.String(), nil
-}
+// errWebhookRemoved is returned for policies that still use the removed
+// webhook action.
+var errWebhookRemoved = errors.New(`action "webhook" was removed after v1.11.1; use "ask" or "deny" instead`)
 
 // ParseAction converts the rule's action string to an Action constant.
 // Returns an error for unknown actions.
@@ -256,7 +203,7 @@ func (r Rule) ParseAction() (Action, error) {
 	case "require_approval":
 		return 0, fmt.Errorf("action \"require_approval\" was removed in v0.9.9; use \"ask\" instead (see migration guide)")
 	case "webhook":
-		return ActionWebhook, nil
+		return 0, errWebhookRemoved
 	case "ask":
 		return ActionAsk, nil
 	default:
@@ -564,18 +511,11 @@ func validatePolicy(policy Policy, cache map[string]*regexp.Regexp) error {
 	}
 
 	for index, rule := range policy.Rules {
-		action, err := rule.ParseAction()
-		if err != nil {
+		if _, err := rule.ParseAction(); err != nil {
 			return fmt.Errorf("rule %d: %w", index, err)
 		}
-		if action == ActionWebhook {
-			if rule.Webhook == nil || strings.TrimSpace(rule.Webhook.URL) == "" {
-				return fmt.Errorf("rule %d: webhook action requires webhook.url", index)
-			}
-			if strings.HasPrefix(rule.Webhook.URL, "http://") {
-				slog.Warn("webhook URL uses insecure http:// scheme; use https:// in production",
-					"policy", notify.SanitizeCommand(policy.Name), "rule", index)
-			}
+		if rule.Webhook != nil {
+			return fmt.Errorf("rule %d: %w", index, errWebhookRemoved)
 		}
 		if err := compileResponseRegexes(rule.When, cache); err != nil {
 			return fmt.Errorf("rule %d: %w", index, err)

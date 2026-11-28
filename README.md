@@ -4,7 +4,7 @@
 
 **Open-source policy and approval control for AI agents.**
 
-<img src="docs/og-authority-visible.png" alt="Rampart — Let agents move fast. Keep the final say." width="100%">
+<img src="docs/og.png" alt="Rampart — Run any model. Keep the final say." width="100%">
 
 [![Go](https://img.shields.io/badge/Go-1.26.11+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
@@ -86,8 +86,9 @@ irm https://rampart.sh/install.ps1 | iex
 go install github.com/peg/rampart/cmd/rampart@latest
 ```
 
-Source builds require Go 1.26.11 or newer. Windows upgrades use the PowerShell
-installer; binary self-upgrade is intentionally disabled there.
+Source builds require Go 1.26.11 or newer. To upgrade, rerun the command you
+installed with (`rampart upgrade` prints it), then `rampart upgrade --no-binary`
+to refresh built-in policies.
 
 </details>
 
@@ -219,8 +220,7 @@ That creates `.rampart/policy.yaml`. Set `RAMPART_NO_PROJECT_POLICY=1` when
 working in a repository whose policy you do not trust.
 
 [Policy guide →](https://docs.rampart.sh/features/policy-engine/) ·
-[Policy schema →](https://docs.rampart.sh/reference/policy-schema/) ·
-[Community policies →](https://docs.rampart.sh/community-policies/)
+[Policy schema →](https://docs.rampart.sh/reference/policy-schema/)
 
 ## Approvals
 

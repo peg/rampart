@@ -29,7 +29,6 @@ func TestParseAction_AllActions(t *testing.T) {
 		{"allow", ActionAllow},
 		{"deny", ActionDeny},
 		{"watch", ActionWatch},
-		{"webhook", ActionWebhook},
 		{"ask", ActionAsk},
 	}
 	for _, tc := range cases {

@@ -532,3 +532,26 @@ func removeFromWindowsPath(home string) bool {
 		fmt.Sprintf("[Environment]::SetEnvironmentVariable('PATH', '%s', 'User')", escapedPath))
 	return cmd.Run() == nil
 }
+
+type launchdService struct {
+	Label     string
+	PlistPath string
+}
+
+func rampartLaunchdServices(home string) []launchdService {
+	agentDir := filepath.Join(home, "Library", "LaunchAgents")
+	return []launchdService{
+		{
+			Label:     plistLabel,
+			PlistPath: filepath.Join(agentDir, plistLabel+".plist"),
+		},
+		{
+			Label:     "com.rampart.proxy",
+			PlistPath: filepath.Join(agentDir, "com.rampart.proxy.plist"),
+		},
+		{
+			Label:     "com.rampart.serve",
+			PlistPath: filepath.Join(agentDir, "com.rampart.serve.plist"),
+		},
+	}
+}

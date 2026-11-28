@@ -108,4 +108,3 @@ personal agent state or credentials as CI artifacts.
 
 - [Project Policies](project-policies.md)
 - [Audit Trail](../features/audit-trail.md)
-- [SIEM Integration](../features/siem-integration.md)

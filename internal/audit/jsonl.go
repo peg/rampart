@@ -16,7 +16,6 @@ package audit
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -35,16 +34,13 @@ import (
 )
 
 type recoveredChainState struct {
-	eventCount      int64
-	lastHash        string
-	lastFile        string
-	lastFileSize    int64
-	lastEventFile   string
-	lastEventStart  int64
-	lastEventSize   int64
-	rootCount       int
-	prefixHash      string
-	witnessMismatch bool
+	eventCount     int64
+	lastHash       string
+	lastFile       string
+	lastFileSize   int64
+	lastEventFile  string
+	lastEventStart int64
+	lastEventSize  int64
 }
 
 type chainFileOpener func(string) (io.ReadCloser, error)
@@ -62,11 +58,11 @@ func recoverChainStateFromDir(dir string, logger *slog.Logger) (recoveredChainSt
 	}
 	return recoverChainState(dir, files, func(name string) (io.ReadCloser, error) {
 		return openAuditRegular(filepath.Join(dir, name), os.O_RDONLY)
-	}, nil, logger)
+	}, logger)
 }
 
-func recoverChainState(dir string, files []string, open chainFileOpener, checkpoints map[int64]string, logger *slog.Logger) (recoveredChainState, error) {
-	state, err := recoverChainStateInFileOrder(files, open, checkpoints)
+func recoverChainState(dir string, files []string, open chainFileOpener, logger *slog.Logger) (recoveredChainState, error) {
+	state, err := recoverChainStateInFileOrder(files, open)
 	if !errors.Is(err, errChainNeedsLinkRecovery) {
 		return state, err
 	}
@@ -78,10 +74,10 @@ func recoverChainState(dir string, files []string, open chainFileOpener, checkpo
 	if logger != nil {
 		logger.Warn("audit: recovering legacy out-of-file-order hash chain")
 	}
-	return recoverChainStateByLinks(files, open, checkpoints)
+	return recoverChainStateByLinks(files, open)
 }
 
-func recoverChainStateInFileOrder(files []string, open chainFileOpener, checkpoints map[int64]string) (recoveredChainState, error) {
+func recoverChainStateInFileOrder(files []string, open chainFileOpener) (recoveredChainState, error) {
 	var state recoveredChainState
 	previousFile := ""
 	for _, name := range files {
@@ -161,10 +157,6 @@ func recoverChainStateInFileOrder(files []string, open chainFileOpener, checkpoi
 			}
 
 			state.eventCount++
-			if event.PrevHash == "" {
-				state.rootCount++
-			}
-			state.observeWitness(state.eventCount, event.Hash, checkpoints)
 			state.lastHash = event.Hash
 			state.lastEventFile = name
 			state.lastEventStart = recordStart
@@ -179,13 +171,6 @@ func recoverChainStateInFileOrder(files []string, open chainFileOpener, checkpoi
 		previousFile = name
 	}
 	return state, nil
-}
-
-func (s *recoveredChainState) observeWitness(count int64, hash string, checkpoints map[int64]string) {
-	if expected, retained := checkpoints[count]; retained {
-		s.prefixHash = hash
-		s.witnessMismatch = s.witnessMismatch || expected != hash
-	}
 }
 
 func managedAuditFiles(dir string) ([]string, error) {
@@ -520,18 +505,8 @@ func (s *JSONLSink) Close() error {
 	return closeErr
 }
 
-func (s *JSONLSink) filePath() string {
-	return filepath.Join(s.dir, s.currentFile)
-}
-
 func (s *JSONLSink) withDirectoryLock(fn func() error) error {
 	return s.lockDirectory(filetxn.WithLock, fn)
-}
-
-func (s *JSONLSink) withDirectoryLockContext(ctx context.Context, fn func() error) error {
-	return s.lockDirectory(func(path string, fn func() error) error {
-		return filetxn.WithLockContext(ctx, path, fn)
-	}, fn)
 }
 
 func (s *JSONLSink) lockDirectory(lock func(string, func() error) error, fn func() error) error {

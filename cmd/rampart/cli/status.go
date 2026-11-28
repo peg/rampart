@@ -546,7 +546,7 @@ func detectPolicyDefault() string {
 }
 
 // todayEvents returns today's allow/deny/pending counts and the most recent deny event.
-// "pending" counts current ask, legacy require_approval, and webhook actions.
+// "pending" counts current ask and legacy require_approval and webhook actions.
 func todayEvents() (allow, deny, pending int, lastDeny *audit.Event) {
 	return todayEventsAt(time.Now().UTC())
 }

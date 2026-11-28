@@ -276,12 +276,53 @@ func TestVerifyCursorHooksAndAdapterBlockCanary(t *testing.T) {
 	}
 }
 
-func TestVerifyClaudeAndClineAdaptersBlockCanary(t *testing.T) {
+func TestVerifyNativeAdaptersBlockCanary(t *testing.T) {
 	testSetHome(t, t.TempDir())
-	for _, target := range []string{"claude-code", "cline"} {
+	for _, target := range []string{"claude-code", "cline", "opencode"} {
 		if check := verifyNativeHookAdapter(context.Background(), target); check.Status != verificationPass {
 			t.Fatalf("%s adapter check: %#v", target, check)
 		}
+	}
+}
+
+func TestVerifyOpenCodePluginInstalled(t *testing.T) {
+	skipOnWindows(t, "OpenCode integration is Linux and macOS only")
+	testSetHome(t, t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("OPENCODE_PURE", "")
+	if check := verifyOpenCodePluginInstalled(); check.Status != verificationFail {
+		t.Fatalf("missing plugin: %#v", check)
+	}
+	setup := newSetupOpenCodeCmd()
+	setup.SetOut(new(bytes.Buffer))
+	setup.SetArgs(nil)
+	if err := setup.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if check := verifyOpenCodePluginInstalled(); check.Status != verificationPass {
+		t.Fatalf("installed plugin: %#v", check)
+	}
+	t.Setenv("OPENCODE_PURE", "1")
+	if check := verifyOpenCodePluginInstalled(); check.Status != verificationFail {
+		t.Fatalf("OPENCODE_PURE set: %#v", check)
+	}
+}
+
+func TestVerifyOpenCodeVersion(t *testing.T) {
+	original := openCodeVersion
+	t.Cleanup(func() { openCodeVersion = original })
+	for version, want := range map[string]verificationStatus{
+		"1.19.6": verificationPass, "2.4.1": verificationPass, "v2.4.1": verificationPass, "opencode 2.4.1": verificationPass,
+		"3.0.0": verificationFail, "local": verificationFail, "": verificationFail,
+	} {
+		openCodeVersion = func(context.Context) (string, error) { return version, nil }
+		if got := verifyOpenCodeVersion(context.Background()).Status; got != want {
+			t.Fatalf("%q: status %v, want %v", version, got, want)
+		}
+	}
+	openCodeVersion = func(context.Context) (string, error) { return "", errors.New("not found") }
+	if got := verifyOpenCodeVersion(context.Background()).Status; got != verificationFail {
+		t.Fatalf("missing opencode: %v", got)
 	}
 }
 

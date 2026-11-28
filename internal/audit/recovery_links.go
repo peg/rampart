@@ -32,7 +32,7 @@ type linkedContinuation struct {
 
 // recoverChainStateByLinks validates legacy logs whose events are not in file
 // order. It stores only chain metadata, never full requests or responses.
-func recoverChainStateByLinks(files []string, open chainFileOpener, checkpoints map[int64]string) (recoveredChainState, error) {
+func recoverChainStateByLinks(files []string, open chainFileOpener) (recoveredChainState, error) {
 	eventsByHash := make(map[string]*linkedAuditEvent)
 	children := make(map[string][]*linkedAuditEvent)
 	firstEventByFile := make(map[string]*linkedAuditEvent)
@@ -166,7 +166,6 @@ func recoverChainStateByLinks(files []string, open chainFileOpener, checkpoints 
 		}
 	}
 	roots := children[""]
-	state.rootCount = len(roots)
 	if len(roots) == 0 {
 		return recoveredChainState{}, fmt.Errorf("verify audit chain: no root event found")
 	}
@@ -188,7 +187,6 @@ func recoverChainStateByLinks(files []string, open chainFileOpener, checkpoints 
 		tail = root
 		for {
 			visited++
-			state.observeWitness(int64(visited), tail.hash, checkpoints)
 			if tail.timestamp.After(epochLatest) {
 				epochLatest = tail.timestamp
 			}

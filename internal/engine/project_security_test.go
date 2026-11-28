@@ -81,7 +81,7 @@ policies:
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	_, err := New(NewLayeredStore(NewFileStore(base), project, logger), logger)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "forbidden webhook action")
+	assert.Contains(t, err.Error(), `action "webhook" was removed`)
 }
 
 func TestSafeUnmarshalRejectsMultipleDocuments(t *testing.T) {

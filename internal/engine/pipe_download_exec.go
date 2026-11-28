@@ -548,3 +548,55 @@ func visitPipedDownloadExecutionAliases(command string, visit func(string) bool)
 	}
 	walk(command, 0)
 }
+
+// privilegeWrapperValueOptions lists the options of sudo, doas and pkexec
+// that consume the next word as their value.
+var privilegeWrapperValueOptions = map[string]bool{
+	"-u": true, "-g": true, "-C": true, "-D": true, "-h": true, "-p": true,
+	"-r": true, "-t": true, "-T": true, "-U": true, "-R": true, "--user": true, "--group": true,
+	"--close-from": true, "--chdir": true, "--chroot": true, "--host": true, "--prompt": true,
+	"--role": true, "--type": true, "--command-timeout": true, "--other-user": true,
+}
+
+// privilegeWrapperTakesValue reports whether a short-option cluster such as
+// "-nu" ends with an option that consumes the next word ("-nuroot" does not).
+func privilegeWrapperTakesValue(token string) bool {
+	if privilegeWrapperValueOptions[token] {
+		return true
+	}
+	if len(token) < 3 || token[0] != '-' || token[1] == '-' {
+		return false
+	}
+	for i := 1; i < len(token); i++ {
+		if privilegeWrapperValueOptions["-"+token[i:i+1]] {
+			return i == len(token)-1
+		}
+	}
+	return false
+}
+
+// stripPrivilegeWrapper returns the command a privilege wrapper runs, so that
+// deny and ask rules judge the command itself. It is used for restrictive
+// matching only: allow rules never look through a change of identity.
+func stripPrivilegeWrapper(tokens []string) []string {
+	if len(tokens) < 2 || !pipelinePrivilegeWrappers[shellWrapperBasename(tokens[0])] {
+		return tokens
+	}
+	for i := 1; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--":
+			if i+1 < len(tokens) {
+				return tokens[i+1:]
+			}
+			return tokens
+		case privilegeWrapperTakesValue(token):
+			i++
+		case strings.HasPrefix(token, "-"):
+			// A flag, a clustered flag, or --name=value.
+		default:
+			return tokens[i:]
+		}
+	}
+	return tokens
+}

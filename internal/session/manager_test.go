@@ -80,10 +80,10 @@ func TestNewManager_DefaultDir(t *testing.T) {
 func TestRecordAsk_CreatesFile(t *testing.T) {
 	m, dir := newTestManager(t, "sess-record-1")
 
-	err := m.RecordAsk("toolu_01", "exec", "sudo apt install git",
-		"sudo apt install *", "require-sudo", "sudo requires approval")
+	err := m.RecordAskWithAudit("toolu_01", "exec", "sudo apt install git",
+		"sudo apt install *", "require-sudo", "sudo requires approval", false, "")
 	if err != nil {
-		t.Fatalf("RecordAsk: %v", err)
+		t.Fatalf("RecordAskWithAudit: %v", err)
 	}
 
 	s := readState(t, dir, "sess-record-1")
@@ -126,8 +126,8 @@ func TestRecordAsk_RedactsCredentials(t *testing.T) {
 	m, dir := newTestManager(t, "sess-record-redact")
 	command := "curl -H 'Authorization: Bearer fixture-session-secret' https://example.test"
 
-	if err := m.RecordAsk("toolu_01", "exec", command, command, "network", "asked: "+command); err != nil {
-		t.Fatalf("RecordAsk: %v", err)
+	if err := m.RecordAskWithAudit("toolu_01", "exec", command, command, "network", "asked: "+command, false, ""); err != nil {
+		t.Fatalf("RecordAskWithAudit: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "sess-record-redact.json"))
 	if err != nil {
@@ -136,8 +136,8 @@ func TestRecordAsk_RedactsCredentials(t *testing.T) {
 	if strings.Contains(string(data), "fixture-session-secret") || !strings.Contains(string(data), "[REDACTED]") {
 		t.Fatalf("session state stored the credential: %s", data)
 	}
-	if _, err := m.ObserveApproval("toolu_01"); err != nil {
-		t.Fatalf("ObserveApproval: %v", err)
+	if _, _, err := m.ObserveApprovalWithAsk("toolu_01"); err != nil {
+		t.Fatalf("ObserveApprovalWithAsk: %v", err)
 	}
 }
 
@@ -147,8 +147,8 @@ func TestRecordAsk_MultipleAsks(t *testing.T) {
 	for i := range 3 {
 		id := fmt.Sprintf("toolu_%02d", i)
 		cmd := fmt.Sprintf("sudo apt install pkg%d", i)
-		if err := m.RecordAsk(id, "exec", cmd, "sudo apt install *", "", ""); err != nil {
-			t.Fatalf("RecordAsk %d: %v", i, err)
+		if err := m.RecordAskWithAudit(id, "exec", cmd, "sudo apt install *", "", "", false, ""); err != nil {
+			t.Fatalf("RecordAskWithAudit %d: %v", i, err)
 		}
 	}
 
@@ -161,7 +161,7 @@ func TestRecordAsk_MultipleAsks(t *testing.T) {
 func TestRecordAsk_NoSessionID(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, "", slog.Default())
-	err := m.RecordAsk("toolu_01", "exec", "ls", "ls", "", "")
+	err := m.RecordAskWithAudit("toolu_01", "exec", "ls", "ls", "", "", false, "")
 	if err == nil {
 		t.Fatal("expected error for empty sessionID")
 	}
@@ -170,8 +170,8 @@ func TestRecordAsk_NoSessionID(t *testing.T) {
 func TestRecordAsk_OmitsEmptyCommand(t *testing.T) {
 	// Command with omitempty — empty string should not appear in JSON.
 	m, dir := newTestManager(t, "sess-record-3")
-	if err := m.RecordAsk("toolu_01", "read", "", "/home/**", "", ""); err != nil {
-		t.Fatalf("RecordAsk: %v", err)
+	if err := m.RecordAskWithAudit("toolu_01", "read", "", "/home/**", "", "", false, ""); err != nil {
+		t.Fatalf("RecordAskWithAudit: %v", err)
 	}
 
 	path := filepath.Join(dir, "sess-record-3.json")
@@ -194,14 +194,14 @@ func TestRecordAsk_OmitsEmptyCommand(t *testing.T) {
 func TestObserveApproval_MovesToApprovals(t *testing.T) {
 	m, dir := newTestManager(t, "sess-approve-1")
 
-	if err := m.RecordAsk("toolu_01", "exec", "sudo apt install git",
-		"sudo apt install *", "policy-x", "msg"); err != nil {
-		t.Fatalf("RecordAsk: %v", err)
+	if err := m.RecordAskWithAudit("toolu_01", "exec", "sudo apt install git",
+		"sudo apt install *", "policy-x", "msg", false, ""); err != nil {
+		t.Fatalf("RecordAskWithAudit: %v", err)
 	}
 
-	record, err := m.ObserveApproval("toolu_01")
+	_, record, err := m.ObserveApprovalWithAsk("toolu_01")
 	if err != nil {
-		t.Fatalf("ObserveApproval: %v", err)
+		t.Fatalf("ObserveApprovalWithAsk: %v", err)
 	}
 
 	if record.ApprovalCount != 1 {
@@ -244,13 +244,13 @@ func TestObserveApproval_IncrementsCount(t *testing.T) {
 	// Record and approve the same pattern three times with different tool_use_ids.
 	for i := range 3 {
 		id := fmt.Sprintf("toolu_%02d", i)
-		if err := m.RecordAsk(id, "exec", "sudo apt install curl",
-			"sudo apt install *", "", ""); err != nil {
-			t.Fatalf("RecordAsk %d: %v", i, err)
+		if err := m.RecordAskWithAudit(id, "exec", "sudo apt install curl",
+			"sudo apt install *", "", "", false, ""); err != nil {
+			t.Fatalf("RecordAskWithAudit %d: %v", i, err)
 		}
-		record, err := m.ObserveApproval(id)
+		_, record, err := m.ObserveApprovalWithAsk(id)
 		if err != nil {
-			t.Fatalf("ObserveApproval %d: %v", i, err)
+			t.Fatalf("ObserveApprovalWithAsk %d: %v", i, err)
 		}
 		wantCount := i + 1
 		if record.ApprovalCount != wantCount {
@@ -263,12 +263,12 @@ func TestObserveApproval_FirstVsLastApproved(t *testing.T) {
 	m, dir := newTestManager(t, "sess-approve-3")
 
 	// First approval.
-	if err := m.RecordAsk("toolu_01", "exec", "npm install", "npm install *", "", ""); err != nil {
-		t.Fatalf("RecordAsk 1: %v", err)
+	if err := m.RecordAskWithAudit("toolu_01", "exec", "npm install", "npm install *", "", "", false, ""); err != nil {
+		t.Fatalf("RecordAskWithAudit 1: %v", err)
 	}
 	time.Sleep(2 * time.Millisecond)
-	if _, err := m.ObserveApproval("toolu_01"); err != nil {
-		t.Fatalf("ObserveApproval 1: %v", err)
+	if _, _, err := m.ObserveApprovalWithAsk("toolu_01"); err != nil {
+		t.Fatalf("ObserveApprovalWithAsk 1: %v", err)
 	}
 
 	s1 := readState(t, dir, "sess-approve-3")
@@ -277,12 +277,12 @@ func TestObserveApproval_FirstVsLastApproved(t *testing.T) {
 
 	// Second approval — FirstApproved should stay the same, LastApproved advances.
 	time.Sleep(2 * time.Millisecond)
-	if err := m.RecordAsk("toolu_02", "exec", "npm install lodash", "npm install *", "", ""); err != nil {
-		t.Fatalf("RecordAsk 2: %v", err)
+	if err := m.RecordAskWithAudit("toolu_02", "exec", "npm install lodash", "npm install *", "", "", false, ""); err != nil {
+		t.Fatalf("RecordAskWithAudit 2: %v", err)
 	}
 	time.Sleep(2 * time.Millisecond)
-	if _, err := m.ObserveApproval("toolu_02"); err != nil {
-		t.Fatalf("ObserveApproval 2: %v", err)
+	if _, _, err := m.ObserveApprovalWithAsk("toolu_02"); err != nil {
+		t.Fatalf("ObserveApprovalWithAsk 2: %v", err)
 	}
 
 	s2 := readState(t, dir, "sess-approve-3")
@@ -303,7 +303,7 @@ func TestObserveApproval_FirstVsLastApproved(t *testing.T) {
 func TestObserveApproval_MissingToolUseID(t *testing.T) {
 	m, _ := newTestManager(t, "sess-approve-4")
 	// No RecordAsk called — should return error.
-	_, err := m.ObserveApproval("toolu_nope")
+	_, _, err := m.ObserveApprovalWithAsk("toolu_nope")
 	if err == nil {
 		t.Fatal("expected error for unknown tool_use_id")
 	}
@@ -421,8 +421,8 @@ func TestStateReadRejectsSymlink(t *testing.T) {
 	}
 
 	m := NewManager(dir, "linked", nil)
-	if _, err := m.PeekAsk("tool-use"); err == nil || !strings.Contains(err.Error(), "non-symlink") {
-		t.Fatalf("PeekAsk symlink error = %v, want non-symlink rejection", err)
+	if _, _, err := m.ObserveApprovalWithAsk("tool-use"); err == nil || !strings.Contains(err.Error(), "non-symlink") {
+		t.Fatalf("ObserveApprovalWithAsk symlink error = %v, want non-symlink rejection", err)
 	}
 }
 
@@ -442,8 +442,8 @@ func TestConcurrentRecordAsk(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			id := fmt.Sprintf("toolu_%03d", i)
-			_ = m.RecordAsk(id, "exec", fmt.Sprintf("cmd-%d", i),
-				"cmd-*", "policy", "msg")
+			_ = m.RecordAskWithAudit(id, "exec", fmt.Sprintf("cmd-%d", i),
+				"cmd-*", "policy", "msg", false, "")
 		}(i)
 	}
 	wg.Wait()
@@ -471,9 +471,9 @@ func TestConcurrentObserveApproval(t *testing.T) {
 
 	for i := range n {
 		id := fmt.Sprintf("toolu_%03d", i)
-		if err := m.RecordAsk(id, "exec", fmt.Sprintf("cmd-%d", i),
-			fmt.Sprintf("cmd-%d-*", i), "policy", "msg"); err != nil {
-			t.Fatalf("RecordAsk %d: %v", i, err)
+		if err := m.RecordAskWithAudit(id, "exec", fmt.Sprintf("cmd-%d", i),
+			fmt.Sprintf("cmd-%d-*", i), "policy", "msg", false, ""); err != nil {
+			t.Fatalf("RecordAskWithAudit %d: %v", i, err)
 		}
 	}
 
@@ -483,8 +483,8 @@ func TestConcurrentObserveApproval(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			id := fmt.Sprintf("toolu_%03d", i)
-			if _, err := m.ObserveApproval(id); err != nil {
-				t.Errorf("ObserveApproval(%s): %v", id, err)
+			if _, _, err := m.ObserveApprovalWithAsk(id); err != nil {
+				t.Errorf("ObserveApprovalWithAsk(%s): %v", id, err)
 			}
 		}(i)
 	}
@@ -621,8 +621,8 @@ func TestLoadRejectsMismatchedSessionIdentity(t *testing.T) {
 		SessionApprovals: map[string]ApprovalRecord{},
 	})
 	m := NewManager(dir, "requested", nil)
-	if _, err := m.PeekAsk("tool-1"); err == nil || !strings.Contains(err.Error(), "does not match") {
-		t.Fatalf("PeekAsk error = %v, want session identity mismatch", err)
+	if _, _, err := m.ObserveApprovalWithAsk("tool-1"); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("ObserveApprovalWithAsk error = %v, want session identity mismatch", err)
 	}
 }
 
@@ -630,9 +630,9 @@ func TestLoadRejectsMismatchedSessionIdentity(t *testing.T) {
 func TestRecordAsk_PathTraversal(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir, "../../etc/cron.d/evil", nil)
-	err := m.RecordAsk("tool-1", "exec", "rm -rf /", "rm **", "", "")
+	err := m.RecordAskWithAudit("tool-1", "exec", "rm -rf /", "rm **", "", "", false, "")
 	if err == nil {
-		t.Fatal("RecordAsk with path traversal sessionID should fail")
+		t.Fatal("RecordAskWithAudit with path traversal sessionID should fail")
 	}
 	// Error should mention invalid character
 	_ = err.Error()

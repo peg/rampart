@@ -54,10 +54,8 @@ When Rampart evaluates a tool call:
 
 The project policy is **restriction-only**. It cannot remove or override global
 denies, and a checked-in allow rule cannot weaken a restrictive global default.
-Project webhook actions are forbidden so an untrusted repository cannot make
-Rampart send tool inputs to an external endpoint. Once discovered, a project
-policy that disappears or is unreadable, malformed, invalid, oversized, or
-contains a webhook action is a load error; enforcement fails closed instead of
+Once discovered, a project policy that disappears or is unreadable, malformed,
+invalid, or oversized is a load error; enforcement fails closed instead of
 silently dropping repository restrictions. Put authority-granting allow rules
 in the user-owned global tier.
 

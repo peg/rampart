@@ -41,9 +41,8 @@ Rampart's threat model is documented in [`docs/THREAT-MODEL.md`](docs/THREAT-MOD
   paths such as preload may fail open
 - **Deny-wins evaluation** — any deny from any policy overrides all allows
 - **Local-first by default** — Rampart has no telemetry or mandatory cloud
-  dependency; explicitly configured notification, decision-webhook, semantic
-  verification, and SIEM integrations send their documented data to the
-  operator-selected endpoint
+  dependency; explicitly configured notifications send their documented data
+  to the operator-selected endpoint
 - **Hash-chained audit** — local records and checkpoints detect inconsistent
   hashes and links; independent retention is needed to detect a complete
   rewrite by an identity that can replace the audit directory

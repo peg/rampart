@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/peg/rampart/blob/main/SECURITY.md
+    about: Bypasses, policy evasion and credential exposure are reported privately, not in public issues.
+  - name: Documentation
+    url: https://docs.rampart.sh/
+    about: Setup guides, integrations and troubleshooting.

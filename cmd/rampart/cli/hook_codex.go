@@ -303,8 +303,6 @@ func hookDecisionRank(action engine.Action) int {
 	switch action {
 	case engine.ActionDeny:
 		return 6
-	case engine.ActionWebhook:
-		return 5
 	case engine.ActionRequireApproval:
 		return 4
 	case engine.ActionAsk:

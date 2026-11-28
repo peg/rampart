@@ -14,8 +14,8 @@ theme:
   logo: assets/logo.svg
   favicon: assets/logo.svg
   font:
-    text: Manrope
-    code: JetBrains Mono
+    text: Geist
+    code: Geist Mono
   palette:
     - scheme: slate
       primary: custom
@@ -124,8 +124,10 @@ nav:
     - Install via an AI Agent: guides/agent-install.md
   - Integrations:
     - Choose an Integration: integrations/index.md
+    - Local Models: integrations/local-models.md
     - Claude Code: integrations/claude-code.md
     - Codex: integrations/codex-cli.md
+    - OpenCode (Experimental): integrations/opencode.md
     - OpenClaw: integrations/openclaw.md
     - Cursor: integrations/cursor.md
     - Cline: integrations/cline.md
@@ -149,25 +151,18 @@ nav:
     - Prompt Injection: guides/prompt-injection.md
     - Production Guard: guides/production-guard.md
     - CI/Headless Agents: guides/ci-headless.md
-    - Community Policies: community-policies.md
-    - Policy Registry: guides/policy-registry.md
-    - Policy Sync: guides/policy-sync.md
-    - Semantic Verification: features/semantic-verification.md
   - Operate:
     - Configuration: getting-started/configuration.md
     - Approval Dashboard: features/dashboard.md
-    - Agent Teams: features/agent-teams.md
     - Audit Trail: features/audit-trail.md
-    - External Witnessing (Experimental): features/external-witness.md
-    - Webhooks: features/webhooks.md
-    - SIEM Integration: features/siem-integration.md
-    - Wazuh Integration: guides/wazuh-integration.md
-    - Security Posture: guides/compliance.md
     - User Separation: deployment/user-separation.md
     - Production Checklist: deployment/production-checklist.md
     - Upgrade: getting-started/upgrade.md
     - Troubleshooting: getting-started/troubleshooting.md
     - Uninstall: getting-started/uninstall.md
+  - Advanced:
+    - Agent Teams: features/agent-teams.md
+    - Webhooks: features/webhooks.md
   - Reference:
     - CLI Commands: reference/cli-commands.md
     - API Reference: reference/api-reference.md

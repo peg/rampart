@@ -21,15 +21,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/peg/rampart/internal/approval"
 	"github.com/peg/rampart/internal/audit"
 	"github.com/peg/rampart/internal/engine"
 	"github.com/stretchr/testify/assert"
@@ -50,22 +47,6 @@ type failingSink struct{}
 func (*failingSink) Write(audit.Event) error { return fmt.Errorf("disk unavailable") }
 func (*failingSink) Flush() error            { return nil }
 func (*failingSink) Close() error            { return nil }
-
-type failOnNthSink struct {
-	writes int
-	failAt int
-}
-
-func (s *failOnNthSink) Write(audit.Event) error {
-	s.writes++
-	if s.writes == s.failAt {
-		return fmt.Errorf("disk unavailable")
-	}
-	return nil
-}
-
-func (*failOnNthSink) Flush() error { return nil }
-func (*failOnNthSink) Close() error { return nil }
 
 func (m *mockSink) Write(event audit.Event) error {
 	m.mu.Lock()
@@ -192,7 +173,7 @@ func TestHandleToolsCall_Allow(t *testing.T) {
 	p.parentOut = &bytes.Buffer{}
 
 	line := []byte(makeToolsCallJSON(1, "read_file", map[string]any{"path": "/etc/hosts"}) + "\n")
-	err := p.handleClientLine(line)
+	err := p.handleClientLineWithContext(context.Background(), line)
 	if err != nil {
 		t.Fatalf("handleClientLine: %v", err)
 	}
@@ -239,7 +220,7 @@ func TestHandleToolsCall_EnforceRejectsCaseShadowedSecurityArguments(t *testing.
 			p.parentOut = parentOut
 
 			line := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execute_command","arguments":` + test.arguments + `}}` + "\n")
-			require.NoError(t, p.handleClientLine(line))
+			require.NoError(t, p.handleClientLineWithContext(context.Background(), line))
 			assert.Empty(t, childIn.String(), "case-shadowed arguments reached child: %s", test.arguments)
 			assert.Contains(t, parentOut.String(), "invalid tools/call arguments")
 		})
@@ -253,7 +234,7 @@ func TestHandleToolsCall_EnforcePreservesUnknownArguments(t *testing.T) {
 	p.parentOut = &bytes.Buffer{}
 
 	line := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"custom_tool","arguments":{"customField":"value","path":"/tmp/safe"}}}` + "\n")
-	require.NoError(t, p.handleClientLine(line))
+	require.NoError(t, p.handleClientLineWithContext(context.Background(), line))
 	assert.Equal(t, line, childIn.Bytes())
 }
 
@@ -265,7 +246,7 @@ func TestHandleToolsCall_AuditFailureFailsClosedInEnforceMode(t *testing.T) {
 		WithMode("enforce"), WithLogger(silentLogger()))
 	p.parentOut = parentOut
 
-	err := p.handleClientLine([]byte(makeToolsCallJSON(1, "read_file", map[string]any{"path": "/etc/hosts"}) + "\n"))
+	err := p.handleClientLineWithContext(context.Background(), []byte(makeToolsCallJSON(1, "read_file", map[string]any{"path": "/etc/hosts"})+"\n"))
 	if err != nil {
 		t.Fatalf("handleClientLine: %v", err)
 	}
@@ -284,57 +265,12 @@ func TestHandleToolsCall_AuditFailureRemainsObservableInMonitorMode(t *testing.T
 		WithMode("monitor"), WithLogger(silentLogger()))
 	p.parentOut = &bytes.Buffer{}
 
-	err := p.handleClientLine([]byte(makeToolsCallJSON(1, "read_file", map[string]any{"path": "/etc/hosts"}) + "\n"))
+	err := p.handleClientLineWithContext(context.Background(), []byte(makeToolsCallJSON(1, "read_file", map[string]any{"path": "/etc/hosts"})+"\n"))
 	if err != nil {
 		t.Fatalf("handleClientLine: %v", err)
 	}
 	if childIn.Len() == 0 {
 		t.Fatal("monitor mode should not block on audit storage failure")
-	}
-}
-
-func TestHandleToolsCall_WebhookResultAuditFailureFailsClosed(t *testing.T) {
-	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"decision":"allow"}`)
-	}))
-	defer webhook.Close()
-
-	eng := buildTestEngine(t, fmt.Sprintf(`
-version: "1"
-default_action: allow
-policies:
-  - name: webhook-check
-    match:
-      tool: exec
-    rules:
-      - action: webhook
-        when:
-          command_matches: ["deploy prod"]
-        webhook:
-          url: %q
-          timeout: 2s
-          fail_open: false
-`, webhook.URL))
-	childIn := &bytes.Buffer{}
-	parentOut := &bytes.Buffer{}
-	sink := &failOnNthSink{failAt: 2}
-	p := NewProxy(eng, sink, nopWriteCloser{childIn}, strings.NewReader(""),
-		WithMode("enforce"), WithLogger(silentLogger()))
-	p.parentOut = parentOut
-
-	err := p.handleClientLine([]byte(makeToolsCallJSON(1, "execute_command", map[string]any{"command": "deploy prod"}) + "\n"))
-	if err != nil {
-		t.Fatalf("handleClientLine: %v", err)
-	}
-	if childIn.Len() != 0 {
-		t.Fatal("request with an unpersisted webhook result reached the child")
-	}
-	if !strings.Contains(parentOut.String(), "audit storage is unavailable") {
-		t.Fatalf("unexpected client response: %s", parentOut.String())
-	}
-	if sink.writes != 2 {
-		t.Fatalf("audit writes = %d, want initial webhook and final result", sink.writes)
 	}
 }
 
@@ -349,7 +285,7 @@ func TestHandleToolsCall_Deny(t *testing.T) {
 	p.parentOut = parentOut
 
 	line := []byte(makeToolsCallJSON(1, "exec_command", map[string]any{"command": "rm -rf /"}) + "\n")
-	err := p.handleClientLine(line)
+	err := p.handleClientLineWithContext(context.Background(), line)
 	if err != nil {
 		t.Fatalf("handleClientLine: %v", err)
 	}
@@ -391,7 +327,7 @@ func TestHandleToolsCall_ConflictingCommandAliasesFailClosed(t *testing.T) {
 		"command": "echo safe",
 		"cmd":     "rm -rf /",
 	}) + "\n")
-	if err := p.handleClientLine(line); err != nil {
+	if err := p.handleClientLineWithContext(context.Background(), line); err != nil {
 		t.Fatalf("handleClientLine: %v", err)
 	}
 	if childIn.Len() != 0 {
@@ -402,93 +338,22 @@ func TestHandleToolsCall_ConflictingCommandAliasesFailClosed(t *testing.T) {
 	}
 }
 
-func TestHandleToolsCall_RequireApproval(t *testing.T) {
-	eng := buildAskEngine(t)
-	childIn := &bytes.Buffer{}
-	parentOut := &bytes.Buffer{}
-	sink := &mockSink{}
-	store := approval.NewStore()
-	t.Cleanup(store.Close)
-
-	p := NewProxy(eng, sink, nopWriteCloser{childIn}, strings.NewReader(""),
-		WithMode("enforce"), WithApprovalStore(store), WithLogger(silentLogger()))
-	p.parentOut = parentOut
-
-	line := []byte(makeToolsCallJSON(2, "exec_command", map[string]any{"command": "ls"}) + "\n")
-	done := make(chan error, 1)
-	go func() {
-		done <- p.handleClientLine(line)
-	}()
-
-	var pending *approval.Request
-	deadline := time.After(500 * time.Millisecond)
-	for pending == nil {
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for pending approval")
-		default:
-			items := store.List()
-			if len(items) > 0 {
-				pending = items[0]
-				break
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
-
-	if err := store.Resolve(pending.ID, true, "test"); err != nil {
-		t.Fatalf("resolve approval: %v", err)
-	}
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("handleClientLine: %v", err)
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("timed out waiting for tools/call completion")
-	}
-
-	if childIn.Len() == 0 {
-		t.Fatal("approved require_approval request should be forwarded to child")
-	}
-	if parentOut.Len() != 0 {
-		t.Fatal("approved require_approval request should not return an error")
-	}
-}
-
 func TestToolsCallApprovalNumbersMatchForwardedJSON(t *testing.T) {
 	childIn := &bytes.Buffer{}
 	sink := &mockSink{}
-	store := approval.NewStore()
-	t.Cleanup(store.Close)
+	var reviewed engine.ToolCall
+	resolver := func(_ context.Context, call engine.ToolCall, _ engine.Decision) error {
+		reviewed = call
+		return nil
+	}
 	p := NewProxy(buildAskEngine(t), sink, nopWriteCloser{childIn}, strings.NewReader(""),
-		WithMode("enforce"), WithApprovalStore(store), WithLogger(silentLogger()))
+		WithMode("enforce"), WithApprovalResolver(resolver), WithLogger(silentLogger()))
 	p.parentOut = &bytes.Buffer{}
 	line := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"numeric_tool","arguments":{"sequence":9007199254740993,"nested":[0.1234567890123456789,1e400]}}}` + "\n")
-	done := make(chan error, 1)
-	go func() { done <- p.handleClientLine(line) }()
-	var pending *approval.Request
-	require.Eventually(t, func() bool {
-		items := store.List()
-		if len(items) == 1 {
-			pending = items[0]
-			return true
-		}
-		return false
-	}, time.Second, time.Millisecond)
-	// Resolve before inspecting the captured review so an assertion failure
-	// cannot leave the production handler waiting for an operator.
-	require.NoError(t, store.Resolve(pending.ID, true, "operator"))
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(time.Second):
-		t.Fatal("approved tools/call did not resume")
-	}
-	require.Equal(t, json.Number("9007199254740993"), pending.Call.Input["sequence"])
-	require.Equal(t, []any{json.Number("0.1234567890123456789"), json.Number("1e400")}, pending.Call.Input["nested"])
-	require.Equal(t, pending.Call.Input["sequence"], pending.Call.Params["sequence"])
+	require.NoError(t, p.handleClientLineWithContext(context.Background(), line))
+	require.Equal(t, json.Number("9007199254740993"), reviewed.Input["sequence"])
+	require.Equal(t, []any{json.Number("0.1234567890123456789"), json.Number("1e400")}, reviewed.Input["nested"])
+	require.Equal(t, reviewed.Input["sequence"], reviewed.Params["sequence"])
 	require.Equal(t, line, childIn.Bytes(), "the reviewed numbers must match the unmodified forwarded request")
 	for _, event := range sink.getEvents() {
 		require.Equal(t, json.Number("9007199254740993"), event.Request["sequence"])
@@ -498,27 +363,27 @@ func TestToolsCallApprovalNumbersMatchForwardedJSON(t *testing.T) {
 func TestHandleToolsCall_ResponseDuringApprovalInvalidatesReservation(t *testing.T) {
 	childIn := &bytes.Buffer{}
 	parentOut := &bytes.Buffer{}
-	store := approval.NewStore()
-	t.Cleanup(store.Close)
+	waiting := make(chan struct{})
+	release := make(chan struct{})
+	resolver := func(context.Context, engine.ToolCall, engine.Decision) error {
+		close(waiting)
+		<-release
+		return nil
+	}
 	p := NewProxy(buildAskEngine(t), &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
-		WithMode("enforce"), WithApprovalStore(store), WithLogger(silentLogger()))
+		WithMode("enforce"), WithApprovalResolver(resolver), WithLogger(silentLogger()))
 	p.parentOut = parentOut
 
 	request := []byte(makeToolsCallJSON(23, "exec_command", map[string]any{"command": "echo approved"}) + "\n")
 	requestDone := make(chan error, 1)
-	go func() { requestDone <- p.handleClientLine(request) }()
+	go func() { requestDone <- p.handleClientLineWithContext(context.Background(), request) }()
+	select {
+	case <-waiting:
+	case <-time.After(time.Second):
+		t.Fatal("tools/call did not reach the approval resolver")
+	}
 
-	var approvalRequest *approval.Request
-	require.Eventually(t, func() bool {
-		items := store.List()
-		if len(items) == 0 {
-			return false
-		}
-		approvalRequest = items[0]
-		return true
-	}, time.Second, time.Millisecond)
-
-	key := NormalizedID(json.RawMessage(`23`))
+	key := normalizedKey(json.RawMessage(`23`))
 	p.pendingMu.Lock()
 	reserved := p.pendingCalls[key]
 	p.pendingMu.Unlock()
@@ -535,12 +400,12 @@ func TestHandleToolsCall_ResponseDuringApprovalInvalidatesReservation(t *testing
 
 	// Keep the poisoned reservation until its owner unwinds so a same-ID request
 	// cannot take its place and be overwritten by the approved original.
-	require.NoError(t, p.handleClientLine(request))
+	require.NoError(t, p.handleClientLineWithContext(context.Background(), request))
 	assert.Contains(t, parentOut.String(), "already pending")
 	assert.Empty(t, childIn.String())
 	parentOut.Reset()
 
-	require.NoError(t, store.Resolve(approvalRequest.ID, true, "test"))
+	close(release)
 	require.NoError(t, <-requestDone)
 	assert.Empty(t, childIn.String())
 	assert.Contains(t, parentOut.String(), "correlation was invalidated before forwarding")
@@ -562,7 +427,7 @@ func TestHandleToolsCall_RequireApprovalWithoutResolverFailsImmediately(t *testi
 	p.parentOut = parentOut
 
 	line := []byte(makeToolsCallJSON(22, "exec_command", map[string]any{"command": "ls"}) + "\n")
-	if err := p.handleClientLine(line); err != nil {
+	if err := p.handleClientLineWithContext(context.Background(), line); err != nil {
 		t.Fatalf("handleClientLine: %v", err)
 	}
 	if childIn.Len() != 0 {
@@ -602,7 +467,7 @@ func TestHandleToolsCall_ApprovalResolverIdentityAndOutcome(t *testing.T) {
 			p := NewProxy(buildAskEngine(t), &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
 				WithMode("enforce"), WithApprovalResolver(resolver), WithLogger(silentLogger()))
 			p.parentOut = parentOut
-			if err := p.handleClientLine(line); err != nil {
+			if err := p.handleClientLineWithContext(context.Background(), line); err != nil {
 				t.Fatalf("handleClientLine: %v", err)
 			}
 
@@ -643,66 +508,11 @@ func TestHandleToolsCall_ApprovalResolverApprovalAfterStopIsNotForwarded(t *test
 		WithMode("enforce"), WithApprovalResolver(resolver), WithLogger(silentLogger()))
 	p.parentOut = parentOut
 	line := []byte(makeToolsCallJSON(8, "exec_command", map[string]any{"command": "ls"}) + "\n")
-	if err := p.handleClientLine(line); err != nil {
+	if err := p.handleClientLineWithContext(context.Background(), line); err != nil {
 		t.Fatalf("handleClientLine: %v", err)
 	}
 	if childIn.Len() != 0 {
 		t.Fatal("request reached the child after the proxy stopped")
-	}
-}
-
-func TestHandleToolsCall_RequireApprovalDenied(t *testing.T) {
-	eng := buildAskEngine(t)
-	childIn := &bytes.Buffer{}
-	parentOut := &bytes.Buffer{}
-	sink := &mockSink{}
-	store := approval.NewStore()
-	t.Cleanup(store.Close)
-
-	p := NewProxy(eng, sink, nopWriteCloser{childIn}, strings.NewReader(""),
-		WithMode("enforce"), WithApprovalStore(store), WithLogger(silentLogger()))
-	p.parentOut = parentOut
-
-	line := []byte(makeToolsCallJSON(3, "exec_command", map[string]any{"command": "ls"}) + "\n")
-	done := make(chan error, 1)
-	go func() {
-		done <- p.handleClientLine(line)
-	}()
-
-	var pending *approval.Request
-	deadline := time.After(500 * time.Millisecond)
-	for pending == nil {
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for pending approval")
-		default:
-			items := store.List()
-			if len(items) > 0 {
-				pending = items[0]
-				break
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
-
-	if err := store.Resolve(pending.ID, false, "test"); err != nil {
-		t.Fatalf("resolve approval: %v", err)
-	}
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("handleClientLine: %v", err)
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("timed out waiting for tools/call completion")
-	}
-
-	if childIn.Len() != 0 {
-		t.Fatal("denied require_approval request should not be forwarded")
-	}
-	if parentOut.Len() == 0 {
-		t.Fatal("denied require_approval request should return an error")
 	}
 }
 
@@ -716,7 +526,7 @@ func TestHandleToolsCall_MonitorMode_PassesThrough(t *testing.T) {
 	p.parentOut = &bytes.Buffer{}
 
 	line := []byte(makeToolsCallJSON(1, "exec_command", map[string]any{"command": "rm -rf /"}) + "\n")
-	err := p.handleClientLine(line)
+	err := p.handleClientLineWithContext(context.Background(), line)
 	if err != nil {
 		t.Fatalf("handleClientLine: %v", err)
 	}
@@ -748,7 +558,7 @@ policies:
 		p.parentOut = &bytes.Buffer{}
 
 		for id := 1; id <= 2; id++ {
-			if err := p.handleClientLine([]byte(makeToolsCallJSON(id, "execute_command", map[string]any{"command": "deploy prod"}) + "\n")); err != nil {
+			if err := p.handleClientLineWithContext(context.Background(), []byte(makeToolsCallJSON(id, "execute_command", map[string]any{"command": "deploy prod"})+"\n")); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -782,7 +592,7 @@ policies:
 		p.parentOut = &bytes.Buffer{}
 
 		for id := 1; id <= 2; id++ {
-			if err := p.handleClientLine([]byte(makeToolsCallJSON(id, "execute_command", map[string]any{"command": "echo safe"}) + "\n")); err != nil {
+			if err := p.handleClientLineWithContext(context.Background(), []byte(makeToolsCallJSON(id, "execute_command", map[string]any{"command": "echo safe"})+"\n")); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -811,7 +621,7 @@ func TestHandleToolsCall_Notification_NoDenyResponse(t *testing.T) {
 
 	// Notification: no id field
 	msg := `{"jsonrpc":"2.0","method":"tools/call","params":{"name":"exec_command","arguments":{"command":"whoami"}}}` + "\n"
-	err := p.handleClientLine([]byte(msg))
+	err := p.handleClientLineWithContext(context.Background(), []byte(msg))
 	if err != nil {
 		t.Fatalf("handleClientLine: %v", err)
 	}
@@ -841,7 +651,7 @@ func TestHandleChildLine_AllowedResponse(t *testing.T) {
 
 	// Register a pending call
 	p.pendingMu.Lock()
-	p.pendingCalls[NormalizedID(json.RawMessage(`1`))] = pendingCall{
+	p.pendingCalls[normalizedKey(json.RawMessage(`1`))] = pendingCall{
 		state: pendingCallResponseActive,
 		call: engine.ToolCall{
 			ID:      "test-id",
@@ -885,14 +695,14 @@ func TestHandleToolsCall_ImmediateResponseWaitsForWriteCommitAndRejectsReplay(t 
 
 	request := []byte(makeToolsCallJSON(24, "read_file", map[string]any{"path": "/tmp/safe"}) + "\n")
 	requestDone := make(chan error, 1)
-	go func() { requestDone <- p.handleClientLine(request) }()
+	go func() { requestDone <- p.handleClientLineWithContext(context.Background(), request) }()
 	select {
 	case <-childIn.started:
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for child write")
 	}
 
-	key := NormalizedID(json.RawMessage(`24`))
+	key := normalizedKey(json.RawMessage(`24`))
 	p.pendingMu.Lock()
 	writing := p.pendingCalls[key]
 	p.pendingMu.Unlock()
@@ -936,7 +746,7 @@ func TestHandleChildLine_AuditFailureBlocksResponseInEnforceMode(t *testing.T) {
 	p := NewProxy(eng, &failingSink{}, nopWriteCloser{&bytes.Buffer{}}, strings.NewReader(""),
 		WithMode("enforce"), WithLogger(silentLogger()))
 	p.parentOut = parentOut
-	p.pendingCalls[NormalizedID(json.RawMessage(`1`))] = pendingCall{
+	p.pendingCalls[normalizedKey(json.RawMessage(`1`))] = pendingCall{
 		state: pendingCallResponseActive,
 		call: engine.ToolCall{
 			ID: "test-id", Agent: "mcp-client", Session: "mcp-proxy", Tool: "read_file",
@@ -969,7 +779,7 @@ func TestHandleChildLine_DeniedResponse(t *testing.T) {
 
 	// Register pending call
 	p.pendingMu.Lock()
-	p.pendingCalls[NormalizedID(json.RawMessage(`1`))] = pendingCall{
+	p.pendingCalls[normalizedKey(json.RawMessage(`1`))] = pendingCall{
 		state: pendingCallResponseActive,
 		call: engine.ToolCall{
 			ID:      "test-id",
@@ -1005,7 +815,7 @@ func TestHandleChildLine_DecodesEscapedResponseBeforePolicy(t *testing.T) {
 	p := NewProxy(eng, &mockSink{}, nopWriteCloser{&bytes.Buffer{}}, strings.NewReader(""),
 		WithMode("enforce"), WithLogger(silentLogger()))
 	p.parentOut = parentOut
-	p.pendingCalls[NormalizedID(json.RawMessage(`1`))] = pendingCall{
+	p.pendingCalls[normalizedKey(json.RawMessage(`1`))] = pendingCall{
 		state:   pendingCallResponseActive,
 		call:    engine.ToolCall{ID: "escaped", Tool: "read_file"},
 		request: map[string]any{"mcp_method": "tools/call", "mcp_tool": "read_file"},
@@ -1030,7 +840,7 @@ func TestHandleChildLine_RejectsAmbiguousCorrelatedResponse(t *testing.T) {
 	} {
 		p := NewProxy(eng, &mockSink{}, nopWriteCloser{&bytes.Buffer{}}, strings.NewReader(""),
 			WithMode("enforce"), WithLogger(silentLogger()))
-		p.pendingCalls[NormalizedID(json.RawMessage(`1`))] = pendingCall{state: pendingCallResponseActive, call: engine.ToolCall{ID: "ambiguous", Tool: "read_file"}}
+		p.pendingCalls[normalizedKey(json.RawMessage(`1`))] = pendingCall{state: pendingCallResponseActive, call: engine.ToolCall{ID: "ambiguous", Tool: "read_file"}}
 		parentOut := &bytes.Buffer{}
 		err := p.handleChildLine([]byte(line+"\n"), parentOut)
 		if err == nil || !strings.Contains(err.Error(), "reject child JSON-RPC response") {
@@ -1093,15 +903,15 @@ func TestPendingCorrelationSurvivesDelayAndRejectsReplacementAndReplay(t *testin
 				WithMode("enforce"), WithFilterTools(test.filterTools), WithLogger(silentLogger()))
 			p.parentOut = parentOut
 
-			require.NoError(t, p.handleClientLine(test.request))
+			require.NoError(t, p.handleClientLineWithContext(context.Background(), test.request))
 			assert.Equal(t, test.request, childIn.Bytes())
-			key := NormalizedID(json.RawMessage(`"delayed"`))
+			key := normalizedKey(json.RawMessage(`"delayed"`))
 			assert.True(t, p.preparePendingResponse(key))
 
 			// Correlation stores no age. Keeping the request pending while a
 			// same-ID request arrives deterministically models an arbitrary delay.
 			replacement := []byte(`{"jsonrpc":"2.0","id":"delayed","method":"resources/list","params":{}}` + "\n")
-			require.NoError(t, p.handleClientLine(replacement))
+			require.NoError(t, p.handleClientLineWithContext(context.Background(), replacement))
 			assert.Equal(t, test.request, childIn.Bytes())
 			assert.Contains(t, parentOut.String(), "already pending")
 			assert.True(t, p.preparePendingResponse(key))
@@ -1131,8 +941,8 @@ func TestGenericAndToolRequestIDsCannotCollide(t *testing.T) {
 			if genericFirst {
 				first, second = generic, tool
 			}
-			require.NoError(t, p.handleClientLine(first))
-			require.NoError(t, p.handleClientLine(second))
+			require.NoError(t, p.handleClientLineWithContext(context.Background(), first))
+			require.NoError(t, p.handleClientLineWithContext(context.Background(), second))
 			assert.Equal(t, first, childIn.Bytes())
 			assert.Contains(t, parentOut.String(), "already pending")
 		})
@@ -1144,10 +954,10 @@ func TestGenericPendingCapacityIsCombinedAndBounded(t *testing.T) {
 		p := NewProxy(buildAllowAllEngine(t), &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
 			WithMode(mode), WithLogger(silentLogger()))
 		p.parentOut = &bytes.Buffer{}
-		p.pendingCalls[NormalizedID(json.RawMessage(`"call"`))] = pendingCall{state: pendingCallResponseActive}
-		p.pendingToolList[NormalizedID(json.RawMessage(`"list"`))] = struct{}{}
+		p.pendingCalls[normalizedKey(json.RawMessage(`"call"`))] = pendingCall{state: pendingCallResponseActive}
+		p.pendingToolList[normalizedKey(json.RawMessage(`"list"`))] = struct{}{}
 		for index := 0; index < maxPendingRequests-2; index++ {
-			key := NormalizedID(json.RawMessage(fmt.Sprintf(`"generic-%d"`, index)))
+			key := normalizedKey(json.RawMessage(fmt.Sprintf(`"generic-%d"`, index)))
 			p.pendingGeneric[key] = struct{}{}
 		}
 		return p
@@ -1156,7 +966,7 @@ func TestGenericPendingCapacityIsCombinedAndBounded(t *testing.T) {
 	line := []byte(`{"jsonrpc":"2.0","id":"overflow","method":"initialize","params":{}}` + "\n")
 	childIn := &bytes.Buffer{}
 	p := newFullProxy(t, "enforce", childIn)
-	require.NoError(t, p.handleClientLine(line))
+	require.NoError(t, p.handleClientLineWithContext(context.Background(), line))
 	assert.Empty(t, childIn.String())
 	assert.Contains(t, p.parentOut.(*bytes.Buffer).String(), "pending request capacity reached")
 	p.pendingMu.Lock()
@@ -1166,7 +976,7 @@ func TestGenericPendingCapacityIsCombinedAndBounded(t *testing.T) {
 
 	monitorChild := &bytes.Buffer{}
 	monitor := newFullProxy(t, "monitor", monitorChild)
-	require.NoError(t, monitor.handleClientLine(line))
+	require.NoError(t, monitor.handleClientLineWithContext(context.Background(), line))
 	assert.Equal(t, line, monitorChild.Bytes())
 	monitor.pendingMu.Lock()
 	monitorCount := monitor.pendingCountLocked()
@@ -1180,15 +990,15 @@ func TestGenericReservationReleasedWhenChildWriteFails(t *testing.T) {
 	p.parentOut = &bytes.Buffer{}
 
 	line := []byte(`{"jsonrpc":"2.0","id":"init-1","method":"initialize","params":{}}` + "\n")
-	require.ErrorContains(t, p.handleClientLine(line), "write to child stdin")
-	assert.False(t, p.preparePendingResponse(NormalizedID(json.RawMessage(`"init-1"`))))
+	require.ErrorContains(t, p.handleClientLineWithContext(context.Background(), line), "write to child stdin")
+	assert.False(t, p.preparePendingResponse(normalizedKey(json.RawMessage(`"init-1"`))))
 }
 
 func TestHandleChildLine_EnforceRejectsReplayedResponse(t *testing.T) {
 	parentOut := &bytes.Buffer{}
 	p := NewProxy(buildResponseDenyEngine(t), &mockSink{}, nopWriteCloser{&bytes.Buffer{}}, strings.NewReader(""),
 		WithMode("enforce"), WithLogger(silentLogger()))
-	p.pendingCalls[NormalizedID(json.RawMessage(`1`))] = pendingCall{
+	p.pendingCalls[normalizedKey(json.RawMessage(`1`))] = pendingCall{
 		state:   pendingCallResponseActive,
 		call:    engine.ToolCall{ID: "replay", Tool: "read_file"},
 		request: map[string]any{"mcp_method": "tools/call", "mcp_tool": "read_file"},
@@ -1208,7 +1018,7 @@ func TestHandleChildLine_PreservesServerRequestsAndNotifications(t *testing.T) {
 	parentOut := &bytes.Buffer{}
 	p := NewProxy(buildAllowAllEngine(t), &mockSink{}, nopWriteCloser{&bytes.Buffer{}}, strings.NewReader(""),
 		WithMode("enforce"), WithLogger(silentLogger()))
-	p.pendingCalls[NormalizedID(json.RawMessage(`1`))] = pendingCall{
+	p.pendingCalls[normalizedKey(json.RawMessage(`1`))] = pendingCall{
 		state: pendingCallResponseActive,
 		call:  engine.ToolCall{ID: "client-call", Tool: "read_file"},
 	}
@@ -1221,7 +1031,7 @@ func TestHandleChildLine_PreservesServerRequestsAndNotifications(t *testing.T) {
 	}
 	assert.Contains(t, parentOut.String(), `"method":"sampling/createMessage"`)
 	assert.Contains(t, parentOut.String(), `"method":"notifications/message"`)
-	_, stillPending := p.pendingCalls[NormalizedID(json.RawMessage(`1`))]
+	_, stillPending := p.pendingCalls[normalizedKey(json.RawMessage(`1`))]
 	assert.True(t, stillPending, "server request consumed client response correlation")
 
 	mixed := []byte(`{"jsonrpc":"2.0","id":1,"method":"sampling/createMessage","result":{"content":"SECRET_TOKEN"}}` + "\n")
@@ -1243,7 +1053,7 @@ func TestFilterToolsListResponse_FiltersBlockedTools(t *testing.T) {
 
 	// Register pending tools/list
 	p.pendingMu.Lock()
-	p.pendingToolList[NormalizedID(json.RawMessage(`1`))] = struct{}{}
+	p.pendingToolList[normalizedKey(json.RawMessage(`1`))] = struct{}{}
 	p.pendingMu.Unlock()
 
 	toolsResult := map[string]any{
@@ -1292,7 +1102,7 @@ func TestFilterToolsListResponse_RequireApprovalVisible(t *testing.T) {
 	p.parentOut = &bytes.Buffer{}
 
 	p.pendingMu.Lock()
-	p.pendingToolList[NormalizedID(json.RawMessage(`1`))] = struct{}{}
+	p.pendingToolList[normalizedKey(json.RawMessage(`1`))] = struct{}{}
 	p.pendingMu.Unlock()
 
 	toolsResult := map[string]any{
@@ -1359,13 +1169,13 @@ func TestPendingCallIDMatching(t *testing.T) {
 
 			// Send tools/call with specific ID
 			req := fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"/tmp/test"}}}`, tt.id)
-			err := p.handleClientLine([]byte(req + "\n"))
+			err := p.handleClientLineWithContext(context.Background(), []byte(req+"\n"))
 			if err != nil {
 				t.Fatalf("handleClientLine: %v", err)
 			}
 
 			// Verify pending
-			normalizedID := NormalizedID(json.RawMessage(tt.id))
+			normalizedID := normalizedKey(json.RawMessage(tt.id))
 			p.pendingMu.Lock()
 			_, ok := p.pendingCalls[normalizedID]
 			p.pendingMu.Unlock()
@@ -1409,7 +1219,7 @@ func TestCorrelatedResponseIDsUseDecodedJSONIdentity(t *testing.T) {
 			p.parentOut = parentOut
 
 			req := []byte(`{"jsonrpc":"2.0","id":` + test.requestID + `,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"/tmp/test"}}}` + "\n")
-			require.NoError(t, p.handleClientLine(req))
+			require.NoError(t, p.handleClientLineWithContext(context.Background(), req))
 			response := []byte(`{"jsonrpc":"2.0","id":` + test.responseID + `,"result":{"content":"SECRET_TOKEN"}}` + "\n")
 			require.NoError(t, p.handleChildLine(response, parentOut))
 
@@ -1422,12 +1232,12 @@ func TestCorrelatedResponseIDsUseDecodedJSONIdentity(t *testing.T) {
 }
 
 func TestNormalizedIDPreservesJSONTypeAndLargeIntegerIdentity(t *testing.T) {
-	assert.NotEqual(t, NormalizedID(json.RawMessage(`"1"`)), NormalizedID(json.RawMessage(`1`)))
-	assert.Equal(t, NormalizedID(json.RawMessage(`9007199254740993123456789`)), NormalizedID(json.RawMessage(`9007199254740993123456789.0`)))
-	assert.NotEqual(t, NormalizedID(json.RawMessage(`9007199254740993123456789`)), NormalizedID(json.RawMessage(`9007199254740993123456790`)))
+	assert.NotEqual(t, normalizedKey(json.RawMessage(`"1"`)), normalizedKey(json.RawMessage(`1`)))
+	assert.Equal(t, normalizedKey(json.RawMessage(`9007199254740993123456789`)), normalizedKey(json.RawMessage(`9007199254740993123456789.0`)))
+	assert.NotEqual(t, normalizedKey(json.RawMessage(`9007199254740993123456789`)), normalizedKey(json.RawMessage(`9007199254740993123456790`)))
 	// encoding/json expands '<' to a six-byte escape, so enforce the bound
 	// after canonicalization as well as on the received line.
-	assert.Empty(t, NormalizedID(json.RawMessage(`"`+strings.Repeat("<", maxRequestIDBytes/2)+`"`)))
+	assert.Empty(t, normalizedKey(json.RawMessage(`"`+strings.Repeat("<", maxRequestIDBytes/2)+`"`)))
 }
 
 func TestValidRequestIDAcceptsEquivalentIntegralJSONNumbers(t *testing.T) {
@@ -1454,7 +1264,7 @@ func TestMonitorModePreservesUntrackableRequestIDs(t *testing.T) {
 					params = `{"name":"read_file","arguments":{"path":"/tmp/test"}}`
 				}
 				line := []byte(`{"jsonrpc":"2.0","id":` + id + `,"method":"` + method + `","params":` + params + `}` + "\n")
-				require.NoError(t, p.handleClientLine(line))
+				require.NoError(t, p.handleClientLineWithContext(context.Background(), line))
 				assert.Equal(t, line, childIn.Bytes())
 			})
 		}
@@ -1473,10 +1283,10 @@ func TestMonitorModePreservesUntrackableResponseID(t *testing.T) {
 }
 
 func TestNormalizedIDRejectsAmbiguousUnicodeAndPreservesValidPairs(t *testing.T) {
-	assert.Empty(t, NormalizedID(json.RawMessage(`"\ud800"`)))
-	assert.Empty(t, NormalizedID(json.RawMessage(`"\udc00"`)))
-	assert.NotEqual(t, NormalizedID(json.RawMessage(`"\ud800\udc00"`)), NormalizedID(json.RawMessage(`"\ufffd"`)))
-	assert.Equal(t, NormalizedID(json.RawMessage(`"\ud800\udc00"`)), NormalizedID(json.RawMessage(`"𐀀"`)))
+	assert.Empty(t, normalizedKey(json.RawMessage(`"\ud800"`)))
+	assert.Empty(t, normalizedKey(json.RawMessage(`"\udc00"`)))
+	assert.NotEqual(t, normalizedKey(json.RawMessage(`"\ud800\udc00"`)), normalizedKey(json.RawMessage(`"\ufffd"`)))
+	assert.Equal(t, normalizedKey(json.RawMessage(`"\ud800\udc00"`)), normalizedKey(json.RawMessage(`"𐀀"`)))
 }
 
 func TestToolsListFilteringUsesCanonicalResponseID(t *testing.T) {
@@ -1486,7 +1296,7 @@ func TestToolsListFilteringUsesCanonicalResponseID(t *testing.T) {
 		WithMode("enforce"), WithFilterTools(true), WithLogger(silentLogger()))
 	p.parentOut = parentOut
 
-	require.NoError(t, p.handleClientLine([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`+"\n")))
+	require.NoError(t, p.handleClientLineWithContext(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`+"\n")))
 	response := []byte(`{"jsonrpc":"2.0","id":1.0,"result":{"tools":[{"name":"read_file"},{"name":"execute_command"}]}}` + "\n")
 	require.NoError(t, p.handleChildLine(response, parentOut))
 
@@ -1519,7 +1329,7 @@ func TestHandleChildLine_EnforceRejectsInvalidResponseID(t *testing.T) {
 				WithMode("enforce"), WithLogger(silentLogger()))
 			p.parentOut = parentOut
 
-			require.NoError(t, p.handleClientLine([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"/tmp/test"}}}`+"\n")))
+			require.NoError(t, p.handleClientLineWithContext(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"/tmp/test"}}}`+"\n")))
 			err := p.handleChildLine([]byte(`{"jsonrpc":"2.0","id":`+test.id+`,"result":{"content":"SECRET_TOKEN"}}`+"\n"), parentOut)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "invalid response id")
@@ -1549,7 +1359,7 @@ func TestHandleClientLine_EnforceRejectsMalformedJSONAndBatch(t *testing.T) {
 				WithMode("enforce"), WithLogger(silentLogger()))
 			p.parentOut = parentOut
 
-			if err := p.handleClientLine([]byte(test.line)); err != nil {
+			if err := p.handleClientLineWithContext(context.Background(), []byte(test.line)); err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if childIn.Len() != 0 {
@@ -1577,7 +1387,7 @@ func TestHandleClientLine_EnforceRejectsDuplicateJSONMembers(t *testing.T) {
 			WithMode("enforce"), WithLogger(silentLogger()))
 		p.parentOut = parentOut
 
-		if err := p.handleClientLine([]byte(line)); err != nil {
+		if err := p.handleClientLineWithContext(context.Background(), []byte(line)); err != nil {
 			t.Fatal(err)
 		}
 		if childIn.Len() != 0 {
@@ -1601,7 +1411,7 @@ func TestHandleClientLine_EnforceRejectsCaseShadowedProtocolMembers(t *testing.T
 		p := NewProxy(eng, &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
 			WithMode("enforce"), WithLogger(silentLogger()))
 		p.parentOut = parentOut
-		require.NoError(t, p.handleClientLine([]byte(line+"\n")))
+		require.NoError(t, p.handleClientLineWithContext(context.Background(), []byte(line+"\n")))
 		assert.Zero(t, childIn.Len(), "case-shadowed request reached child")
 		assert.Contains(t, parentOut.String(), "invalid")
 	}
@@ -1614,7 +1424,7 @@ func TestHandleClientLine_MonitorPreservesDuplicateJSONMembers(t *testing.T) {
 		WithMode("monitor"), WithLogger(silentLogger()))
 	p.parentOut = &bytes.Buffer{}
 	line := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","method":"ping"}` + "\n")
-	require.NoError(t, p.handleClientLine(line))
+	require.NoError(t, p.handleClientLineWithContext(context.Background(), line))
 	assert.Equal(t, string(line), childIn.String())
 }
 
@@ -1625,7 +1435,7 @@ func TestHandleClientLine_MonitorPassesThroughMalformedJSON(t *testing.T) {
 		WithMode("monitor"), WithLogger(silentLogger()))
 	p.parentOut = &bytes.Buffer{}
 
-	if err := p.handleClientLine([]byte("this is not json\n")); err != nil {
+	if err := p.handleClientLineWithContext(context.Background(), []byte("this is not json\n")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if childIn.Len() == 0 {
@@ -1661,7 +1471,7 @@ func TestHandleToolsCall_EnforceRejectsUntrackableOrIncompleteRequests(t *testin
 			p := NewProxy(eng, &mockSink{}, nopWriteCloser{childIn}, strings.NewReader(""),
 				WithMode("enforce"), WithLogger(silentLogger()))
 			p.parentOut = &bytes.Buffer{}
-			if err := p.handleClientLine([]byte(test.line)); err != nil {
+			if err := p.handleClientLineWithContext(context.Background(), []byte(test.line)); err != nil {
 				t.Fatal(err)
 			}
 			if childIn.Len() != 0 {
@@ -1696,7 +1506,7 @@ func TestHandleToolsCall_InvalidParams(t *testing.T) {
 
 	// tools/call with invalid params (not an object)
 	line := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":"not-an-object"}` + "\n"
-	err := p.handleClientLine([]byte(line))
+	err := p.handleClientLineWithContext(context.Background(), []byte(line))
 	if err != nil {
 		t.Fatalf("handleClientLine: %v", err)
 	}
@@ -1726,7 +1536,7 @@ func TestHandleToolsCall_NilArguments(t *testing.T) {
 		`{"name":"read_file","arguments":null}`,
 	} {
 		line := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":%s}`, index+1, params) + "\n"
-		if err := p.handleClientLine([]byte(line)); err != nil {
+		if err := p.handleClientLineWithContext(context.Background(), []byte(line)); err != nil {
 			t.Fatalf("handleClientLine: %v", err)
 		}
 	}
@@ -1803,7 +1613,7 @@ func TestHandleChildLine_CaseShadowedResponseKeysFailClosed(t *testing.T) {
 		parentOut := &bytes.Buffer{}
 		p := NewProxy(eng, &mockSink{}, nopWriteCloser{&bytes.Buffer{}}, strings.NewReader(""),
 			WithMode("enforce"), WithLogger(silentLogger()))
-		p.pendingCalls[NormalizedID(json.RawMessage(`1`))] = pendingCall{state: pendingCallResponseActive, call: engine.ToolCall{ID: "case-shadow", Tool: "read_file"}}
+		p.pendingCalls[normalizedKey(json.RawMessage(`1`))] = pendingCall{state: pendingCallResponseActive, call: engine.ToolCall{ID: "case-shadow", Tool: "read_file"}}
 		err := p.handleChildLine([]byte(line+"\n"), parentOut)
 		if err == nil || !strings.Contains(err.Error(), "noncanonical object member") {
 			t.Fatalf("case-shadowed response error = %v", err)
@@ -1832,7 +1642,7 @@ func TestConcurrentToolsCalls(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			line := []byte(makeToolsCallJSON(id, "read_file", map[string]any{"path": fmt.Sprintf("/tmp/%d", id)}) + "\n")
-			if err := p.handleClientLine(line); err != nil {
+			if err := p.handleClientLineWithContext(context.Background(), line); err != nil {
 				t.Errorf("handleClientLine(%d): %v", id, err)
 			}
 		}(i)
@@ -1980,7 +1790,7 @@ func TestHandleClientLine_MethodCaseSensitivity(t *testing.T) {
 
 	// JSON-RPC method names are case-sensitive; the child owns unknown methods.
 	line := `{"jsonrpc":"2.0","id":1,"method":"Tools/Call","params":{"name":"exec_command","arguments":{"command":"whoami"}}}` + "\n"
-	require.NoError(t, p.handleClientLine([]byte(line)))
+	require.NoError(t, p.handleClientLineWithContext(context.Background(), []byte(line)))
 	require.Equal(t, line, childIn.String(), "forward the unrecognized method unchanged")
 	require.Empty(t, parentOut.String(), "the child supplies the method response")
 	require.Empty(t, sink.getEvents(), "an unrecognized method is not a tool evaluation")
@@ -1998,7 +1808,7 @@ func TestSecurityBypass_ExtraFieldsInParams(t *testing.T) {
 
 	// Extra fields in params shouldn't bypass policy
 	line := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"exec_command","arguments":{"command":"whoami"},"extra":"field"}}` + "\n"
-	err := p.handleClientLine([]byte(line))
+	err := p.handleClientLineWithContext(context.Background(), []byte(line))
 	if err != nil {
 		t.Fatalf("handleClientLine: %v", err)
 	}
@@ -2023,15 +1833,15 @@ func TestSecurityBypass_DuplicateID(t *testing.T) {
 	line1 := []byte(makeToolsCallJSON(1, "read_file", map[string]any{"path": "/a"}) + "\n")
 	line2 := []byte(makeToolsCallJSON(1, "write_file", map[string]any{"path": "/b"}) + "\n")
 
-	if err := p.handleClientLine(line1); err != nil {
+	if err := p.handleClientLineWithContext(context.Background(), line1); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.handleClientLine(line2); err != nil {
+	if err := p.handleClientLineWithContext(context.Background(), line2); err != nil {
 		t.Fatal(err)
 	}
 
 	p.pendingMu.Lock()
-	pending, ok := p.pendingCalls[NormalizedID(json.RawMessage(`1`))]
+	pending, ok := p.pendingCalls[normalizedKey(json.RawMessage(`1`))]
 	p.pendingMu.Unlock()
 
 	if !ok {
@@ -2060,7 +1870,7 @@ func TestPendingToolListCapacityFailsClosed(t *testing.T) {
 		p.pendingToolList[fmt.Sprintf("%d", index)] = struct{}{}
 	}
 	line := []byte(`{"jsonrpc":"2.0","id":"overflow","method":"tools/list","params":{}}` + "\n")
-	if err := p.handleClientLine(line); err != nil {
+	if err := p.handleClientLineWithContext(context.Background(), line); err != nil {
 		t.Fatal(err)
 	}
 	if childIn.Len() != 0 {
@@ -2086,7 +1896,7 @@ func TestPendingToolCallCapacityNeverAgeEvictsSecurityCorrelation(t *testing.T) 
 		p.pendingCalls[fmt.Sprintf("old-%d", index)] = pendingCall{state: pendingCallResponseActive}
 	}
 	line := []byte(makeToolsCallJSON("overflow", "read_file", map[string]any{"path": "/tmp/x"}) + "\n")
-	require.NoError(t, p.handleClientLine(line))
+	require.NoError(t, p.handleClientLineWithContext(context.Background(), line))
 	assert.Empty(t, childIn.String())
 	assert.Contains(t, parentOut.String(), "pending tools/call capacity reached")
 	assert.Len(t, p.pendingCalls, maxPendingRequests)
@@ -2095,32 +1905,6 @@ func TestPendingToolCallCapacityNeverAgeEvictsSecurityCorrelation(t *testing.T) 
 // ---------------------------------------------------------------------------
 // Test: Options
 // ---------------------------------------------------------------------------
-
-func TestWithToolMapping(t *testing.T) {
-	eng := buildAllowAllEngine(t)
-	sink := &mockSink{}
-
-	p := NewProxy(eng, sink, nopWriteCloser{&bytes.Buffer{}}, strings.NewReader(""),
-		WithToolMapping(map[string]string{"my_exec": "shell"}),
-		WithLogger(silentLogger()))
-
-	if p.toolMapping["my_exec"] != "shell" {
-		t.Errorf("expected mapping my_exec->shell, got %v", p.toolMapping)
-	}
-}
-
-func TestWithToolMapping_Nil(t *testing.T) {
-	eng := buildAllowAllEngine(t)
-	sink := &mockSink{}
-
-	p := NewProxy(eng, sink, nopWriteCloser{&bytes.Buffer{}}, strings.NewReader(""),
-		WithToolMapping(nil),
-		WithLogger(silentLogger()))
-
-	if p.toolMapping != nil {
-		t.Error("nil mapping should set toolMapping to nil")
-	}
-}
 
 func TestWithMode_Default(t *testing.T) {
 	eng := buildAllowAllEngine(t)
@@ -2158,7 +1942,7 @@ func TestWithMode_NormalizesKnownValuesAndFailsClosedForUnknown(t *testing.T) {
 			if p.mode != test.want {
 				t.Fatalf("mode = %q, want %q", p.mode, test.want)
 			}
-			if err := p.handleClientLine([]byte(makeToolsCallJSON(1, "execute_command", map[string]any{"command": "whoami"}) + "\n")); err != nil {
+			if err := p.handleClientLineWithContext(context.Background(), []byte(makeToolsCallJSON(1, "execute_command", map[string]any{"command": "whoami"})+"\n")); err != nil {
 				t.Fatal(err)
 			}
 			if test.want == "enforce" && childIn.Len() != 0 {
@@ -2325,13 +2109,13 @@ func TestAuditEventsWritten(t *testing.T) {
 	p.parentOut = &bytes.Buffer{}
 
 	line := []byte(makeToolsCallJSON(1, "read_file", map[string]any{"path": "/tmp"}) + "\n")
-	p.handleClientLine(line)
+	p.handleClientLineWithContext(context.Background(), line)
 
 	events := sink.getEvents()
 	if len(events) == 0 {
 		t.Fatal("expected audit event for tools/call")
 	}
-	if events[0].Tool != "file_read" || events[0].Tool != MapToolName("read_file", nil) {
+	if events[0].Tool != "file_read" || events[0].Tool != MapToolName("read_file") {
 		// Just check it was written with some tool
 		if events[0].Tool == "" {
 			t.Error("audit event should have tool set")
@@ -2349,7 +2133,7 @@ func TestAuditNilSink(t *testing.T) {
 	p.parentOut = &bytes.Buffer{}
 
 	line := []byte(makeToolsCallJSON(1, "read_file", map[string]any{"path": "/tmp"}) + "\n")
-	err := p.handleClientLine(line)
+	err := p.handleClientLineWithContext(context.Background(), line)
 	if err != nil {
 		t.Fatalf("unexpected error with nil sink: %v", err)
 	}
@@ -2420,4 +2204,13 @@ policies:
           response_matches:
             - "SECRET_TOKEN"
 `)
+}
+
+// normalizedKey returns the pending-map key for id, or "" when id is invalid.
+func normalizedKey(id json.RawMessage) string {
+	key, err := normalizedID(id)
+	if err != nil {
+		return ""
+	}
+	return key
 }

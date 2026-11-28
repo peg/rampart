@@ -97,8 +97,6 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	var mode string
 	var port int
 	var listenAddr string
-	var syslogAddr string
-	var cef bool
 	var resolveBaseURL string
 	var signingKeyPath string
 	var metrics bool
@@ -384,35 +382,7 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 				return fmt.Errorf("serve: create audit sink: %w", err)
 			}
 
-			// Build the final sink, optionally wrapping with syslog/CEF outputs.
 			var sink audit.AuditSink = jsonlSink
-			var syslogSender audit.SyslogSender
-			var cefFilePtr *audit.CEFFileSink
-
-			if syslogAddr != "" {
-				s, sErr := audit.NewSyslogSink(syslogAddr, cef, logger)
-				if sErr != nil {
-					logger.Warn("serve: syslog init failed, continuing without syslog", "error", sErr)
-				} else {
-					syslogSender = s
-					logger.Info("serve: syslog output enabled", "addr", syslogAddr, "cef", cef)
-				}
-			}
-
-			if cef && syslogAddr == "" {
-				// CEF standalone mode — write to cef.log file.
-				cefPath := filepath.Join(auditDir, "cef.log")
-				cf, cErr := audit.NewCEFFileSink(cefPath, logger)
-				if cErr != nil {
-					return fmt.Errorf("serve: create cef file sink: %w", cErr)
-				}
-				cefFilePtr = cf
-				logger.Info("serve: CEF file output enabled", "path", cefPath)
-			}
-
-			if syslogSender != nil || cefFilePtr != nil {
-				sink = audit.NewMultiSink(jsonlSink, syslogSender, cefFilePtr, logger)
-			}
 			sink = audit.NewRedactingSink(sink)
 
 			defer func() {
@@ -718,8 +688,6 @@ func newServeCmd(opts *rootOptions, deps *serveDeps) *cobra.Command {
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor | disabled")
 	cmd.Flags().IntVar(&port, "port", defaultServePort, "Proxy listen port (0 = SDK-only mode)")
 	cmd.Flags().StringVar(&listenAddr, "addr", "127.0.0.1", "Bind address (default: localhost only). Non-loopback addresses require TLS or a trusted HTTPS reverse proxy")
-	cmd.Flags().StringVar(&syslogAddr, "syslog", "", "Syslog server address (e.g. localhost:514)")
-	cmd.Flags().BoolVar(&cef, "cef", false, "Use CEF format (with --syslog: CEF over syslog; standalone: write ~/.rampart/audit/cef.log)")
 	cmd.Flags().StringVar(&resolveBaseURL, "resolve-base-url", "", "Base URL for approval resolve links (e.g. https://rampart.example.com:9090)")
 	cmd.Flags().StringVar(&signingKeyPath, "signing-key", "", "Path to HMAC signing key for resolve URLs (default: ~/.rampart/signing.key, auto-generated)")
 	cmd.Flags().BoolVar(&metrics, "metrics", false, "Enable Prometheus metrics endpoint on /metrics")
@@ -890,10 +858,6 @@ func waitForBackgroundReady(path string, pid int, timeout time.Duration) error {
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-}
-
-func isRampartServeCommand(comm, args string) bool {
-	return isRampartServeCommandForExecutable(comm, args, "")
 }
 
 func isRampartServeCommandForExecutable(comm, args, expectedExecutable string) bool {

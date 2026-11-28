@@ -12,27 +12,19 @@ inside a migration, manifest, script, or infrastructure plan.
 
 ## Install alongside your base policy
 
-Keep your existing base policy, such as `standard`, installed. Preview the YAML
-and install the overlay through the policy registry:
+Keep your existing base policy, such as `standard`, installed. The overlay is
+embedded in the Rampart binary. Preview the YAML, then write it to your policy
+directory:
 
 ```bash
 rampart policy show production-guard
-rampart policy fetch production-guard --dry-run
-rampart policy install production-guard
+rampart policy show production-guard > ~/.rampart/policies/production-guard.yaml
 ```
 
-The registry pins the remote policy body with a SHA256 digest. Installation
-writes `~/.rampart/policies/production-guard.yaml`; a running service that loads
-that policy directory reloads it. File-only configurations must also load the
-overlay. It deliberately omits `default_action`, so your base profile controls
-unmatched actions. Used alone, the engine's unspecified default is deny.
-
-**Upgrade Rampart before installing.** The registry's `min_rampart` field is
-currently descriptive metadata; older clients do not enforce it. An older
-engine may parse this YAML while missing the operand-aware interpretations
-that this profile needs. A network failure can use the policy embedded in your
-installed binary; that trusted local fallback can differ from the newest
-remote policy.
+A running service that loads `~/.rampart/policies/` reloads it. File-only
+configurations must also load the overlay. It deliberately omits
+`default_action`, so your base profile controls unmatched actions. Used alone,
+the engine's unspecified default is deny.
 
 ## What requires approval
 
@@ -73,7 +65,7 @@ before interpreting verbs and targets. Supported forms include:
 
 These are restrictive policy interpretations. A compact rule such as
 `terraform apply` can require approval for the supported argument forms; the
-same interpretation cannot grant an `allow`, `watch`, or `webhook` rule.
+same interpretation cannot grant an `allow` or `watch` rule.
 Approval and audit identity remain the original command. Compound commands keep
 the most restrictive applicable decision.
 

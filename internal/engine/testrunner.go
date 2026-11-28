@@ -46,7 +46,7 @@ type TestCase struct {
 	// Params are tool-specific parameters.
 	Params map[string]any `yaml:"params"`
 
-	// Expect is the expected action (allow, deny, watch, ask, webhook).
+	// Expect is the expected action (allow, deny, watch, ask).
 	Expect string `yaml:"expect"`
 
 	// ExpectMessage is an optional glob pattern to match against the decision message.

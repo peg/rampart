@@ -37,6 +37,19 @@ cannot yet prove that an already-running or installed service uses the same
 file. Advanced custom-config deployments should use `rampart serve install`,
 the appropriate `rampart setup <agent>` command, and explicit verification.
 
+### `rampart launch`
+
+Protect and verify an agent, then start it on a local model. Fails closed:
+the agent is not started unless every safe canary passes. See
+[Local Models](../integrations/local-models.md).
+
+```bash
+rampart launch claude --model qwen3-coder   # via `ollama launch claude`
+rampart launch codex --model gpt-oss:20b    # via ollama, or `codex --oss -m` without it
+rampart launch opencode --model qwen3-coder # via `ollama launch opencode`
+rampart launch claude -- -p "hello"         # args after -- go to the agent
+```
+
 ### `rampart verify`
 
 Actively test expected policy decisions with fixed, non-executing canaries.
@@ -226,24 +239,17 @@ rampart setup --force        # Deprecated unattended compatibility path
 
 ### `rampart upgrade`
 
-Upgrade Rampart to the latest or a specified release. Downloads from GitHub releases, verifies SHA256, atomically replaces the binary, and restarts a running background, systemd, or launchd Rampart service so it uses the new executable. Homebrew-managed installations must use `brew upgrade rampart`; Windows installations must rerun `install.ps1`.
+Print the command that upgrades Rampart for how it was installed: `brew upgrade peg/tap/rampart` for Homebrew, the `install.ps1` one-liner on Windows, and the `install.sh` one-liner otherwise. It makes no network requests and changes no files. The installers verify checksums, replace the binary, and restart managed Rampart services.
 
 ```bash
-rampart upgrade              # Upgrade to latest release
-rampart upgrade v0.8.0       # Upgrade to a specific version
-rampart upgrade --yes        # Skip confirmation prompt
-rampart upgrade --dry-run    # Preview without making changes
-rampart upgrade --no-policy-update  # Skip refreshing built-in policy profiles
-rampart upgrade --no-binary # Refresh managed policies without replacing the binary
+rampart upgrade                       # Show the upgrade command for this install
+rampart upgrade --no-binary           # Refresh unmodified built-in policy profiles
+rampart upgrade --no-binary --dry-run # Show which policy profiles would change
 ```
 
-Custom `serve --background` launches do not retain their original options or
-working directory through automatic restart, and a new binary cannot repair a
-restart already performed by the old executable that ran the upgrade. Stop the service, install the new binary, and restart
-with the original options and CWD using the [manual migration](../getting-started/upgrade.md#custom-background-services-manual-migration).
-Automatic background preservation and recovery are not supported.
+After upgrading, run `rampart upgrade --no-binary` to refresh unmodified built-in policy profiles in `~/.rampart/policies/`; edited and custom policy files are never modified. Run `rampart protect` once afterward to refresh Rampart-managed hooks and plugins and verify every detected agent boundary; unrelated host configuration is preserved.
 
-After upgrade, standard policy profiles (`standard.yaml`, `paranoid.yaml`, `yolo.yaml`) in `~/.rampart/policies/` are refreshed automatically. Custom policy files are never modified. Run `rampart protect` once afterward to refresh Rampart-managed hooks and plugins and verify every detected agent boundary; unrelated host configuration is preserved.
+A custom `serve --background` launch is not a managed service; restart it with its original options and working directory using the [manual migration](../getting-started/upgrade.md#custom-background-services-manual-migration).
 
 ### `rampart uninstall`
 
@@ -298,9 +304,6 @@ rampart serve --addr 127.0.0.1             # Bind to localhost only
 rampart serve --port 8080                  # Custom port
 rampart serve --config policy.yaml         # Custom policy
 rampart serve --audit-dir /var/log/rampart # Custom audit log directory
-rampart serve --syslog localhost:514       # With syslog output
-rampart serve --cef                        # With CEF file output
-rampart serve --syslog localhost:514 --cef # CEF to syslog
 rampart serve --tls-auto                   # HTTPS with auto-generated self-signed cert
 rampart serve --tls-cert cert.pem --tls-key key.pem  # HTTPS with your own cert
 ```
@@ -619,22 +622,6 @@ Check hash chain integrity.
 rampart audit verify
 ```
 
-### `rampart audit witness`
-
-**Experimental.** Publish a checkpoint or retrieve retained evidence using an
-operator-owned witness configuration. The destination must be independently
-administered; Rampart does not install or operate a witness service.
-
-```bash
-rampart audit witness publish --config /etc/rampart/witness.json
-rampart audit witness status --config /etc/rampart/witness.json
-rampart audit verify --require-witness --witness-config /etc/rampart/witness.json
-```
-
-Missing, stale or invalid required evidence fails verification. See
-[External Witnessing](../features/external-witness.md) for deployment, identity,
-retention, transport and unwitnessed-tail limits.
-
 ### `rampart audit stats`
 
 Show decision breakdown.
@@ -758,7 +745,7 @@ rampart policy test --run "blocks-*" --verbose tests.yaml
 
 ## Policy Management
 
-Commands for linting, discovering, and managing policy profiles from the Rampart registry.
+Commands for linting, discovering, and managing policy profiles.
 
 ### `rampart policy lint <file>`
 
@@ -773,112 +760,34 @@ Exit code `1` if errors are found; `0` if only warnings or info.
 
 ### `rampart policy list`
 
-List all available policy profiles — both built-in profiles and community policies from the Rampart registry. Uses a local cache (TTL: 1 hour) and falls back to embedded data when offline.
+List the built-in policy profiles.
 
 ```bash
-rampart policy list                    # List all profiles
+rampart policy list                    # List built-in profiles
 rampart policy list --extended         # Show SOURCE and INSTALLED columns
-rampart policy list --refresh          # Force refresh registry cache
 rampart policy list --json             # JSON output
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--refresh` | `false` | Force refresh of registry cache |
 | `--extended` | `false` | Show `SOURCE` and `INSTALLED` columns |
-| `--json` | `false` | Output as JSON |
-
-### `rampart policy search <query>`
-
-Search community policies in the registry by name, description, or tag. Results are sorted by bench score (descending).
-
-```bash
-rampart policy search docker                     # Search for docker-related policies
-rampart policy search "prompt injection"         # Multi-word search
-rampart policy search ci --tag ci                # Filter by exact tag
-rampart policy search security --min-score 80   # Minimum bench score
-rampart policy search docker --json              # JSON output
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--tag` | _(none)_ | Filter by exact tag |
-| `--min-score` | `0` | Minimum bench score (0–100) |
 | `--json` | `false` | Output as JSON |
 
 ### `rampart policy show <name>`
 
-Print the full YAML of a built-in profile or community policy without installing it.
+Print the full YAML of a built-in profile without installing it.
 
 ```bash
 rampart policy show standard
 rampart policy show paranoid
-rampart policy show docker-restricted
-```
-
-### `rampart policy fetch <name>`
-
-Download and install a community policy profile to `~/.rampart/policies/<name>.yaml`. Verifies the SHA256 checksum before writing. Falls back to the embedded policy copy when the registry is unreachable.
-
-```bash
-rampart policy fetch docker-restricted          # Install a community policy
-rampart policy fetch docker-restricted --force  # Overwrite if already installed
-rampart policy fetch docker-restricted --dry-run  # Preview install path
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--force` | `false` | Overwrite an existing policy file |
-| `--dry-run` | `false` | Preview download and install path without writing |
-
-### `rampart policy install <name>`
-
-Alias for `rampart policy fetch`. Downloads and installs a community policy profile.
-
-```bash
-rampart policy install docker-restricted
-rampart policy install docker-restricted --force
-rampart policy install docker-restricted --dry-run
 ```
 
 ### `rampart policy remove <name>`
 
-Remove an installed community policy profile from `~/.rampart/policies/`. Built-in profiles (`standard`, `paranoid`, `yolo`, etc.) cannot be removed.
+Remove a policy file from `~/.rampart/policies/`. Built-in profiles (`standard`, `paranoid`, `yolo`, etc.) cannot be removed.
 
 ```bash
-rampart policy remove docker-restricted
-```
-
-### `rampart policy sync <git-url>`
-
-Sync a Rampart policy from a git repository. Requires `git` in `PATH` and an HTTPS URL pointing to a publicly accessible repo. Looks for `rampart.yaml`, `policy.yaml`, or `.rampart/policy.yaml` in the repo root. Writes the result to `~/.rampart/policies/org-sync.yaml` and persists state to `~/.rampart/sync-state.json`.
-
-```bash
-rampart policy sync https://github.com/myorg/policies   # One-shot sync
-rampart policy sync https://github.com/myorg/policies --watch           # Poll for updates
-rampart policy sync https://github.com/myorg/policies --watch --interval 10m  # Custom interval
-rampart policy sync                                      # Re-use previously saved URL
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--watch` | `false` | Poll for policy updates in the foreground |
-| `--interval` | `5m` | How often to poll when using `--watch` |
-
-#### `rampart policy sync status`
-
-Show the current sync configuration and last sync result.
-
-```bash
-rampart policy sync status
-```
-
-#### `rampart policy sync stop`
-
-Remove the configured sync URL, stopping future syncs.
-
-```bash
-rampart policy sync stop
+rampart policy remove my-policy
 ```
 
 ### `rampart pending`

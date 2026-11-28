@@ -132,7 +132,7 @@ func TestProductionGuardCLI(t *testing.T) {
 func TestProductionAliasesAreRestrictiveOnly(t *testing.T) {
 	cond := Condition{CommandMatches: []string{"terraform apply"}}
 	call := ToolCall{Tool: "exec", Params: map[string]any{"command": `terraform -chdir=infra apply saved.plan`}}
-	for _, action := range []Action{ActionAllow, ActionWatch, ActionWebhook, ActionAsk, ActionDeny} {
+	for _, action := range []Action{ActionAllow, ActionWatch, ActionAsk, ActionDeny} {
 		want := actionRestrictsExecution(action)
 		if got := matchConditionForAction(cond, call, nil, action); got != want {
 			t.Errorf("%s match = %t, want %t", action, got, want)

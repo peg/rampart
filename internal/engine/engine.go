@@ -212,8 +212,6 @@ func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 		consumedRuleIdx    int
 	)
 
-	var finalWebhookConfig *WebhookActionConfig
-
 	for _, p := range matching {
 		res := e.evaluateMatchingPolicy(p, call)
 		if !res.matched {
@@ -238,19 +236,9 @@ func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 				EvalDuration:      time.Since(start),
 				Suggestions:       GenerateSuggestions(call),
 			}
-		case ActionWebhook:
-			// Webhook wins over log and allow, but not deny.
-			if finalAction != ActionDeny && finalAction != ActionWebhook {
-				finalAction = ActionWebhook
-				finalMessage = message
-				finalFromProject = p.Source == "project"
-				if rule != nil {
-					finalWebhookConfig = rule.Webhook
-				}
-			}
 		case ActionRequireApproval:
-			// Require approval wins over log and allow, but not deny or webhook.
-			if finalAction != ActionDeny && finalAction != ActionWebhook && finalAction != ActionRequireApproval {
+			// Require approval wins over log and allow, but not deny.
+			if finalAction != ActionDeny && finalAction != ActionRequireApproval {
 				finalAction = ActionRequireApproval
 				finalMessage = message
 				finalFromProject = p.Source == "project"
@@ -260,9 +248,9 @@ func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 				}
 			}
 		case ActionAsk:
-			// Ask wins over log and allow, but not deny, webhook, or require_approval.
+			// Ask wins over log and allow, but not deny or require_approval.
 			// ActionAsk emits the Claude Code native permission dialog inline.
-			if finalAction != ActionDeny && finalAction != ActionWebhook &&
+			if finalAction != ActionDeny &&
 				finalAction != ActionRequireApproval && finalAction != ActionAsk {
 				finalAction = ActionAsk
 				finalMessage = message
@@ -350,7 +338,6 @@ func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 		MatchedPolicies:    matched,
 		Message:            finalMessage,
 		EvalDuration:       time.Since(start),
-		WebhookConfig:      finalWebhookConfig,
 		ConsumedOnce:       consumedOnce,
 		ConsumedRulePolicy: consumedPolicy,
 		ConsumedRuleIndex:  consumedRuleIdx,
@@ -1033,7 +1020,7 @@ func (e *Engine) matchesScope(m Match, call ToolCall) bool {
 
 // evaluatePolicy runs through a policy's rules top-to-bottom and returns
 // the first matching rule's action. Returns ok=false if no rule matches.
-// The returned *Rule pointer is non-nil when a rule matched (for webhook config access).
+// The returned *Rule pointer is non-nil when a rule matched.
 // evaluatePolicyResult holds the result of evaluating a single policy.
 type evaluatePolicyResult struct {
 	action    Action
@@ -1096,10 +1083,6 @@ func (e *Engine) evaluateResponsePolicies(
 		case ActionDeny:
 			// Short-circuit on deny. Only report policies that actually fired,
 			// not remaining unevaluated ones.
-			return ActionDeny, message, matched, true
-		case ActionWebhook:
-			e.logger.Warn("engine: webhook action not supported for response rules, treating as deny",
-				"policy", p.Name)
 			return ActionDeny, message, matched, true
 		case ActionRequireApproval, ActionAsk:
 			// Response evaluation happens after the tool has run. There is no safe

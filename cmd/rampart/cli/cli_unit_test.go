@@ -236,14 +236,14 @@ func TestResolveApproval(t *testing.T) {
 	})
 }
 
-// --- listPending (approve.go) ---
+// --- listPendingDetails (approve.go) ---
 
 func TestListPending(t *testing.T) {
 	t.Run("no token", func(t *testing.T) {
 		testSetHome(t, t.TempDir()) // Avoid picking up real ~/.rampart/token
 		t.Setenv("RAMPART_TOKEN", "")
 		cmd := testCobraCmd(context.Background())
-		err := listPending(cmd, "http://localhost", "")
+		err := listPendingDetails(cmd, "http://localhost", "", false)
 		if err == nil || !strings.Contains(err.Error(), "token required") {
 			t.Fatalf("expected token error, got: %v", err)
 		}
@@ -256,7 +256,7 @@ func TestListPending(t *testing.T) {
 		defer srv.Close()
 
 		cmd := testCobraCmd(context.Background())
-		err := listPending(cmd, srv.URL, "tok")
+		err := listPendingDetails(cmd, srv.URL, "tok", false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -282,7 +282,7 @@ func TestListPending(t *testing.T) {
 		defer srv.Close()
 
 		cmd := testCobraCmd(context.Background())
-		err := listPending(cmd, srv.URL, "tok")
+		err := listPendingDetails(cmd, srv.URL, "tok", false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

@@ -8,7 +8,7 @@ description: "Rampart's YAML policy engine checks tool calls delivered by config
 Rampart's policy engine evaluates tool-call metadata delivered by configured
 integrations against YAML rules. Core matching is local and benchmarked in
 microseconds; end-to-end hook latency also includes process startup and audit
-I/O. Optional semantic verification is a separate networked component.
+I/O.
 
 ## Evaluation Flow
 
@@ -25,10 +25,6 @@ deny: "Denied" {
   style.fill: "#2d1b1b"
   style.stroke: "#da3633"
   style.font-color: "#f85149"
-  style.border-radius: 6
-}
-
-webhook: "Webhook" {
   style.border-radius: 6
 }
 
@@ -65,13 +61,11 @@ match -> rules: "policies found"
 match -> default: "no match"
 
 rules -> deny: "deny rule"
-rules -> webhook: "webhook rule"
 rules -> approval: "ask"
 rules -> watch: "watch rule"
 rules -> allow: "allow rule"
 
 deny -> audit
-webhook -> audit
 approval -> audit
 watch -> audit
 allow -> audit
@@ -82,7 +76,7 @@ default -> audit
 
 1. **Collect** all policies whose `match` clause fits the tool call
 2. **Within each policy**, rules evaluate top-to-bottom (first match wins)
-3. **Across policies**: `deny` wins, followed by `webhook`, `ask`, `watch`, then `allow`
+3. **Across policies**: `deny` wins, followed by `ask`, `watch`, then `allow`
 4. **Nothing matches** → the configured default action (`allow`, `deny`, `watch`, or `ask`)
 
 **Deny always wins.** If any policy says deny, the call is denied. No override, no ambiguity.
@@ -188,25 +182,6 @@ rampart approve abc123   # Let it through
 rampart deny abc123      # Block it
 ```
 
-### `webhook`
-
-Delegate the decision to an external HTTP endpoint:
-
-```yaml
-rules:
-  - action: webhook
-    when:
-      command_matches: ['*production*']
-    webhook:
-      url: 'http://localhost:8090/verify'
-      timeout: 5s
-      fail_open: true
-```
-
-The webhook receives the full tool call context and returns `{"decision": "allow"}` or `{"decision": "deny", "reason": "..."}`.
-Webhook failures deny by default. `fail_open: true` is an explicit availability
-trade-off, not the default.
-
 ## Response-Side Evaluation
 
 On supported `PostToolUse` hooks, Rampart can scan tool output for sensitive
@@ -243,8 +218,8 @@ policies:
 
 Patterns use **regex** (not glob). If an applicable response rule exists, a
 response larger than 1 MiB fails closed rather than scanning only a prefix.
-Response-side `ask` and `webhook` matches also fail closed because the tool has
-already run and there is no safe approval or delegation boundary remaining.
+Response-side `ask` matches also fail closed because the tool has
+already run and there is no safe approval boundary remaining.
 
 ### Claude Code setup
 

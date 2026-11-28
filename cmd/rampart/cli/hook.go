@@ -380,6 +380,7 @@ Supports multiple formats:
   --format antigravity: Antigravity CLI and IDE PreToolUse hooks
   --format copilot: GitHub Copilot CLI and VS Code agent hooks
   --format cursor: Cursor Agent and Cmd+K preToolUse hooks
+  --format opencode: Experimental OpenCode V1 pre-tool plugin
 
 Claude Code setup (add to ~/.claude/settings.json):
 {
@@ -410,8 +411,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			if mode != "enforce" && mode != "monitor" && mode != "audit" {
 				return fmt.Errorf("hook: invalid mode %q (must be enforce, monitor, or audit)", mode)
 			}
-			if format != "claude-code" && format != "codex" && format != "cline" && format != "gemini" && format != "antigravity" && format != "copilot" && format != "cursor" {
-				return fmt.Errorf("hook: invalid format %q (must be claude-code, codex, cline, gemini, antigravity, copilot, or cursor)", format)
+			if format != "claude-code" && format != "codex" && format != "cline" && format != "gemini" && format != "antigravity" && format != "copilot" && format != "cursor" && format != "opencode" {
+				return fmt.Errorf("hook: invalid format %q (must be claude-code, codex, cline, gemini, antigravity, copilot, cursor, or opencode)", format)
 			}
 
 			// Read the protocol payload before any local setup which might fail. That
@@ -546,6 +547,8 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					parsed, err = parseCopilotInput(inputReader)
 				case "cursor":
 					parsed, err = parseCursorInput(inputReader)
+				case "opencode":
+					parsed, err = parseOpenCodeInput(inputReader)
 				default:
 					// Should be unreachable — format is validated above.
 					return fmt.Errorf("hook: unhandled format %q", format)
@@ -933,6 +936,9 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				}
 				return outputHookResult(cmd, format, hookDeny, false, reasonMsg, cmdStr, decision.Suggestions...)
 			case engine.ActionAsk:
+				if format == "opencode" {
+					return outputHookResult(cmd, format, hookDeny, false, "OpenCode approval-required actions are refused; no Rampart approval bridge is installed", cmdStr)
+				}
 				if format == "codex" || format == "gemini" || format == "cursor" {
 					return resolveExternalHookApproval(cmd, format, call, reasonMsg, serveURL, serveToken, serveAutoDiscovered, logger)
 				}
@@ -988,13 +994,16 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 					}
 					if err := sessionMgr.RecordAskWithAudit(parsed.ToolUseID, call.Tool, cmdStr2, cmdStr2, policyName, reasonMsg, askAudit, auditApprovalID); err != nil {
 						// NOTE: Use Debug, not Warn. Claude Code treats ANY stderr as a hook error
-						// for ask decisions. RecordAsk is best-effort anyway.
+						// for ask decisions. Recording the ask is best-effort anyway.
 						logger.Debug("hook: failed to record ask in session state", "error", err)
 					}
 				}
 				// Emit native ask prompt (Claude Code shows the 4-button dialog).
 				return outputHookResult(cmd, format, hookAsk, false, reasonMsg, cmdStr)
 			case engine.ActionRequireApproval:
+				if format == "opencode" {
+					return outputHookResult(cmd, format, hookDeny, false, "OpenCode approval-required actions are refused; no Rampart approval bridge is installed", cmdStr)
+				}
 				if format == "codex" || format == "gemini" || format == "cursor" {
 					return resolveExternalHookApproval(cmd, format, call, reasonMsg, serveURL, serveToken, serveAutoDiscovered, logger)
 				}
@@ -1034,9 +1043,6 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 				return outputHookResult(cmd, format, hookAsk, false, reasonMsg, cmdStr)
 			case engine.ActionAllow, engine.ActionWatch:
 				return outputHookResult(cmd, format, hookDefer, isPostToolUse, reasonMsg, cmdStr)
-			case engine.ActionWebhook:
-				// Defensive fallback: webhook is normalized to deny before audit.
-				return outputHookResult(cmd, format, hookDeny, isPostToolUse, "Rampart native hook cannot safely enforce webhook; refusing tool call", cmdStr)
 			default:
 				return outputHookResult(cmd, format, hookDeny, isPostToolUse, "Rampart received an unsupported policy action; refusing tool call", cmdStr)
 			}
@@ -1044,7 +1050,7 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 	}
 
 	cmd.Flags().StringVar(&mode, "mode", "enforce", "Mode: enforce | monitor | audit")
-	cmd.Flags().StringVar(&format, "format", "claude-code", "Input format: claude-code | codex | cline | gemini | antigravity | copilot | cursor")
+	cmd.Flags().StringVar(&format, "format", "claude-code", "Input format: claude-code | codex | cline | gemini | antigravity | copilot | cursor | opencode")
 	cmd.Flags().StringVar(&auditDir, "audit-dir", "", "Directory for audit logs (default: ~/.rampart/audit)")
 	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Rampart service URL override (default: auto-discover via url/config/state; env: RAMPART_URL or RAMPART_SERVE_URL)")
 	cmd.Flags().StringVar(&configDir, "config-dir", "", "Directory of additional policy YAML files (default: ~/.rampart/policies/ if it exists)")
@@ -1795,10 +1801,6 @@ func failClosedUnsupportedNativeHookAction(decision engine.Decision) engine.Deci
 	switch decision.Action {
 	case engine.ActionAllow, engine.ActionWatch, engine.ActionDeny, engine.ActionAsk, engine.ActionRequireApproval:
 		return decision
-	case engine.ActionWebhook:
-		decision.Action = engine.ActionDeny
-		decision.Message = "Rampart native hooks do not execute webhook policy actions; refusing tool call"
-		return decision
 	default:
 		action := decision.Action.String()
 		decision.Action = engine.ActionDeny
@@ -1910,7 +1912,7 @@ func outputHookResultWithResponse(
 	suggestions = notify.SanitizeSuggestions(suggestions)
 	if decision == hookDefer {
 		switch format {
-		case "gemini", "antigravity", "copilot", "cursor", "cline", "codex":
+		case "gemini", "antigravity", "copilot", "cursor", "cline", "codex", "opencode":
 			decision = hookAllow
 		}
 	}
@@ -1921,6 +1923,8 @@ func outputHookResultWithResponse(
 		fmt.Fprint(os.Stderr, formatDenyMessage(command, reason, suggestions))
 	}
 	switch format {
+	case "opencode":
+		return outputOpenCodeHookResult(cmd.OutOrStdout(), decision, reason)
 	case "gemini":
 		return outputGeminiHookResult(cmd.OutOrStdout(), decision, reason)
 	case "antigravity":

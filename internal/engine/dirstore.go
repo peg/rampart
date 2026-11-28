@@ -62,70 +62,10 @@ func safeUnmarshal(data []byte, v any) (retErr error) {
 }
 
 // PolicyStore is the interface for loading policy configurations.
-// Implemented by FileStore, DirStore, and MultiStore.
+// Implemented by FileStore, MemoryStore, MultiStore, MixedStore, and LayeredStore.
 type PolicyStore interface {
 	Load() (*Config, error)
 	Path() string
-}
-
-// DirStore loads and merges all *.yaml files from a directory.
-// Files are loaded in sorted order for deterministic behavior.
-type DirStore struct {
-	dir    string
-	logger *slog.Logger
-}
-
-// NewDirStore creates a policy store that reads all YAML files from dir.
-func NewDirStore(dir string, logger *slog.Logger) *DirStore {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &DirStore{dir: dir, logger: logger}
-}
-
-// Load reads all *.yaml files from the directory and merges them into a single
-// Config. A present but invalid policy is an error: silently skipping a broken
-// deny file would widen the effective policy.
-func (s *DirStore) Load() (*Config, error) {
-	absDir, err := filepath.Abs(s.dir)
-	if err != nil {
-		return nil, fmt.Errorf("engine: resolve dir %q: %w", s.dir, err)
-	}
-
-	entries, err := os.ReadDir(absDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// Directory doesn't exist yet — return empty config (not an error).
-			s.logger.Debug("engine: config dir does not exist, skipping", "dir", absDir)
-			return &Config{Version: "1"}, nil
-		}
-		return nil, fmt.Errorf("engine: read dir %q: %w", absDir, err)
-	}
-
-	// Collect and sort yaml files.
-	var files []string
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if filepath.Ext(name) == ".yaml" || filepath.Ext(name) == ".yml" {
-			files = append(files, filepath.Join(absDir, name))
-		}
-	}
-	sort.Strings(files)
-
-	if len(files) == 0 {
-		s.logger.Debug("engine: no yaml files in config dir", "dir", absDir)
-		return &Config{Version: "1"}, nil
-	}
-
-	return mergeYAMLFiles(files, s.logger)
-}
-
-// Path returns the directory path.
-func (s *DirStore) Path() string {
-	return s.dir
 }
 
 // MultiStore combines a primary config file with additional files from a directory.
@@ -508,14 +448,6 @@ func (s *LayeredStore) Load() (*Config, error) {
 	}
 	if err := extraCfg.validate(); err != nil {
 		return nil, fmt.Errorf("engine: validate project policy %q: %w", s.extra, err)
-	}
-	for _, policy := range extraCfg.Policies {
-		for index, rule := range policy.Rules {
-			action, _ := rule.ParseAction()
-			if action == ActionWebhook {
-				return nil, fmt.Errorf("engine: project policy %q contains forbidden webhook action in policy %q rule %d", s.extra, policy.Name, index)
-			}
-		}
 	}
 	return mergeProjectPolicy(cfg, &extraCfg, s.extra, s.logger), nil
 }

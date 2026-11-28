@@ -4,12 +4,11 @@
 
 Rampart is a policy enforcement layer between AI agents and their tools.
 Supported integrations send host-exposed tool calls through Rampart, which
-evaluates them against YAML policies and returns allow, deny, watch, ask, or a
-configured decision-webhook action. Decisions that reach Rampart are written
+evaluates them against YAML policies and returns allow, deny, watch, or ask. Decisions that reach Rampart are written
 to a hash-chained audit trail.
 
 ```
-Agent → Tool Call → Rampart → Policy Engine → Allow / Deny / Watch / Ask / Webhook
+Agent → Tool Call → Rampart → Policy Engine → Allow / Deny / Watch / Ask
                                             → Audit (always)
 ```
 
@@ -27,8 +26,7 @@ hot path is benchmarked in this repository; results vary by policy set and host.
 
 **Local-first by default.** Rampart has no telemetry or mandatory cloud
 dependency. Data leaves the machine only when the operator explicitly
-configures a notification, decision webhook, semantic verifier, or remote SIEM
-destination.
+configures a notification.
 
 **Deny-wins evaluation.** If any policy says deny, the call is denied. No ambiguity, no override. Within a priority level, first match wins.
 
@@ -41,7 +39,7 @@ Loads YAML policies, evaluates tool calls. The hot path.
 Evaluation order:
 1. Collect all policies whose `match` clause fits the tool call
 2. Within each policy, rules evaluate top-to-bottom (first match wins)
-3. Across policies, the restrictive precedence is `deny`, `webhook`,
+3. Across policies, the restrictive precedence is `deny`,
    `require_approval`, `ask`, `watch`, then `allow`
 4. Nothing matches → configurable default action
 
@@ -140,7 +138,7 @@ policies/            Built-in profiles (standard, paranoid, yolo)
 
 ## Known Limitations
 
-**Pattern matching has gaps.** Common evasion techniques (shell wrappers like `bash -c`, quoted binaries, escaped characters) are handled via normalization and `command_contains` substring matching. However, forms the normalizer does not recognize, such as variable expansion, can bypass static patterns. Combine with [semantic verification](https://github.com/peg/rampart-verify) for intent-based classification.
+**Pattern matching has gaps.** Common evasion techniques (shell wrappers like `bash -c`, quoted binaries, escaped characters) are handled via normalization and `command_contains` substring matching. However, forms the normalizer does not recognize, such as variable expansion, can bypass static patterns.
 
 **Compatibility boundaries are voluntary.** A compromised agent can bypass an
 HTTP proxy by making direct calls, and it can bypass `rampart wrap` by ignoring

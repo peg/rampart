@@ -90,9 +90,7 @@ rampart -> client: "response"
 Rampart speaks the MCP protocol natively. The client and server don't know it's there. Denied tool calls return a standard JSON-RPC error — the MCP server never sees them.
 
 In enforce mode, a policy decision is not forwarded unless its audit record is
-persisted. Webhook actions also write a second final-decision event with
-`request.mcp_phase` set to `webhook_result`; failure to persist that result
-blocks the call. Request, webhook-result, and response events share a generated
+persisted. Request and response events share a generated
 `tool_call_id` for correlation. Monitor mode logs storage errors but remains
 non-blocking.
 

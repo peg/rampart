@@ -15,7 +15,6 @@ package proxy
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -295,55 +294,6 @@ func (s *Server) startExpiredRuleCleanup() {
 	})
 }
 
-// ListenAndServe starts serving HTTP requests at addr.
-func (s *Server) ListenAndServe(addr string) error {
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("proxy: listen: %w", err)
-	}
-	s.listenAddr = listener.Addr().String()
-
-	srv := s.newHTTPServer(s.listenAddr, s.handler())
-
-	s.mu.Lock()
-	s.server = srv
-	s.mu.Unlock()
-	s.startExpiredRuleCleanup()
-
-	if err := srv.Serve(listener); err != nil {
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return fmt.Errorf("proxy: listen and serve: %w", err)
-	}
-	return nil
-}
-
-// ListenAndServeTLS starts serving HTTPS requests at addr with the given TLS config.
-func (s *Server) ListenAndServeTLS(addr string, tlsCfg *tls.Config) error {
-	s.tlsEnabled = true
-	listener, err := tls.Listen("tcp", addr, tlsCfg)
-	if err != nil {
-		return fmt.Errorf("proxy: tls listen: %w", err)
-	}
-	s.listenAddr = listener.Addr().String()
-
-	srv := s.newHTTPServer(s.listenAddr, s.handler())
-
-	s.mu.Lock()
-	s.server = srv
-	s.mu.Unlock()
-	s.startExpiredRuleCleanup()
-
-	if err := srv.Serve(listener); err != nil {
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return fmt.Errorf("proxy: tls serve: %w", err)
-	}
-	return nil
-}
-
 // Serve starts serving HTTP requests on an existing listener.
 func (s *Server) Serve(listener net.Listener) error {
 	s.listenAddr = listener.Addr().String()
@@ -588,9 +538,4 @@ type bulkResolveRequest struct {
 	Scope      string   `json:"scope"`       // "pending" or "run"
 	IDs        []string `json:"ids"`         // exact approvals reviewed by the operator
 	ResolvedBy string   `json:"resolved_by"` // e.g. "api", "cli"
-}
-
-// Approvals returns the approval store for external CLI access.
-func (s *Server) Approvals() *approval.Store {
-	return s.approvals
 }

@@ -328,7 +328,7 @@ func patternForCall(call engine.ToolCall) string {
 
 // These types are intentionally separate from engine.Config — they produce
 // clean, minimal YAML output without the engine's internal fields (Priority,
-// Enabled, Source, Webhook, Ask, etc). Same pattern as marshalCleanYAML
+// Enabled, Source, Ask, etc). Same pattern as marshalCleanYAML
 // in persist.go.
 type policyEntry struct {
 	Name  string       `yaml:"name"`

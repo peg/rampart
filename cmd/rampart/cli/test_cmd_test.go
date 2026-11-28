@@ -333,7 +333,6 @@ func TestPrintTestResultLabelsNonAllowActions(t *testing.T) {
 		{engine.ActionAsk, "ASK"},
 		{engine.ActionRequireApproval, "APPROVAL"},
 		{engine.ActionWatch, "LOG"},
-		{engine.ActionWebhook, "WEBHOOK"},
 		{engine.ActionDeny, "DENY"},
 	}
 	for _, tt := range tests {

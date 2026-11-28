@@ -500,12 +500,6 @@ func (b *OpenClawBridge) handleApprovalRequested(ctx context.Context, conn *webs
 	case engine.ActionRequireApproval, engine.ActionAsk:
 		b.leavePendingForHumanReview(req, decision)
 
-	case engine.ActionWebhook:
-		// Webhook actions delegate to an external system.
-		// Don't resolve — let OpenClaw's approval flow handle it or time out.
-		b.logger.Info("bridge: webhook action — deferring to OpenClaw approval flow",
-			"id", req.ID, "command_bytes", len(req.command()))
-
 	default:
 		// Unknown action — fail closed. An unrecognized action should never
 		// silently allow a command that may require human review.
@@ -671,18 +665,6 @@ func (r approvalRequestParams) sessionKey() string { return r.Request.SessionKey
 
 // --- Discovery helpers ---
 
-// DiscoverGatewayConfig reads the OpenClaw gateway URL and token from
-// ~/.openclaw/openclaw.json. Returns url, token, error.
-func DiscoverGatewayConfig() (string, string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", "", fmt.Errorf("resolve home directory: %w", err)
-	}
-
-	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
-	return ReadGatewayConfig(configPath)
-}
-
 // DiscoverGatewayConfigForBridge reads the OpenClaw gateway connection details
 // and the approval-ownership mode Rampart should use for this install.
 func DiscoverGatewayConfigForBridge() (string, string, bool, error) {
@@ -693,19 +675,6 @@ func DiscoverGatewayConfigForBridge() (string, string, bool, error) {
 
 	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
 	return ReadGatewayConfigForBridge(configPath)
-}
-
-// ReadGatewayConfig reads gateway URL and token from the specified openclaw.json path.
-func ReadGatewayConfig(path string) (string, string, error) {
-	cfg, err := readOpenClawConfig(path)
-	if err != nil {
-		return "", "", err
-	}
-	token, err := cfg.gatewayToken(path)
-	if err != nil {
-		return "", "", err
-	}
-	return cfg.gatewayURL(), token, nil
 }
 
 // ReadGatewayConfigForBridge reads gateway URL/token plus whether the bridge

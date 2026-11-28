@@ -21,9 +21,7 @@ Run `rampart setup claude-code --remove` (or `cline --remove` / `openclaw --remo
 ## What's the performance impact?
 
 Core matching is local and benchmarked in microseconds. Hook process startup and
-audit I/O add machine-dependent overhead. The optional
-[semantic verification sidecar](../features/semantic-verification.md) adds a
-network model call when configured.
+audit I/O add machine-dependent overhead.
 
 ## Does it work on Windows?
 

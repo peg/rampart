@@ -57,12 +57,8 @@ func newPolicyCmd(opts *rootOptions) *cobra.Command {
 	cmd.AddCommand(newPolicyGenerateCmd(opts))
 	cmd.AddCommand(newPolicyListCmd(opts))
 	cmd.AddCommand(newPolicyRulesCmd(opts))
-	cmd.AddCommand(newPolicySearchCmd(opts))
 	cmd.AddCommand(newPolicyShowCmd(opts))
-	cmd.AddCommand(newPolicyFetchCmd(opts))
-	cmd.AddCommand(newPolicyInstallCmd(opts))
 	cmd.AddCommand(newPolicyRemoveCmd(opts))
-	cmd.AddCommand(newPolicySyncCmd(opts))
 
 	// `rampart policy test` is an alias for `rampart test` — same command,
 	// discoverable under the policy subcommand for users who expect it there.
@@ -481,8 +477,6 @@ func winnerReason(action engine.Action) string {
 		return "ask beat allow/watch after no deny matched"
 	case engine.ActionRequireApproval:
 		return "require_approval beat allow/watch after no deny matched"
-	case engine.ActionWebhook:
-		return "webhook beat allow/watch after no deny matched"
 	case engine.ActionWatch:
 		return "watch beat allow after no deny or ask matched"
 	case engine.ActionAllow:
