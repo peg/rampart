@@ -1708,8 +1708,10 @@ policies:
       - action: deny
         when:
           command_matches:
-            # diskpart commands
+            # diskpart and cmd.exe format of a drive
             - "diskpart*"
+            - "format ?:"
+            - "format ?: **"
             # PowerShell disk cmdlets
             - "Format-Volume*"
             - "Clear-Disk*"
