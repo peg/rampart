@@ -178,6 +178,7 @@ func TestLaunchVerificationErrorFailsClosed(t *testing.T) {
 // Launch is an explicit opt-in, so an experimental integration such as
 // OpenCode is not refused for being experimental.
 func TestLaunchAllowsExperimentalIntegration(t *testing.T) {
+	skipOnWindows(t, "OpenCode integration is Linux and macOS only")
 	testSetHome(t, t.TempDir())
 	t.Setenv("PATH", t.TempDir())
 	driver, _, err := resolveLaunchTarget("opencode")
