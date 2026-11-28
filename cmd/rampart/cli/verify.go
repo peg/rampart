@@ -1012,9 +1012,34 @@ func verifyCodexHooksInstalled() verificationCheck {
 	return verificationCheck{
 		ID: "codex-hook-installation", Name: "Codex lifecycle hooks are installed",
 		Status: verificationPass, Expected: "current PreToolUse and PostToolUse commands", Actual: "configured",
-		Message: "The user-level Codex hook configuration contains both current Rampart lifecycle hooks. " +
-			"Whether Codex has trusted them in `/hooks` is not checked",
+		Message: "The user-level Codex hook configuration contains both current Rampart lifecycle hooks",
 	}
+}
+
+func verifyCodexHooksTrusted() verificationCheck {
+	check := verificationCheck{
+		ID: "codex-hook-trust", Name: "Codex trusts the Rampart hooks",
+		Expected: "trusted_hash for each Rampart hook in Codex config.toml",
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" || !codexHooksConfiguredForHome(home) {
+		check.Status, check.Actual = verificationUnverified, "hooks not installed"
+		check.Message = "Install the hooks first"
+		return check
+	}
+	untrusted, err := codexUntrustedRampartHooks(home)
+	switch {
+	case err != nil:
+		check.Status, check.Actual, check.Message = verificationUnverified, "unreadable", err.Error()
+	case len(untrusted) > 0:
+		check.Status, check.Actual = verificationFail, "not trusted: "+strings.Join(untrusted, ", ")
+		check.Message = "Codex skips hooks you have not trusted, so it runs tools without Rampart"
+		check.Hint = "Start `codex`, type `/hooks`, and trust the Rampart hooks. Then rerun `rampart verify codex`"
+	default:
+		check.Status, check.Actual = verificationPass, "trust recorded"
+		check.Message = "Codex recorded trust for both Rampart hooks. If a hook changes, Codex asks again in `/hooks`"
+	}
+	return check
 }
 
 func verifyCodexHookAdapter(ctx context.Context) verificationCheck {

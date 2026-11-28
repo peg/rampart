@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -620,52 +621,17 @@ Cline setup: Use "rampart setup cline" to install hooks automatically.`,
 			// Load policies only after parsing the host context, so a project policy
 			// is selected from the tool call's repository rather than Rampart's
 			// process working directory.
-			policyPath, repoPolicyPath, cleanupPolicy, err := resolveHookPolicyPath(cmd, opts.configPath)
+			store, cleanupPolicy, err := hookPolicyStore(cmd, opts.configPath, configDir, gitCtx.root, logger)
 			if err != nil {
 				if mode == "enforce" {
+					if errors.Is(err, errProjectPolicyUnreadable) {
+						return outputEnforceFailure("Rampart cannot inspect the repository policy; refusing host data")
+					}
 					return outputEnforceFailure("Rampart policy configuration is unavailable; refusing host data")
 				}
 				return err
 			}
 			defer cleanupPolicy()
-
-			var store engine.PolicyStore
-			effectiveDir := configDir
-			if effectiveDir == "" {
-				if home, hErr := os.UserHomeDir(); hErr == nil {
-					defaultDir := filepath.Join(home, ".rampart", "policies")
-					if _, sErr := os.Stat(defaultDir); sErr == nil {
-						effectiveDir = defaultDir
-					}
-				}
-			}
-			if effectiveDir != "" {
-				store = engine.NewMultiStore(policyPath, effectiveDir, logger)
-			} else {
-				store = engine.NewFileStore(policyPath)
-			}
-
-			// A repository-local rampart.yaml that Rampart discovered itself is
-			// layered as a project policy rather than used as the baseline, so the
-			// engine's "a project policy cannot weaken a global default" invariant
-			// applies to it and it can only tighten the shipped standard.
-			if repoPolicyPath != "" && os.Getenv("RAMPART_NO_PROJECT_POLICY") == "" {
-				logger.Debug("hook: layering repository policy", "path", repoPolicyPath)
-				store = engine.NewLayeredStore(store, repoPolicyPath, logger)
-			}
-
-			if gitCtx.root != "" && os.Getenv("RAMPART_NO_PROJECT_POLICY") == "" {
-				candidate := filepath.Join(gitCtx.root, ".rampart", "policy.yaml")
-				if _, statErr := os.Stat(candidate); statErr == nil {
-					logger.Debug("hook: loading project policy", "path", candidate)
-					store = engine.NewLayeredStore(store, candidate, logger)
-				} else if !os.IsNotExist(statErr) {
-					if mode == "enforce" {
-						return outputEnforceFailure("Rampart cannot inspect the repository policy; refusing host data")
-					}
-					return fmt.Errorf("hook: inspect project policy %s: %w", candidate, statErr)
-				}
-			}
 
 			eng, err := engine.New(store, logger)
 			if err != nil {
@@ -2033,6 +1999,53 @@ const defaultConfigPath = "rampart.yaml"
 // An explicit --config, or a non-default path set programmatically, is an
 // operator decision about their own machine and is still honored as the
 // baseline.
+var errProjectPolicyUnreadable = errors.New("project policy unreadable")
+
+// hookPolicyStore builds the policy the hook enforces: the built-in standard
+// profile (or an explicit --config) with ~/.rampart/policies, then any
+// repository policy layered on top. rampart test uses it too, so a dry run
+// gives the decision the hook would.
+func hookPolicyStore(cmd *cobra.Command, configPath, configDir, gitRoot string, logger *slog.Logger) (engine.PolicyStore, func(), error) {
+	policyPath, repoPolicyPath, cleanup, err := resolveHookPolicyPath(cmd, configPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	if configDir == "" {
+		if home, hErr := os.UserHomeDir(); hErr == nil {
+			defaultDir := filepath.Join(home, ".rampart", "policies")
+			if _, sErr := os.Stat(defaultDir); sErr == nil {
+				configDir = defaultDir
+			}
+		}
+	}
+	var store engine.PolicyStore = engine.NewFileStore(policyPath)
+	if configDir != "" {
+		store = engine.NewMultiStore(policyPath, configDir, logger)
+	}
+	if os.Getenv("RAMPART_NO_PROJECT_POLICY") != "" {
+		return store, cleanup, nil
+	}
+	// A repository-local rampart.yaml that Rampart discovered itself is
+	// layered as a project policy rather than used as the baseline, so the
+	// engine's "a project policy cannot weaken a global default" invariant
+	// applies to it and it can only tighten the shipped standard.
+	if repoPolicyPath != "" {
+		logger.Debug("hook: layering repository policy", "path", repoPolicyPath)
+		store = engine.NewLayeredStore(store, repoPolicyPath, logger)
+	}
+	if gitRoot != "" {
+		candidate := filepath.Join(gitRoot, ".rampart", "policy.yaml")
+		if _, statErr := os.Stat(candidate); statErr == nil {
+			logger.Debug("hook: loading project policy", "path", candidate)
+			store = engine.NewLayeredStore(store, candidate, logger)
+		} else if !os.IsNotExist(statErr) {
+			cleanup()
+			return nil, nil, fmt.Errorf("hook: inspect project policy %s: %w: %w", candidate, errProjectPolicyUnreadable, statErr)
+		}
+	}
+	return store, cleanup, nil
+}
+
 func resolveHookPolicyPath(cmd *cobra.Command, configPath string) (policyPath, repoPolicyPath string, cleanup func(), err error) {
 	candidate := strings.TrimSpace(configPath)
 
