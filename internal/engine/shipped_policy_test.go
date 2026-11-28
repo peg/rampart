@@ -320,3 +320,36 @@ func TestOpenClawPolicyProtectsItsEnforcementFiles(t *testing.T) {
 		})
 	}
 }
+
+func TestShippedPoliciesBlockEnvFileReadsThroughAnyShellReader(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	profiles := map[string]string{
+		"standard.yaml": "block-credential-commands",
+		"openclaw.yaml": "block-credential-exec",
+		"guard.yaml":    "guard-credential-shell-access",
+	}
+	blocked := []string{
+		"grep KEY .env", "awk 1 .env", "sed -n p .env", "head -5 app/.env.production",
+		`grep k ".env"`, "cat ./.env", "cat <.env", "sudo awk 1 .env", "source .env",
+		"grep k ~/project/.env.local", "cat .envrc",
+	}
+	unrelated := []string{"cat env.txt", "npm run env", "grep -r KEY src/"}
+	for profile, policy := range profiles {
+		eng, err := New(NewFileStore(filepath.Join("..", "..", "policies", profile)), logger)
+		if err != nil {
+			t.Fatalf("load %s: %v", profile, err)
+		}
+		for _, command := range blocked {
+			decision := eng.Evaluate(ToolCall{Agent: "coding-agent", Tool: "exec", Params: map[string]any{"command": command}})
+			if decision.Action != ActionDeny || !slices.Contains(decision.MatchedPolicies, policy) {
+				t.Errorf("%s: %q = %s via %v, want deny via %s", profile, command, decision.Action, decision.MatchedPolicies, policy)
+			}
+		}
+		for _, command := range unrelated {
+			decision := eng.Evaluate(ToolCall{Agent: "coding-agent", Tool: "exec", Params: map[string]any{"command": command}})
+			if slices.Contains(decision.MatchedPolicies, policy) {
+				t.Errorf("%s: %q matched %s", profile, command, policy)
+			}
+		}
+	}
+}

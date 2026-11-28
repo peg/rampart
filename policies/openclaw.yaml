@@ -484,6 +484,21 @@ policies:
             - "cat **/.env"
             - "cat **/.env.*"
         message: "Credential and Rampart authority files cannot be read through shell execution"
+      # Any command that names a .env file as an operand, whichever reader it uses.
+      - action: deny
+        when:
+          command_matches:
+            - "* .env"
+            - "* .env *"
+            - "* .env.*"
+            - "* */.env"
+            - "* */.env *"
+            - "* */.env.*"
+            - "*<.env*"
+            - "*</.env*"
+            - "*=.env*"
+            - "*/.env.*"
+        message: "Credential and Rampart authority files cannot be read through shell execution"
 
   # ── Block credential access ────────────────────────────────────────────
   - name: block-credential-reads

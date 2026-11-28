@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The standard, OpenClaw and Guard profiles now treat any shell command that
+  names a `.env` file the same way they already treated `cat .env`: denied.
+  This includes `.env.example` and `source .env`; use the file read tool to
+  view examples.
+
 ## [1.12.0] - 2026-11-27
 
 ### Added

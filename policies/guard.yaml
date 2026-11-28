@@ -102,6 +102,21 @@ policies:
             - "cat **/.env"
             - "cat **/.env.*"
         message: "Credential and Rampart authority files cannot be read through shell execution"
+      # Any command that names a .env file as an operand, whichever reader it uses.
+      - action: deny
+        when:
+          command_matches:
+            - "* .env"
+            - "* .env *"
+            - "* .env.*"
+            - "* */.env"
+            - "* */.env *"
+            - "* */.env.*"
+            - "*<.env*"
+            - "*</.env*"
+            - "*=.env*"
+            - "*/.env.*"
+        message: "Credential and Rampart authority files cannot be read through shell execution"
 
   - name: guard-external-network-exec
     description: "Block direct external curl and wget so network access stays on policy-aware tools"
