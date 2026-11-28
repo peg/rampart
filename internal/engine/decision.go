@@ -25,6 +25,7 @@ package engine
 import (
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -358,4 +359,25 @@ func ParseAction(s string) (Action, error) {
 // Denied returns true if the tool call was blocked.
 func (d Decision) Denied() bool {
 	return d.Action == ActionDeny
+}
+
+// scriptWriteCommand returns the text a write or edit puts into a shell
+// script (.ps1, .bat, .sh, or a file starting with #!), so a delete the agent
+// may not run directly cannot be written to a file and run with -File.
+func scriptWriteCommand(tc ToolCall) string {
+	if tc.Tool != "write" && tc.Tool != "edit" {
+		return ""
+	}
+	content := tc.paramAlias("content", "new_string", "newString")
+	if strings.TrimSpace(content) == "" {
+		return ""
+	}
+	switch strings.ToLower(filepath.Ext(strings.ReplaceAll(tc.Path(), `\`, "/"))) {
+	case ".ps1", ".psm1", ".bat", ".cmd", ".sh", ".bash", ".zsh":
+		return content
+	}
+	if strings.HasPrefix(content, "#!") {
+		return content
+	}
+	return ""
 }

@@ -23,7 +23,8 @@ func mayBeWindowsDelete(command string) bool {
 // windowsDeleteOperands returns the targets of a recursive Remove-Item, ri,
 // del, erase, rd, rmdir, or PowerShell rm with a backslash path. PowerShell
 // does not need -Force to delete a tree, and rd /s without /q only prompts,
-// so recursion alone is enough.
+// so recursion alone is enough. Without recursion only a trailing wildcard
+// counts.
 func windowsDeleteOperands(segment string) []string {
 	tokens := tokenizeForOS(segment, "powershell")
 	if len(tokens) == 0 {
@@ -53,10 +54,17 @@ func windowsDeleteOperands(segment string) []string {
 			operands = append(operands, tokens[index])
 		}
 	}
-	if !recursive {
-		return nil
+	if recursive {
+		return operands
 	}
-	return operands
+	// Without recursion a wildcard still empties a folder: Remove-Item C:\*.
+	var wildcards []string
+	for _, operand := range operands {
+		if trimmed := strings.Trim(operand, `"'`); strings.HasSuffix(trimmed, `\*`) || strings.HasSuffix(trimmed, "/*") {
+			wildcards = append(wildcards, operand)
+		}
+	}
+	return wildcards
 }
 
 // windowsPathAsPOSIX maps a Windows or Git Bash path onto the POSIX layout the
@@ -175,3 +183,100 @@ func dotNetDeleteTargets(segment string) []string {
 }
 
 var dotNetDirectoryDelete = regexp.MustCompile(`(?i)\[(?:system\.)?io\.directory\]::delete\(\s*['"]([^'"]+)['"]`)
+
+// indirectDeleteTargets returns the path-like words of a command whose
+// recursive delete takes its target from somewhere other than a literal
+// operand: the pipeline (gci C:\ -r | Remove-Item), a loop variable
+// (for d in ~/*; do rm -rf "$d"; done) or ForEach-Object ($_.FullName).
+// The delete then reaches whatever the command lists, so every path the
+// command names is treated as a target, whatever the spelling. Words are
+// split on PowerShell and shell separators without regard to quoting, which
+// can only add candidates.
+func indirectDeleteTargets(command string) []string {
+	pieces := powerShellStatements(command)
+	indirect, recursive := false, false
+	var paths []string
+	for _, piece := range pieces {
+		words := strings.Fields(piece)
+		for i := range words {
+			words[i] = strings.Trim(words[i], "\"'`,")
+			lower := strings.ToLower(words[i])
+			if lower == "/s" || strings.HasPrefix(lower, "-r") ||
+				(len(lower) > 1 && lower[0] == '-' && lower[1] != '-' && strings.Contains(lower, "r") && strings.Trim(lower[1:], "rf") == "") {
+				recursive = true
+			}
+			if isPathWord(words[i]) {
+				paths = append(paths, words[i])
+			}
+		}
+		if !indirect && deleteTakesIndirectTarget(words) {
+			indirect = true
+		}
+	}
+	if !indirect || !recursive {
+		return nil
+	}
+	return paths
+}
+
+// powerShellStatements splits a command on PowerShell and shell statement,
+// pipeline and block separators, ignoring quotes and backslashes.
+func powerShellStatements(command string) []string {
+	return strings.FieldsFunc(command, func(r rune) bool {
+		return r == ';' || r == '|' || r == '&' || r == '\n' || r == '{' || r == '}' || r == '(' || r == ')'
+	})
+}
+
+// deleteTakesIndirectTarget reports a delete command, after loop and launcher
+// keywords, that names no literal target: no operand at all (pipeline input)
+// or one that is a variable.
+func deleteTakesIndirectTarget(words []string) bool {
+	start := 0
+	for start < len(words) && (isLoopOrLauncherWord(strings.ToLower(words[start])) ||
+		(start > 0 && strings.HasPrefix(words[start], "-"))) {
+		start++ // keywords, and launcher flags such as xargs -0
+	}
+	if start == len(words) {
+		return false
+	}
+	switch strings.TrimSuffix(strings.ToLower(shellWrapperBasename(words[start])), ".exe") {
+	case "rm", "remove-item", "ri", "del", "erase", "rd", "rmdir":
+	default:
+		return false
+	}
+	literal := false
+	for index := start + 1; index < len(words); index++ {
+		lower := strings.ToLower(words[index])
+		switch {
+		case lower == "--":
+		case lower == "-filter" || lower == "-include" || lower == "-exclude":
+			index++
+		case strings.HasPrefix(lower, "$") || strings.HasPrefix(lower, "%") || strings.HasPrefix(lower, "@"):
+			return true
+		case strings.HasPrefix(lower, "-") || isCmdSwitch(lower):
+		default:
+			literal = true
+		}
+	}
+	return !literal
+}
+
+func isLoopOrLauncherWord(word string) bool {
+	switch word {
+	case "do", "then", "else", "try", "xargs", "sudo", "command", "exec", "%", "foreach-object", "foreach":
+		return true
+	}
+	return false
+}
+
+// isPathWord reports a word that names a filesystem location: absolute,
+// home-relative, a home variable, a drive path, or any word with a slash.
+func isPathWord(word string) bool {
+	if word == "" || strings.HasPrefix(word, "-") || strings.HasPrefix(word, "$_") {
+		return false
+	}
+	if _, ok := cutHomeVariable(word); ok {
+		return true
+	}
+	return word[0] == '/' || word[0] == '~' || windowsPathAsPOSIX(word) != "" || strings.ContainsAny(word, `/\`)
+}

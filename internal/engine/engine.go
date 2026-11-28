@@ -159,6 +159,27 @@ func (e *Engine) EvaluateWith(call ToolCall, opts EvalOptions) Decision {
 		defaultAction = ActionDeny
 	}
 
+	// A script is checked as a whole when it fits the matching limit, and
+	// line by line otherwise.
+	if script := scriptWriteCommand(call); script != "" {
+		commands := []string{script}
+		if len(script) > maxGlobInputLen {
+			commands = strings.Split(script, "\n")
+		}
+		for _, command := range commands {
+			if strings.TrimSpace(command) == "" {
+				continue
+			}
+			exec := ToolCall{Agent: call.Agent, AgentDepth: call.AgentDepth, Session: call.Session, RunID: call.RunID,
+				Tool: "exec", WorkDir: call.WorkDir, Params: map[string]any{"command": command}}
+			if decision := e.EvaluateWith(exec, opts); decision.Action == ActionDeny {
+				decision.Message = "Writing a script that runs a blocked command: " + decision.Message
+				decision.EvalDuration = time.Since(start)
+				return decision
+			}
+		}
+	}
+
 	// Collect matching policies, sorted by priority.
 	matching := e.collectMatching(cfg, call)
 

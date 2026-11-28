@@ -1650,22 +1650,23 @@ func visitCanonicalCommandAliases(command string, visit func(string) bool) bool 
 		return true
 	}
 	segments := SplitCompoundCommand(stripUnquotedShellComment(command))
-	piped := pipedDeleteTargets(segments)
+	windowsSegments := segments
 	if unwrapped := NormalizeCommand(command); unwrapped != "" && unwrapped != command {
-		// powershell -Command "gci C:\ -r | Remove-Item" pipes inside the wrapper.
-		piped = append(piped, pipedDeleteTargets(SplitCompoundCommand(unwrapped))...)
+		// powershell -Command "cd C:\; gci | Remove-Item" runs its statements
+		// inside the wrapper, where a backslash escapes nothing.
+		windowsSegments = append(append([]string{}, segments...), powerShellStatements(unwrapped)...)
 	}
-	for _, operand := range piped {
+	targets := append(pipedDeleteTargets(windowsSegments), indirectDeleteTargets(command)...)
+	for _, segment := range windowsSegments {
+		targets = append(targets, windowsDeleteOperands(segment)...)
+		targets = append(targets, dotNetDeleteTargets(segment)...)
+	}
+	for _, operand := range targets {
 		if !emit(operand) {
 			return overflow
 		}
 	}
 	for _, segment := range segments {
-		for _, operand := range append(windowsDeleteOperands(segment), dotNetDeleteTargets(segment)...) {
-			if !emit(operand) {
-				return overflow
-			}
-		}
 		tokens := unwrapRestrictiveExecutor(shellWords(segment))
 		if len(tokens) == 0 {
 			continue
