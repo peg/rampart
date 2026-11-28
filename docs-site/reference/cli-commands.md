@@ -47,6 +47,7 @@ the agent is not started unless every safe canary passes. See
 rampart launch claude --model qwen3-coder   # via `ollama launch claude`
 rampart launch codex --model gpt-oss:20b    # via ollama, or `codex --oss -m` without it
 rampart launch opencode --model qwen3-coder # via `ollama launch opencode`
+rampart launch claude --base-url http://127.0.0.1:8080 --model local  # llama.cpp or LM Studio
 rampart launch claude -- -p "hello"         # args after -- go to the agent
 ```
 

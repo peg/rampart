@@ -36,15 +36,27 @@ type launchTarget struct {
 	// direct builds a fallback invocation for when ollama is not on PATH.
 	// Nil means the agent can only be launched through ollama.
 	direct func(model string) (bin string, args []string)
+	// local builds an invocation against any OpenAI- or Anthropic-compatible
+	// server, such as llama.cpp's llama-server or LM Studio. Nil means the
+	// agent has no command-line way to point at one.
+	local func(baseURL, model string) (bin string, args, env []string)
 }
 
 var launchTargets = map[string]launchTarget{
-	"claude-code": {ollama: "claude"},
+	"claude-code": {ollama: "claude", local: func(baseURL, model string) (string, []string, []string) {
+		// Claude Code appends /v1/messages itself. The placeholder token keeps
+		// a real Anthropic key from being sent to the local server.
+		env := []string{"ANTHROPIC_BASE_URL=" + strings.TrimSuffix(baseURL, "/v1"), "ANTHROPIC_AUTH_TOKEN=local", "ANTHROPIC_API_KEY="}
+		return "claude", withModel(nil, "--model", model), env
+	}},
 	"codex": {ollama: "codex", direct: func(model string) (string, []string) {
-		if model == "" {
-			return "codex", []string{"--oss"}
+		return "codex", withModel([]string{"--oss"}, "-m", model)
+	}, local: func(baseURL, model string) (string, []string, []string) {
+		if !strings.HasSuffix(baseURL, "/v1") {
+			baseURL += "/v1"
 		}
-		return "codex", []string{"--oss", "-m", model}
+		provider := fmt.Sprintf(`model_providers.local={ name = "Local model", base_url = %q, wire_api = "responses" }`, baseURL)
+		return "codex", withModel([]string{"-c", `model_provider="local"`, "-c", provider}, "-m", model), nil
 	}},
 	"opencode": {ollama: "opencode"},
 }
@@ -65,10 +77,17 @@ func launchTargetNames() string {
 
 // launchDeps are the side effects of launch, injected so tests can prove the
 // agent is never started when protection cannot be confirmed.
+func withModel(args []string, flag, model string) []string {
+	if model == "" {
+		return args
+	}
+	return append(args, flag, model)
+}
+
 type launchDeps struct {
 	lookPath func(string) (string, error)
 	protect  func(cmd *cobra.Command, opts *rootOptions, driver integrationDriver, serveURL string, timeout time.Duration) error
-	run      func(cmd *cobra.Command, bin string, args []string) error
+	run      func(cmd *cobra.Command, bin string, args, env []string) error
 }
 
 func newLaunchCmd(opts *rootOptions) *cobra.Command {
@@ -76,7 +95,7 @@ func newLaunchCmd(opts *rootOptions) *cobra.Command {
 }
 
 func newLaunchCmdWith(opts *rootOptions, deps launchDeps) *cobra.Command {
-	var model, serveURL string
+	var model, baseURL, serveURL string
 	var timeout time.Duration
 	cmd := &cobra.Command{
 		Use:   "launch <agent> [--model <name>] [-- agent args...]",
@@ -88,9 +107,13 @@ Launch installs Rampart's hooks for the agent if they are missing, then runs
 the same safe canaries as ` + "`rampart verify`" + `. If any check fails or cannot be
 verified, the agent is not started. Otherwise it delegates to
 ` + "`ollama launch <agent>`" + ` (or, for Codex without Ollama, ` + "`codex --oss`" + `).
+With --base-url it starts the agent against that server instead, for
+llama.cpp, LM Studio, or any OpenAI-compatible (Codex) or
+Anthropic-compatible (Claude Code) endpoint.
 
 Supported agents: ` + launchTargetNames() + `.`,
 		Example: `  rampart launch claude --model qwen3-coder
+  rampart launch claude --base-url http://127.0.0.1:8080 --model local
   rampart launch codex --model gpt-oss:20b -- --sandbox workspace-write`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			n := len(args)
@@ -111,7 +134,7 @@ Supported agents: ` + launchTargetNames() + `.`,
 			if strings.HasPrefix(model, "-") {
 				return fmt.Errorf("launch: invalid --model %q", model)
 			}
-			bin, argv, err := launchCommand(target, model, args[1:], deps.lookPath)
+			bin, argv, env, err := launchCommand(target, model, strings.TrimRight(strings.TrimSpace(baseURL), "/"), args[1:], deps.lookPath)
 			if err != nil {
 				return err
 			}
@@ -122,10 +145,11 @@ Supported agents: ` + launchTargetNames() + `.`,
 				return exitCodeError{code: 1}
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "\n✓ Rampart protection verified for %s. Starting: %s %s\n", driver.DisplayName, bin, strings.Join(argv, " "))
-			return deps.run(cmd, bin, argv)
+			return deps.run(cmd, bin, argv, env)
 		},
 	}
 	cmd.Flags().StringVar(&model, "model", "", "Local model name passed to the agent (for example qwen3-coder)")
+	cmd.Flags().StringVar(&baseURL, "base-url", "", "Model server URL (llama.cpp, LM Studio) to use instead of Ollama")
 	cmd.Flags().StringVar(&serveURL, "serve-url", "", "Rampart service URL override used for verification")
 	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Second, "Timeout for each verification check")
 	return cmd
@@ -142,7 +166,20 @@ func resolveLaunchTarget(agent string) (integrationDriver, launchTarget, error) 
 
 // launchCommand maps an agent, model, and pass-through args to the command
 // to execute. Ollama is preferred because it configures the agent's endpoint.
-func launchCommand(target launchTarget, model string, extra []string, lookPath func(string) (string, error)) (string, []string, error) {
+func launchCommand(target launchTarget, model, baseURL string, extra []string, lookPath func(string) (string, error)) (string, []string, []string, error) {
+	if baseURL != "" {
+		if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
+			return "", nil, nil, fmt.Errorf("launch: --base-url must start with http:// or https://")
+		}
+		if target.local == nil {
+			return "", nil, nil, fmt.Errorf("launch: --base-url is not supported for %s; set the provider in its own config", target.ollama)
+		}
+		bin, argv, env := target.local(baseURL, model)
+		if _, err := lookPath(bin); err != nil {
+			return "", nil, nil, fmt.Errorf("launch: `%s` was not found on PATH", bin)
+		}
+		return bin, append(argv, extra...), env, nil
+	}
 	if _, err := lookPath("ollama"); err == nil {
 		argv := []string{"launch", target.ollama}
 		if model != "" {
@@ -151,16 +188,16 @@ func launchCommand(target launchTarget, model string, extra []string, lookPath f
 		if len(extra) > 0 {
 			argv = append(append(argv, "--"), extra...)
 		}
-		return "ollama", argv, nil
+		return "ollama", argv, nil, nil
 	}
 	if target.direct == nil {
-		return "", nil, fmt.Errorf("launch: `ollama` was not found on PATH; install Ollama (https://ollama.com) to launch %s on a local model", target.ollama)
+		return "", nil, nil, fmt.Errorf("launch: `ollama` was not found on PATH; install Ollama (https://ollama.com), or pass --base-url to use another model server")
 	}
 	bin, argv := target.direct(model)
 	if _, err := lookPath(bin); err != nil {
-		return "", nil, fmt.Errorf("launch: neither `ollama` nor `%s` was found on PATH", bin)
+		return "", nil, nil, fmt.Errorf("launch: neither `ollama` nor `%s` was found on PATH", bin)
 	}
-	return bin, append(argv, extra...), nil
+	return bin, append(argv, extra...), nil, nil
 }
 
 // protectForLaunch installs the agent's hooks when they are missing, then
@@ -232,13 +269,14 @@ func launchVerificationError(report verificationReport) error {
 // runLaunchedAgent runs the agent in the foreground with this terminal. While
 // it runs, Rampart ignores interrupts so Ctrl-C reaches only the agent; the
 // agent's exit status becomes Rampart's.
-func runLaunchedAgent(cmd *cobra.Command, bin string, args []string) error {
+func runLaunchedAgent(cmd *cobra.Command, bin string, args, env []string) error {
 	path, err := execLookPath(bin)
 	if err != nil {
 		return fmt.Errorf("launch: %w", err)
 	}
 	child := osexec.Command(path, args...)
 	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
+	child.Env = append(os.Environ(), env...)
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt)
 	defer signal.Stop(signals)
