@@ -14,7 +14,7 @@
 package policies
 
 import (
-	"path/filepath"
+	"bytes"
 	"runtime"
 	"testing"
 	"time"
@@ -24,9 +24,53 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// allOSStandard is the standard profile with every OS's rules, so one table
+// covers them all.
+func allOSStandard(t *testing.T) engine.PolicyStore {
+	t.Helper()
+	data, err := ProfileFor("standard", "windows")
+	require.NoError(t, err)
+	mac, err := FS.ReadFile("macos.yaml")
+	require.NoError(t, err)
+	_, rules, ok := bytes.Cut(mac, []byte("\npolicies:\n"))
+	require.True(t, ok)
+	return engine.NewMemoryStore(append(append(data, '\n'), rules...), "standard.yaml")
+}
+
+func TestStandardProfileAddsHostOSRules(t *testing.T) {
+	names := func(goos string) map[string]bool {
+		data, err := ProfileFor("standard", goos)
+		require.NoError(t, err)
+		cfg, err := engine.NewMemoryStore(data, "standard.yaml").Load()
+		require.NoError(t, err)
+		got := map[string]bool{}
+		for _, p := range cfg.Policies {
+			got[p.Name] = true
+		}
+		return got
+	}
+	linux, windows, darwin := names("linux"), names("windows"), names("darwin")
+	assert.False(t, linux["block-windows-destructive"])
+	assert.False(t, linux["block-macos-keychain"])
+	assert.True(t, windows["block-windows-destructive"])
+	assert.False(t, windows["block-macos-keychain"])
+	assert.True(t, darwin["block-macos-keychain"])
+	assert.False(t, darwin["block-windows-destructive"])
+	assert.True(t, linux["allow-unmatched"] && windows["allow-unmatched"] && darwin["allow-unmatched"])
+}
+
+func TestHostOSTreatsWSLAsWindows(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("WSL is Linux")
+	}
+	t.Setenv("WSL_DISTRO_NAME", "Ubuntu")
+	assert.Equal(t, "windows", HostOS())
+	t.Setenv("WSL_DISTRO_NAME", "")
+	assert.Equal(t, "linux", HostOS())
+}
+
 func TestStandardPolicyDecisions(t *testing.T) {
-	store := engine.NewFileStore(filepath.Join("standard.yaml"))
-	eng, err := engine.New(store, nil)
+	eng, err := engine.New(allOSStandard(t), nil)
 	require.NoError(t, err)
 	lowercaseControlEnvAction := engine.ActionAllow
 	if runtime.GOOS == "windows" {
