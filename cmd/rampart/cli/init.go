@@ -213,7 +213,7 @@ func newInitCmd(opts *rootOptions) *cobra.Command {
 					return fmt.Errorf("cli: unknown profile %q — not a built-in profile. Run 'rampart policy list' to see available profiles", selectedProfile)
 				}
 				var err error
-				content, err = policies.FS.ReadFile(selectedProfile + ".yaml")
+				content, err = policies.Profile(selectedProfile)
 				if err != nil {
 					return fmt.Errorf("cli: read embedded profile %s: %w", selectedProfile, err)
 				}
@@ -330,7 +330,7 @@ func isSupportedProfile(profile string) bool {
 // generateTailoredPolicy creates a tailored policy based on detection results.
 func generateTailoredPolicy(result *detect.DetectResult) ([]byte, error) {
 	// Start with the standard profile as base
-	baseContent, err := policies.FS.ReadFile("standard.yaml")
+	baseContent, err := policies.Profile("standard")
 	if err != nil {
 		return nil, fmt.Errorf("read base standard profile: %w", err)
 	}

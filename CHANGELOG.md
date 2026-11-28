@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Windows-only rules moved from `standard.yaml` to `policies/windows.yaml`
+  and macOS-only rules to `policies/macos.yaml`. The standard profile adds
+  them on their OS (Windows rules also under WSL), so macOS and Linux no
+  longer load Windows patterns.
 - A recursive `grep` without `--include` is denied in the standard, OpenClaw
   and Guard profiles, because it reads `.env` files under its root. Use `rg`,
   which skips hidden files, or `grep -r --include=<glob>`.

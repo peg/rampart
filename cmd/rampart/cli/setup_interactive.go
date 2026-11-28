@@ -355,7 +355,7 @@ func installPolicy(out io.Writer, home, profile string) error {
 		return nil
 	}
 
-	content, err := policies.FS.ReadFile(profile + ".yaml")
+	content, err := policies.Profile(profile)
 	if err != nil {
 		return fmt.Errorf("setup: read embedded profile %s: %w", profile, err)
 	}

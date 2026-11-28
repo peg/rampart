@@ -15,22 +15,57 @@
 package policies
 
 import (
+	"bytes"
 	"embed"
 	"fmt"
+	"os"
+	"runtime"
 )
 
-//go:embed standard.yaml paranoid.yaml yolo.yaml block-prompt-injection.yaml research-agent.yaml mcp-server.yaml openclaw.yaml guard.yaml production-guard.yaml
+//go:embed standard.yaml windows.yaml macos.yaml paranoid.yaml yolo.yaml block-prompt-injection.yaml research-agent.yaml mcp-server.yaml openclaw.yaml guard.yaml production-guard.yaml
 var FS embed.FS
 
 // ProfileNames lists the available built-in policy profiles.
 var ProfileNames = []string{"standard", "paranoid", "yolo", "block-prompt-injection", "research-agent", "mcp-server", "openclaw", "guard", "production-guard"}
 
-// Profile returns the embedded policy YAML for a named profile.
+// osRules names the file whose rules the standard profile gains on each OS.
+var osRules = map[string]string{"windows": "windows.yaml", "darwin": "macos.yaml"}
+
+// Profile returns the embedded policy YAML for a named profile. The standard
+// profile includes the rules for the host OS.
 func Profile(name string) ([]byte, error) {
+	return ProfileFor(name, HostOS())
+}
+
+// ProfileFor returns a profile as Profile would on goos.
+func ProfileFor(name, goos string) ([]byte, error) {
 	for _, p := range ProfileNames {
-		if p == name {
-			return FS.ReadFile(name + ".yaml")
+		if p != name {
+			continue
 		}
+		data, err := FS.ReadFile(name + ".yaml")
+		if err != nil || name != "standard" || osRules[goos] == "" {
+			return data, err
+		}
+		extra, err := FS.ReadFile(osRules[goos])
+		if err != nil {
+			return nil, err
+		}
+		// Both files end in their policies list, so the OS rules join it.
+		_, rules, ok := bytes.Cut(extra, []byte("\npolicies:\n"))
+		if !ok {
+			return nil, fmt.Errorf("%s has no policies list", osRules[goos])
+		}
+		return append(append(data, '\n'), rules...), nil
 	}
 	return nil, fmt.Errorf("unknown profile %q", name)
+}
+
+// HostOS is runtime.GOOS, except that WSL counts as Windows: an agent there
+// can still run powershell.exe and cmd.exe.
+func HostOS() string {
+	if runtime.GOOS == "linux" && os.Getenv("WSL_DISTRO_NAME") != "" {
+		return "windows"
+	}
+	return runtime.GOOS
 }
