@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `rampart launch --base-url <url>` starts Claude Code or Codex against any
+  local model server, such as llama.cpp's `llama-server` or LM Studio, after
+  the same fail-closed verification. Before, launch needed Ollama, or
+  `codex --oss` for Codex.
+
 ### Performance
 
 - The hook reads the repository root and branch from `.git` instead of

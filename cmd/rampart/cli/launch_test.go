@@ -43,6 +43,7 @@ type launchRecorder struct {
 	ran        bool
 	bin        string
 	args       []string
+	env        []string
 }
 
 func (r *launchRecorder) deps(onPath ...string) launchDeps {
@@ -52,8 +53,8 @@ func (r *launchRecorder) deps(onPath ...string) launchDeps {
 			r.protected = d.ID
 			return r.protectErr
 		},
-		run: func(_ *cobra.Command, bin string, args []string) error {
-			r.ran, r.bin, r.args = true, bin, args
+		run: func(_ *cobra.Command, bin string, args, env []string) error {
+			r.ran, r.bin, r.args, r.env = true, bin, args, env
 			return nil
 		},
 	}
@@ -87,6 +88,11 @@ func TestLaunchArgumentMapping(t *testing.T) {
 		{"codex fallback no model", []string{"codex"}, []string{"codex"}, "codex", []string{"--oss"}, ""},
 		{"opencode via ollama", []string{"ollama"}, []string{"opencode", "--model", "qwen3-coder"}, "ollama", []string{"launch", "opencode", "--model", "qwen3-coder"}, ""},
 		{"opencode without ollama", []string{"opencode"}, []string{"opencode"}, "", nil, "`ollama` was not found"},
+		{"claude on a llama.cpp server", []string{"ollama", "claude"}, []string{"claude", "--base-url", "http://127.0.0.1:8899/", "--model", "offrail-27b"}, "claude", []string{"--model", "offrail-27b"}, ""},
+		{"codex on a llama.cpp server", []string{"codex"}, []string{"codex", "--base-url", "http://127.0.0.1:8899", "--", "--sandbox", "read-only"}, "codex", []string{"-c", `model_provider="local"`, "-c", `model_providers.local={ name = "Local model", base_url = "http://127.0.0.1:8899/v1", wire_api = "responses" }`, "--sandbox", "read-only"}, ""},
+		{"opencode with base url", []string{"opencode"}, []string{"opencode", "--base-url", "http://127.0.0.1:1234"}, "", nil, "--base-url is not supported for opencode"},
+		{"base url without scheme", []string{"claude"}, []string{"claude", "--base-url", "127.0.0.1:8899"}, "", nil, "must start with http://"},
+		{"base url agent missing", nil, []string{"claude", "--base-url", "http://127.0.0.1:8899"}, "", nil, "`claude` was not found"},
 		{"claude without ollama", nil, []string{"claude"}, "", nil, "`ollama` was not found"},
 		{"codex with nothing installed", nil, []string{"codex"}, "", nil, "neither `ollama` nor `codex`"},
 		{"unknown agent", []string{"ollama"}, []string{"cursor"}, "", nil, "unsupported agent \"cursor\" (supported: claude, codex, opencode)"},
@@ -143,7 +149,7 @@ func TestLaunchRealProtectionNeverExecsUnconfirmedAgent(t *testing.T) {
 	deps := launchDeps{
 		lookPath: fakeLookPath("ollama"),
 		protect:  protectForLaunch,
-		run:      func(*cobra.Command, string, []string) error { ran = true; return nil },
+		run:      func(*cobra.Command, string, []string, []string) error { ran = true; return nil },
 	}
 	out, err := runLaunch(t, deps, "codex")
 	if err == nil || ran {
@@ -190,5 +196,16 @@ func TestLaunchAllowsExperimentalIntegration(t *testing.T) {
 	err = protectForLaunch(cmd, &rootOptions{}, driver, "", time.Second)
 	if err == nil || strings.Contains(err.Error(), "experimental") || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("err = %v, want not-found refusal", err)
+	}
+}
+
+func TestLaunchClaudeOnLocalServerKeepsAnthropicKeyHome(t *testing.T) {
+	rec := &launchRecorder{}
+	if _, err := runLaunch(t, rec.deps("claude"), "claude", "--base-url", "http://127.0.0.1:8899/v1"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ANTHROPIC_BASE_URL=http://127.0.0.1:8899", "ANTHROPIC_AUTH_TOKEN=local", "ANTHROPIC_API_KEY="}
+	if !reflect.DeepEqual(rec.env, want) {
+		t.Fatalf("env = %q, want %q", rec.env, want)
 	}
 }
