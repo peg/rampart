@@ -12,7 +12,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -275,58 +274,69 @@ func deriveGitContext() gitContext {
 }
 
 func deriveGitContextAt(workDir string) gitContext {
+	root, branch := gitRepoAt(workDir)
 	if s := strings.TrimSpace(os.Getenv("RAMPART_SESSION")); s != "" {
-		root, _ := gitRevParseTopLevelAt(workDir)
 		return gitContext{session: s, root: root}
 	}
-	root, branch, err := gitRevParseContextAt(workDir)
-	if err != nil {
-		// An initialized repository can have a root before HEAD resolves (for
-		// example, before its first commit). Preserve project-policy discovery in
-		// that case; ordinary repositories stay on the single-process fast path.
-		root, err = gitRevParseTopLevelAt(workDir)
-		branch = ""
-	}
-	if err != nil || root == "" {
+	if root == "" {
 		return gitContext{}
 	}
-	repo := filepath.Base(root)
-	if branch == "" || branch == "HEAD" {
+	if branch == "" {
 		branch = "detached"
 	}
-	return gitContext{session: repo + "/" + branch, root: root}
+	return gitContext{session: filepath.Base(root) + "/" + branch, root: root}
 }
 
-func gitRevParseContextAt(workDir string) (string, string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
-	args := []string{"rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD"}
-	if strings.TrimSpace(workDir) != "" {
-		args = append([]string{"-C", workDir}, args...)
+// gitRepoAt finds the repository containing workDir (default: the current
+// directory) and its checked-out branch by reading .git and HEAD, the way
+// `git rev-parse --show-toplevel --abbrev-ref HEAD` would. A hook runs on
+// every tool call, and starting git costs more than the rest of the hook,
+// especially on Windows. The branch is "" for a detached HEAD.
+func gitRepoAt(workDir string) (root, branch string) {
+	dir := workDir
+	if strings.TrimSpace(dir) == "" {
+		dir, _ = os.Getwd()
 	}
-	out, err := exec.CommandContext(ctx, "git", args...).Output()
+	dir, err := filepath.Abs(dir)
 	if err != nil {
-		return "", "", err
+		return "", ""
 	}
-	lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
-	if len(lines) != 2 {
-		return "", "", fmt.Errorf("git context returned %d lines", len(lines))
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
 	}
-	return lines[0], strings.TrimSpace(lines[1]), nil
-}
-
-func gitRevParseTopLevelAt(workDir string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
-	args := []string{"rev-parse", "--show-toplevel"}
-	if strings.TrimSpace(workDir) != "" {
-		args = append([]string{"-C", workDir}, args...)
+	for {
+		dotGit := filepath.Join(dir, ".git")
+		if info, err := os.Stat(dotGit); err == nil {
+			gitDir := dotGit
+			if !info.IsDir() {
+				// Worktrees and submodules: ".git" holds "gitdir: <path>".
+				data, err := os.ReadFile(dotGit)
+				target, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir:")
+				if err != nil || !ok {
+					return "", ""
+				}
+				gitDir = strings.TrimSpace(target)
+				if !filepath.IsAbs(gitDir) {
+					gitDir = filepath.Join(dir, gitDir)
+				}
+			}
+			head, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+			if err != nil {
+				return "", ""
+			}
+			ref, _ := strings.CutPrefix(strings.TrimSpace(string(head)), "ref: ")
+			branch, _ = strings.CutPrefix(ref, "refs/heads/")
+			if branch == ref {
+				branch = "" // detached HEAD holds a commit hash
+			}
+			return dir, branch
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", ""
+		}
+		dir = parent
 	}
-	out, err := exec.CommandContext(ctx, "git", args...).Output()
-	if err != nil || len(out) == 0 {
-		return "", err
-	}
-	return strings.TrimSuffix(string(out), "\n"), nil
 }
 
 // sessionStateDir returns the directory used for per-session state files.

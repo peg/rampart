@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+
+- The hook reads the repository root and branch from `.git` instead of
+  starting `git` on every tool call. A hook call on Linux dropped from about
+  29 ms to 21 ms; process starts cost more on Windows.
+
 ### Fixed
 
 - Windows recursive deletes through a pipeline (`Get-ChildItem C:\ -Recurse |
