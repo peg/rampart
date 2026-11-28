@@ -495,10 +495,20 @@ policies:
             - "* */.env"
             - "* */.env *"
             - "* */.env.*"
+            - "* .envrc"
+            - "* .envrc *"
+            - "* */.envrc"
+            - "* */.envrc *"
             - "*<.env*"
             - "*</.env*"
             - "*=.env*"
             - "*/.env.*"
+          # These name a .env file without printing it.
+          command_not_matches:
+            - "git commit -m *"
+            - "git commit -am *"
+            - "git add *"
+            - "echo *"
         message: ".env files cannot be read through the shell. To search a tree, use rg or grep --include=<glob>"
 
   # ── Block credential access ────────────────────────────────────────────

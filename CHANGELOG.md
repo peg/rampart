@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A policy pattern that starts with `*` now matches only names that end
+  with its last literal part, as globs do. `* .env` matched any command
+  containing ` .env`, so `cat .environment` and `git commit -m 'add
+  .env.example'` were denied. Check custom rules that relied on the old
+  substring behavior; end them with `*` to keep it.
+- Commit messages, `git add` and `echo` that name a `.env` file are no longer
+  denied. Reads inside them (`echo $(cat .env)`) still are.
+- `type ENV~1` and other reads of the Windows 8.3 short name of `.env` are
+  denied.
 - `rampart verify codex` and `rampart doctor` now read Codex's hook trust
   records in `config.toml` and fail when Codex has not trusted Rampart's
   hooks, because Codex skips untrusted hooks. Before, verify reported the

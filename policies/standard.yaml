@@ -790,6 +790,10 @@ policies:
             - "* */.env"
             - "* */.env *"
             - "* */.env.*"
+            - "* .envrc"
+            - "* .envrc *"
+            - "* */.envrc"
+            - "* */.envrc *"
             - "*<.env*"
             - "*</.env*"
             - "*=.env*"
@@ -802,6 +806,18 @@ policies:
             - "*/.env)*"
             - "*/.env'*"
             - "*/.env\"*"
+            # Windows 8.3 short name of .env (dir /x shows ENV~1)
+            - "type ENV~1"
+            - "more ENV~1"
+            - "cat ENV~1"
+            - "gc ENV~1"
+            - "Get-Content ENV~1"
+          # These name a .env file without printing it.
+          command_not_matches:
+            - "git commit -m *"
+            - "git commit -am *"
+            - "git add *"
+            - "echo *"
         message: ".env files cannot be read through the shell. To search a tree, use rg or grep --include=<glob>"
       # Credential exfiltration via curl @file upload syntax
       - action: deny
