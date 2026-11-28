@@ -135,7 +135,8 @@ func readBoundedHookInput(reader io.Reader) ([]byte, error) {
 	if len(data) > maxHookInputBytes {
 		return nil, fmt.Errorf("hook: stdin exceeds %d-byte limit", maxHookInputBytes)
 	}
-	return data, nil
+	// Windows PowerShell 5.1 prefixes piped text with a UTF-8 byte order mark.
+	return bytes.TrimPrefix(data, []byte("\xef\xbb\xbf")), nil
 }
 
 // normalizeHookStringAliases validates every representation of a
